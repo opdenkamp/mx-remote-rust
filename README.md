@@ -1,4 +1,4 @@
-# mx-remote
+# MX Remote - Rust Client for Pulse-Eight MatrixOS devices
 
 [![crates.io](https://img.shields.io/crates/v/mx-remote.svg)](https://crates.io/crates/mx-remote)
 [![docs.rs](https://docs.rs/mx-remote/badge.svg)](https://docs.rs/mx-remote)
