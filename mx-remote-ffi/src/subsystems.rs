@@ -556,7 +556,7 @@ impl From<PduState> for mxr_pdu_state_t {
 pub struct mxr_rc_settings_t {
     /// The device this configuration belongs to.
     pub target: mxr_uid_t,
-    /// The control method, as an `rc_target_t` value.
+    /// The control method, as the wire value.
     pub rc_target: u8,
     /// The control target's address, empty when unset.
     pub ip: [c_char; MXR_IP_STRING_LEN],
@@ -568,8 +568,8 @@ pub struct mxr_rc_settings_t {
     pub forward_rc: bool,
     /// Whether infrared is forwarded.
     pub forward_ir: bool,
-    /// The driver state on the source, as an `mxr_rc_status_t` value. One
-    /// above the last this library knows is passed through as it arrived.
+    /// The driver state on the source, as the wire value. One above the last
+    /// this library knows is passed through as it arrived.
     pub rc_status: u8,
     /// The driver-reported status string, empty when unknown.
     pub status_name: [c_char; MXR_NAME_LEN],

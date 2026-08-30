@@ -438,8 +438,8 @@ pub(super) fn v2ip_power_save(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event
     ev.push(Event::PowerSaveRequested { device, request });
 }
 
-/// Decodes `mxr_rc_ctrl`: a target uid then `mxr_rc_config`, whose
-/// `rc_target_t` and `ip_addr_t` are four bytes each ahead of the flag bits.
+/// Decodes the RC control frame: a target uid then the RC config block, whose
+/// control-method and address fields are four bytes each ahead of the flag bits.
 ///
 /// Every meaningful bit sits in byte 24 alone - the four flags in the low
 /// nibble, the status in the high one. Byte 25 is dead space in the same

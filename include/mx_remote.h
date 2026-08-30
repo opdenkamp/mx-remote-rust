@@ -641,7 +641,7 @@ typedef struct {
    */
   bool has_rc_type;
   /**
-   * The kind of remote control attached, as an `rc_target_t` value.
+   * The kind of remote control attached, as the wire value.
    */
   uint8_t rc_type;
   /**
@@ -2056,7 +2056,7 @@ typedef struct {
    */
   mxr_uid_t target;
   /**
-   * The control method, as an `rc_target_t` value.
+   * The control method, as the wire value.
    */
   uint8_t rc_target;
   /**
@@ -2080,8 +2080,8 @@ typedef struct {
    */
   bool forward_ir;
   /**
-   * The driver state on the source, as an `mxr_rc_status_t` value. One
-   * above the last this library knows is passed through as it arrived.
+   * The driver state on the source, as the wire value. One above the last
+   * this library knows is passed through as it arrived.
    */
   uint8_t rc_status;
   /**

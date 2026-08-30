@@ -258,7 +258,7 @@ pub struct mxr_bay_info_t {
     pub muted: mxr_tribool_t,
     /// Whether the bay has reported a remote-control type.
     pub has_rc_type: bool,
-    /// The kind of remote control attached, as an `rc_target_t` value.
+    /// The kind of remote control attached, as the wire value.
     pub rc_type: u8,
     /// Whether the bay has reported an EDID profile.
     pub has_edid_profile: bool,

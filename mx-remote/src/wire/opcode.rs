@@ -88,13 +88,11 @@ pub(crate) mod op {
 
 /// Returns the header protocol version to stamp on a frame carrying `opcode`.
 ///
-/// This is the minimum version a receiver needs to decode the opcode,
-/// mirroring the third argument of `MXR_OPCODE()` in
-/// `libP8/mx_remote/inc/mx_opcodes.h`, not the version this library speaks. A
-/// receiver drops any frame whose header protocol exceeds its own
-/// `MXR_PROTOCOL_VERSION`, so stamping [`PROTOCOL_VERSION`] on everything would
-/// make a device with a lower cap - a ProAmp8 caps at 0x22 - silently drop
-/// every frame we send.
+/// This is the minimum version a receiver needs to decode the opcode, as the
+/// firmware's opcode table declares it, not the version this library speaks. A
+/// receiver drops any frame whose header protocol exceeds its own cap, so
+/// stamping [`PROTOCOL_VERSION`] on everything would make a device with a lower
+/// cap - a ProAmp8 caps at 0x22 - silently drop every frame we send.
 ///
 /// These stay deliberately low. An opcode whose payload only ever grew trailing
 /// fields keeps its original version, and a receiver tells the formats apart by

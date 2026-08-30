@@ -140,7 +140,7 @@ pub struct V2ipPowerSaveRequest {
 pub struct RcSettings {
     /// The device this configuration belongs to.
     pub target: DeviceUid,
-    /// The control method (`rc_target_t`).
+    /// The control method.
     ///
     /// A single byte: the enum is plain and Cortex-M builds with
     /// `-fshort-enums`, so three bytes of padding follow it before the address.
@@ -158,7 +158,7 @@ pub struct RcSettings {
     pub forward_rc: bool,
     /// Whether infrared is forwarded.
     pub forward_ir: bool,
-    /// The driver state on the source (`mxr_rc_status_t`).
+    /// The driver state on the source.
     ///
     /// A value above the last one this library knows is passed through as it
     /// arrived rather than clamped, so a firmware update cannot make it read as

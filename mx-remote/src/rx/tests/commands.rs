@@ -393,7 +393,7 @@ fn an_rc_status_name_starts_past_the_reserved_bits() {
 /// Bytes 16..19 and 24..27 of three real `RC_SETTINGS` frames, from units all
 /// configured for CEC.
 ///
-/// `rc_target_t` is one byte and the three that follow are padding the
+/// The control method is one byte and the three that follow are padding the
 /// firmware never clears, so they carry live stack content that differs per
 /// frame. Reading the field as a u32 makes one unchanged setting decode as
 /// three different values; the expectation below comes from the units' known
