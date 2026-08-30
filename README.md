@@ -59,12 +59,13 @@ All three sit on the same core:
 Two other clients speak the same protocol, each in its own repository:
 
 - **Python**: <https://github.com/opdenkamp/mx-remote>, the oldest of the
-  three.
+  three, and the only one that still decodes the opcodes current firmware no
+  longer sends.
 - **Go**: <https://github.com/opdenkamp/mx-remote-golang>, the one this client
   was ported from.
 
-Both carry more of the older opcodes than this client does. The three are
-independent implementations rather than bindings over a shared core.
+The three are independent implementations rather than bindings over a shared
+core.
 
 ## Rust
 

@@ -20,15 +20,19 @@ The firmware headers `mx_remote_proto.h` and `mx_opcodes.h` define the wire
 format. They are not public, and they settle every disagreement with this
 crate.
 
-Two older clients of the same protocol are public. Both are broader on legacy
-opcodes than this crate; that is a decision rather than an oversight, and an
-opcode is not ported back just because another client carries it.
+Two older clients of the same protocol are public.
 
 - Python — <https://github.com/opdenkamp/mx-remote>. The oldest and most
   mature, and the one the byte-exact vectors in `wire/vectors.rs` came from.
-- Go — <https://github.com/opdenkamp/mx-remote-golang>. Its `CLAUDE.md` is the
-  accumulated protocol knowledge for this format and is not duplicated here:
-  read it in full before touching wire code.
+  It is broader on legacy opcodes than this crate; that is a decision rather
+  than an oversight, and an opcode is not ported back just because another
+  client carries it.
+- Go — <https://github.com/opdenkamp/mx-remote-golang>. Its
+  [`AGENTS.md`](https://github.com/opdenkamp/mx-remote-golang/blob/v2.1.4/AGENTS.md)
+  is the accumulated protocol knowledge for this format and is not duplicated
+  here: read it in full before touching wire code. The link is pinned to a tag
+  so it names a file that exists; check for a later release before relying on
+  it.
 
 ## Invariants
 
