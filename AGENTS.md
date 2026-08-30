@@ -12,8 +12,7 @@ into a C++ program as a plain static archive, with no runtime to initialise, no
 GC pointer rules, and no signal handlers taken from the host process.
 
 It is a port of the Go client linked below, which stays the reference until
-this crate replaces it. The port is finished: every gate passes and both crates
-package. What is left before the first crates.io release is a human review.
+this crate replaces it. Both crates are published on crates.io, at 1.0.0.
 
 ## Sources of truth
 
