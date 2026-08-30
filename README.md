@@ -154,7 +154,10 @@ complete test.
 
 `include/mx_remote.h` is generated from the Rust source by
 `scripts/gen-header.sh` and checked in; CI fails if regenerating it produces a
-diff.
+diff. That diff only proves the header is what cbindgen produces, and cbindgen
+expands no macros, so an entry point that comes out of one is in the archive
+and absent from the header. `scripts/check-abi.sh` catches that by reading the
+archive's exports directly.
 
 ## C++
 
@@ -203,7 +206,7 @@ mx-remote/          the core crate: wire format, runtime, control surface
 mx-remote-ffi/      the C ABI over it, and the only unsafe in the workspace
 include/            the generated C header and the hand-written C++ one
 examples/           the C and C++ examples; the Rust one is a cargo example
-scripts/            gen-header.sh, which regenerates include/mx_remote.h
+scripts/            gen-header.sh and check-abi.sh, which the build below runs
 ```
 
 ## Building
@@ -214,6 +217,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ./scripts/gen-header.sh && git diff --exit-code include/mx_remote.h
 cargo build -p mx-remote-ffi && make -C examples
+./scripts/check-abi.sh
 ```
 
 ## Licence
