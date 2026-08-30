@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["mx-remote", "mx-remote-ffi"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.79"
+authors = ["Lars Op den Kamp <lars@opdenkamp-it.nl>"]
+repository = "https://github.com/opdenkamp/mx-remote-rust"
+license = "MIT OR Apache-2.0"

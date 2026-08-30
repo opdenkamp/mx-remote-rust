@@ -1,0 +1,22 @@
+[package]
+name = "mx-remote-ffi"
+description = "C ABI for the mx-remote client library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["pulse-eight", "matrixos", "ffi", "bindings", "av"]
+categories = ["development-tools::ffi", "network-programming", "hardware-support"]
+
+[lib]
+# staticlib is the one that matters: the reason this library is Rust is that a
+# C++ program can link it as a plain archive with no runtime to start. cdylib
+# is for callers that would rather load it at run time, and rlib so the crate's
+# own tests can call what it exports.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+mx-remote = { path = "../mx-remote", version = "1.0.0" }

@@ -1,0 +1,32 @@
+[package]
+name = "mx-remote"
+description = "Client library for Pulse-Eight MatrixOS devices over UDP multicast/broadcast"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+readme = "README.md"
+keywords = ["pulse-eight", "matrixos", "hdmi", "av", "multicast"]
+categories = ["network-programming", "hardware-support", "multimedia"]
+
+[dependencies]
+
+# The three knobs this protocol needs are the three std's UdpSocket does not
+# expose. SO_REUSEADDR, so a second client on the host can bind the same port;
+# IP_MULTICAST_IF, so frames leave by the NIC the caller chose rather than
+# whichever one the route table prefers; and the interface-index join, so a
+# tagged VLAN with no address of its own can still carry discovery. socket2 is
+# the safe wrapper for all three, which is what keeps the core crate free of
+# unsafe.
+socket2 = { version = "0.6", features = ["all"] }
+
+# Enumerating the host's interfaces: their addresses, netmasks and indices.
+# Needed to pick a default interface, to derive the broadcast address of the
+# chosen one, and to turn an interface name into the index the join wants.
+if-addrs = "0.15"
+
+# The client's own identifier has to be unique on the network and is written to
+# disk, so it comes from the OS entropy source rather than from the clock.
+getrandom = "0.2"

@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: check (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The MSRV is declared in Cargo.toml and is only true if it is built.
+        toolchain: [stable, 1.79.0]
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --component rustfmt,clippy
+      - run: rustup default ${{ matrix.toolchain }}
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo doc --workspace --no-deps
+        # Third parties read the docs, so a broken link in them is a defect.
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  header:
+    name: generated header is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo install cbindgen --version '^0.27' --locked
+      - run: ./scripts/gen-header.sh
+      # A header that lags the library sends third parties at an API that is
+      # not there, and nothing else in the build would notice.
+      - run: git diff --exit-code include/mx_remote.h
+      # The diff above only proves the header is what cbindgen produces. What
+      # cbindgen produces is missing any entry point that came out of a macro,
+      # because it expands none, so the archive is asked directly.
+      - run: cargo build -p mx-remote-ffi
+      - run: ./scripts/check-abi.sh
+
+  examples:
+    name: C and C++ examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal
+      # The point of the archive is that it links into a C or C++ program with
+      # nothing installed and no runtime to start, which only a build proves.
+      - run: cargo build -p mx-remote-ffi
+      - run: make -C examples
+
+  package:
+    name: crates are publishable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal
+      # Both crates reach their licences and the C headers through symlinks to
+      # the repository root, and cargo only resolves those while packaging.
+      #
+      # Packaging the workspace in one go is what lets the FFI crate be built
+      # from its packaged form: its dependency on mx-remote is served from the
+      # sibling packaged beside it, which crates.io does not carry until the
+      # release that publishes it.
+      - run: cargo package --workspace

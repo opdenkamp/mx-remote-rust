@@ -1,0 +1,37 @@
+# Regenerate include/mx_remote.h with scripts/gen-header.sh, which is also what
+# CI runs before failing on a diff.
+
+language = "C"
+header = """\
+// Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
+// Copyright (c) 2026 Op den Kamp IT Solutions
+"""
+include_guard = "MX_REMOTE_H"
+autogen_warning = """
+/*
+ * Generated from the mx-remote-ffi crate by cbindgen. Do not edit: every
+ * change belongs in the Rust source, and this file is regenerated and diffed
+ * in CI.
+ */
+"""
+documentation = true
+documentation_style = "doxy"
+# typedef struct foo foo; - the names in the Rust source are already the names
+# C should see, so nothing here renames anything.
+style = "type"
+cpp_compat = true
+usize_is_size_t = true
+sort_by = "None"
+
+[enum]
+prefix_with_name = false
+rename_variants = "None"
+
+[const]
+# A #define, not a static const: these are array bounds, and C needs a constant
+# expression for one.
+allow_static_const = false
+allow_constexpr = false
+
+[parse]
+parse_deps = false
