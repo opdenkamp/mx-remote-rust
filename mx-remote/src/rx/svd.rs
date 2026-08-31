@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 use crate::event::Event;
 use crate::state::State;
-use crate::types::BaySignalDetails;
+use crate::types::{BayAudioDetails, BaySignalDetails};
 use crate::wire::{BayStatus, BayUid, MxrSignalType};
 
 use super::handlers::{u16_at, u32_at};
@@ -127,6 +127,27 @@ const NO_SIGNAL: &str = "no signal";
 /// The support-flags bit that says the stream block holds a real signal.
 const SUPPORT_STREAM_VALID: u8 = 1 << 1;
 
+/// The support-flags bit that says the source sent an audio infoframe.
+const SUPPORT_AUDIO_INFOFRAME: u8 = 1 << 4;
+
+/// The support-flags bit that says the audio block was filled in.
+const SUPPORT_AUDIO_VALID: u8 = 1 << 5;
+
+/// Decodes the audio block of a report, `None` where it carried none.
+fn audio_details(audio: &[u8], support_flags: u8) -> Option<BayAudioDetails> {
+    if support_flags & SUPPORT_AUDIO_VALID == 0 {
+        return None;
+    }
+    Some(BayAudioDetails {
+        format: audio[10],
+        channels: audio[11],
+        sample_rate: u32_at(audio, 12),
+        // Without an infoframe the whole field is zero, and zero is also a
+        // coding type a source can claim, so absence is the honest answer.
+        coding: (support_flags & SUPPORT_AUDIO_INFOFRAME != 0).then(|| audio[1] >> 4),
+    })
+}
+
 /// Decodes a detailed AV signal report.
 ///
 /// A report is answered one packet per bay: the port number in the bay block
@@ -192,6 +213,7 @@ pub(super) fn signal_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
         status: BayStatus::from_bits(u32_at(bay_block, 2)),
         scaling: MxrSignalType::from_wire(u16_at(bay_block, 6)),
         clock_rate: u32_at(bay_block, 8),
+        audio: audio_details(&p[24..40], support_flags),
     };
 
     if let Some(bay) = state.bay_mut(bay) {

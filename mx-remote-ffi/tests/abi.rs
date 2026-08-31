@@ -299,3 +299,289 @@ fn a_subsystem_read_without_somewhere_to_write_is_an_argument_error() {
     // SAFETY: the handle came from mxr_remote_new and is freed once.
     unsafe { mxr_remote_free(handle) };
 }
+
+/// One named bit, as either crate spells it.
+struct Bit {
+    name: String,
+    value: u64,
+}
+
+/// Reads `path` relative to the workspace root, failing rather than skipping.
+///
+/// A test that shrugs at a missing file reports every constant correct when it
+/// found none, which is the one answer it must not be able to give.
+fn workspace_source(path: &str) -> String {
+    let full = format!("{}/../{path}", env!("CARGO_MANIFEST_DIR"));
+    std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{full} could not be read: {e}"))
+}
+
+/// Evaluates the expressions these constants are written with: a literal, or a
+/// shift of one. Anything else fails rather than being skipped over.
+fn value_of(expr: &str, whose: &str) -> u64 {
+    let expr = expr.trim();
+    if let Some((lhs, rhs)) = expr.split_once("<<") {
+        let base: u64 = lhs
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{whose}: {expr}"));
+        let shift: u32 = rhs
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{whose}: {expr}"));
+        return base << shift;
+    }
+    expr.parse()
+        .unwrap_or_else(|_| panic!("{whose}: {expr} is neither a literal nor a shift"))
+}
+
+/// The named constants of one `bitmask!` or `wire_enum!` block.
+fn core_bits(source: &str, block: &str) -> Vec<Bit> {
+    let start = source
+        .find(&format!("\n    {block} {{"))
+        .or_else(|| source.find(&format!("\n    {block}: ")))
+        .unwrap_or_else(|| panic!("{block} is not in the core source under that name"));
+    let body = &source[start..];
+    let end = body
+        .find("\n    }\n}")
+        .unwrap_or_else(|| panic!("{block} has no end"));
+    read_bits(&body[..end], block, |line| {
+        let (name, expr) = line.strip_suffix(';')?.split_once(" = ")?;
+        Some((name.to_owned(), expr.to_owned()))
+    })
+}
+
+/// The named constants of an `impl` block that declares them one by one.
+fn core_consts(source: &str, ty: &str) -> Vec<Bit> {
+    read_bits(source, ty, |line| {
+        let rest = line.strip_prefix("pub const ")?;
+        let (name, rest) = rest.split_once(": Self = Self(")?;
+        Some((name.to_owned(), rest.strip_suffix(");")?.to_owned()))
+    })
+}
+
+/// The constants of `bits.rs` whose name starts with `prefix`, and not with
+/// any of `not`.
+fn header_bits(source: &str, prefix: &str, not: &[&str]) -> Vec<Bit> {
+    read_bits(source, prefix, |line| {
+        let rest = line.strip_prefix("pub const ")?;
+        let (name, rest) = rest.split_once(": ")?;
+        let expr = rest.split_once(" = ")?.1.strip_suffix(';')?;
+        Some((name.to_owned(), expr.to_owned()))
+    })
+    .into_iter()
+    .filter(|b| b.name.starts_with(prefix) && !not.iter().any(|n| b.name.starts_with(n)))
+    .collect()
+}
+
+fn read_bits(
+    source: &str,
+    whose: &str,
+    parse: impl Fn(&str) -> Option<(String, String)>,
+) -> Vec<Bit> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter_map(&parse)
+        .map(|(name, expr)| Bit {
+            value: value_of(&expr, whose),
+            name,
+        })
+        .collect()
+}
+
+/// Every bit the core crate names reaches the header, at the same value.
+///
+/// The header's copies are written out as literals because cbindgen puts a
+/// constant's expression into the header verbatim and cannot evaluate a call,
+/// so the two lists are genuinely separate and drift is the risk. Both
+/// directions are checked: a core bit with no name in the header would leave a
+/// C caller writing the number itself, and a header bit with no core bit
+/// behind it names something that no longer exists.
+///
+/// Each list is also held to a minimum length, so a rename that leaves a
+/// pattern matching nothing fails here instead of reporting every constant
+/// correct.
+#[test]
+fn every_core_bit_reaches_the_header_at_its_own_value() {
+    let enums = workspace_source("mx-remote/src/wire/enums.rs");
+    let audio = workspace_source("mx-remote/src/types/audio.rs");
+    let header = workspace_source("mx-remote-ffi/src/bits.rs");
+
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 5] = [
+        ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 27),
+        (
+            "MXR_BAY_",
+            core_bits(&enums, "BayFeatures"),
+            &["MXR_BAY_STATUS_"],
+            17,
+        ),
+        ("MXR_BAY_STATUS_", core_bits(&enums, "BayStatus"), &[], 18),
+        ("MXR_KEY_", core_bits(&enums, "RcKey"), &[], 48),
+        ("MXR_AUDIO_", core_consts(&audio, "AudioFeatures"), &[], 15),
+    ];
+
+    for (prefix, core, not, minimum) in lists {
+        assert!(
+            core.len() >= minimum,
+            "{prefix}: found {} constants in the core crate, expected at least {minimum}; \
+             the pattern that reads them has stopped matching",
+            core.len()
+        );
+        let mine = header_bits(&header, prefix, not);
+        assert_eq!(
+            mine.len(),
+            core.len(),
+            "{prefix}: the header names {} of the core crate's {}",
+            mine.len(),
+            core.len()
+        );
+        for bit in &core {
+            let name = format!("{prefix}{}", bit.name);
+            let found = mine
+                .iter()
+                .find(|b| b.name == name)
+                .unwrap_or_else(|| panic!("{name} is in the core crate and not in the header"));
+            assert_eq!(found.value, bit.value, "{name} differs between the two");
+        }
+    }
+}
+
+/// The unset signal type is not a format, whichever way a sender says so.
+#[test]
+fn the_signal_type_accessors_read_a_packed_word() {
+    // svd 16, colour space 1, bit-depth index 2.
+    let word = 16 | (1 << 8) | (2 << 13);
+    assert_eq!(mxr_signal_type_svd(word), 16);
+    assert_eq!(mxr_signal_type_colour_space(word), 1);
+    assert_eq!(mxr_signal_type_bpp_index(word), 2);
+    // The wire carries an index into a table of depths, not a depth.
+    assert_eq!(mxr_signal_type_bpp(word), 10);
+    assert!(mxr_signal_type_is_set(word));
+
+    // A bay with nothing configured, said both ways.
+    assert!(!mxr_signal_type_is_set(5 << 13));
+    assert!(!mxr_signal_type_is_set(0));
+    assert_eq!(mxr_signal_type_bpp(5 << 13), 0);
+
+    // Bits 16-19 and 22-23 of a status word are fields, not flags.
+    let status = MXR_BAY_STATUS_SIGNAL_DETECTED | (3 << 16) | (2 << 22);
+    assert_eq!(mxr_bay_status_rc_type(status), 3);
+    assert_eq!(mxr_bay_status_hdcp(status), 2);
+}
+
+/// Every entry point added for a C consumer rejects a null handle rather than
+/// dereferencing one, and says why.
+#[test]
+fn the_new_entry_points_refuse_a_null_handle() {
+    let route = mxr_v2ip_route_t {
+        video: mxr_stream_addr_t {
+            ip: ptr::null(),
+            port: 0,
+        },
+        audio: mxr_stream_addr_t {
+            ip: ptr::null(),
+            port: 0,
+        },
+        anc: mxr_stream_addr_t {
+            ip: ptr::null(),
+            port: 0,
+        },
+    };
+    let mut edid = [0u8; MXR_EDID_LEN];
+    let mut audio = std::mem::MaybeUninit::<mxr_audio_details_t>::zeroed();
+    let mut frames = 0u64;
+
+    // SAFETY: a null handle is what is under test; every other argument is
+    // valid, so an argument error can only be the handle.
+    let calls = unsafe {
+        [
+            mxr_select_source_addr(ptr::null(), mxr_bay_uid_t::default(), &route, ptr::null()),
+            mxr_send_key(ptr::null(), mxr_bay_uid_t::default(), MXR_KEY_PLAY),
+            mxr_request_edid(ptr::null(), uid_n(1), true),
+            mxr_request_signal_status(ptr::null(), uid_n(1)),
+            mxr_bay_audio_details(ptr::null(), mxr_bay_uid_t::default(), audio.as_mut_ptr()),
+            mxr_device_edid(ptr::null(), uid_n(1), true, edid.as_mut_ptr(), edid.len()),
+            mxr_frames_received(ptr::null(), &mut frames),
+        ]
+    };
+    for (n, rc) in calls.into_iter().enumerate() {
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "call {n}");
+    }
+    assert!(!last_error().is_empty(), "the failure said nothing");
+}
+
+/// What the new reads answer on a client that has heard from nothing.
+///
+/// "Not found" and "not reported" are different answers and a caller acts on
+/// them differently, so a client with no devices must not give either of them
+/// where the other belongs.
+#[test]
+fn the_new_reads_separate_an_unknown_device_from_an_unreported_value() {
+    let remote = client(c"abi-new-reads", c"00000021.00000000.00000000.000000a5");
+
+    let mut frames = 1234u64;
+    // SAFETY: a live handle and a writable u64.
+    assert_eq!(
+        unsafe { mxr_frames_received(remote, &mut frames) },
+        mxr_result_t::MXR_OK
+    );
+    assert_eq!(frames, 0, "a client with no socket has heard nothing");
+
+    let mut edid = [0u8; MXR_EDID_LEN];
+    // SAFETY: a live handle and a buffer of exactly the documented size.
+    let rc = unsafe { mxr_device_edid(remote, uid_n(9), true, edid.as_mut_ptr(), edid.len()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_REPORTED);
+
+    // A buffer too short is the caller's mistake, not a missing report.
+    // SAFETY: a live handle, and a capacity that matches the shortened slice.
+    let rc = unsafe { mxr_device_edid(remote, uid_n(9), true, edid.as_mut_ptr(), 8) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    let mut audio = std::mem::MaybeUninit::<mxr_audio_details_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_bay_audio_details(remote, mxr_bay_uid_t::default(), audio.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND, "no such bay");
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// A route with an address that is not one is refused before anything is sent.
+#[test]
+fn a_route_with_an_unparseable_address_is_an_argument_error() {
+    let remote = client(c"abi-bad-route", c"00000022.00000000.00000000.000000a5");
+    let bad = CString::new("not an address").expect("no NUL");
+    let route = mxr_v2ip_route_t {
+        video: mxr_stream_addr_t {
+            ip: bad.as_ptr(),
+            port: 0,
+        },
+        audio: mxr_stream_addr_t {
+            ip: ptr::null(),
+            port: 0,
+        },
+        anc: mxr_stream_addr_t {
+            ip: ptr::null(),
+            port: 0,
+        },
+    };
+    // SAFETY: a live handle, and a route whose one address is a live string.
+    let rc =
+        unsafe { mxr_select_source_addr(remote, mxr_bay_uid_t::default(), &route, ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    assert!(
+        last_error().contains("not an address"),
+        "the failure did not name the address it could not read: {}",
+        last_error()
+    );
+
+    // A null route pointer is the other way to get this wrong.
+    // SAFETY: a live handle and a deliberately null route.
+    let rc = unsafe {
+        mxr_select_source_addr(remote, mxr_bay_uid_t::default(), ptr::null(), ptr::null())
+    };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}

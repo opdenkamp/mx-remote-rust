@@ -69,6 +69,11 @@ pub(crate) fn process_frame(
     if sender == state.uid {
         return Vec::new();
     }
+    // Counted before the opcode is looked at, and only for frames some other
+    // sender put on the wire. This client's own multicast is looped back by
+    // the host whichever interface was selected, so counting that would answer
+    // "did anything reach this interface" with yes on every interface.
+    state.frames_received = state.frames_received.saturating_add(1);
     let rx = Rx {
         frame,
         address,

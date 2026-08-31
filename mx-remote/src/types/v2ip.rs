@@ -6,7 +6,10 @@
 use core::fmt;
 use std::net::Ipv4Addr;
 
-use crate::wire::{DeviceUid, MxrSignalType, V2IP_DSCP_MAX, V2IP_DSCP_SET};
+use crate::wire::{
+    DeviceUid, MxrSignalType, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE,
+    V2IP_DSCP_MAX, V2IP_DSCP_SET,
+};
 
 /// Which of a V2IP device's streams an address describes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -93,9 +96,103 @@ impl fmt::Display for V2ipStreamSources {
     }
 }
 
-/// Overrides the sample rate and channel count of a V2IP audio stream.
+/// One multicast destination in a route the caller assembles.
 ///
-/// Zero values mean "use the firmware default".
+/// The unspecified address sends the slot zeroed, naming no group for that
+/// stream. It is not a way to leave one stream alone: the firmware decides
+/// whether a sink has a manual route at all by reading the video and
+/// ancillary slots, so an empty one of those disqualifies the whole route
+/// rather than preserving anything - see
+/// [`crate::Remote::select_source_addr`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V2ipRouteTarget {
+    /// The multicast group.
+    pub ip: Ipv4Addr,
+    /// The destination UDP port. Zero means the standard port for the stream
+    /// this target is given as.
+    pub port: u16,
+}
+
+impl Default for V2ipRouteTarget {
+    fn default() -> Self {
+        Self {
+            ip: Ipv4Addr::UNSPECIFIED,
+            port: 0,
+        }
+    }
+}
+
+impl V2ipRouteTarget {
+    /// A target at the standard port for its stream.
+    pub const fn new(ip: Ipv4Addr) -> Self {
+        Self { ip, port: 0 }
+    }
+
+    /// The port to send, substituting `standard` for an unset one.
+    pub(crate) const fn port_or(self, standard: u16) -> u16 {
+        if self.port == 0 {
+            standard
+        } else {
+            self.port
+        }
+    }
+}
+
+impl fmt::Display for V2ipRouteTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.ip, self.port)
+    }
+}
+
+/// The three streams a manual route points a V2IP sink at.
+///
+/// Fill in all three. The firmware decides whether a sink has a manual route
+/// at all by looking at the video and ancillary groups, so a route carrying
+/// only audio does not register as one and the sink falls back to the audio
+/// source its mesh picks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipRoute {
+    /// The video stream, at [`crate::V2IP_PORT_VIDEO`] unless the port says otherwise.
+    pub video: V2ipRouteTarget,
+    /// The audio stream, at [`crate::V2IP_PORT_AUDIO`] unless the port says otherwise.
+    pub audio: V2ipRouteTarget,
+    /// The ancillary-data stream, at [`crate::V2IP_PORT_ANC`] unless the port says
+    /// otherwise.
+    pub anc: V2ipRouteTarget,
+}
+
+impl V2ipRoute {
+    /// The three streams of one source, at the ports it advertises them on.
+    pub fn of(sources: &V2ipStreamSources) -> Self {
+        let target = |s: &V2ipStreamSource| V2ipRouteTarget {
+            ip: s.ip,
+            port: s.port,
+        };
+        Self {
+            video: target(&sources.video),
+            audio: target(&sources.audio),
+            anc: target(&sources.anc),
+        }
+    }
+}
+
+impl fmt::Display for V2ipRoute {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "video:{} audio:{} anc:{}",
+            self.video, self.audio, self.anc
+        )
+    }
+}
+
+/// The sample rate and channel count a V2IP audio stream is decoded at.
+///
+/// Fill both in. The firmware header calls zero "use the default", but the
+/// path that applies a manual route substitutes nothing: it hands the pair to
+/// the FPGA as it arrived, and the FPGA rejects a zero rate and takes the
+/// whole switch down with it. [`V2ipAudioFormat::STANDARD`] is the pair the
+/// header documents as the default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct V2ipAudioFormat {
     /// Sample rate in Hz.
@@ -105,6 +202,14 @@ pub struct V2ipAudioFormat {
 }
 
 impl V2ipAudioFormat {
+    /// 48kHz stereo: the rate and channel count the firmware header names as
+    /// its default, which a caller has to send because firmware does not
+    /// substitute it.
+    pub const STANDARD: Self = Self {
+        sample_rate: V2IP_AUDIO_DEFAULT_SAMPLE_RATE,
+        channels: V2IP_AUDIO_DEFAULT_CHANNELS,
+    };
+
     /// Encodes `v2ip_audio_format`: a `u32` rate, a channel byte and three
     /// reserved bytes, padded to the struct's 8-byte alignment.
     pub(crate) fn wire(&self) -> [u8; 8] {

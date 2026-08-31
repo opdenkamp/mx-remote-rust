@@ -673,6 +673,9 @@ public:
     mxr_result_t select_audio_source_addr(BayUid sink, const char *audio_ip, uint16_t audio_port, const mxr_audio_format_t *format = nullptr) const {
         return mxr_select_audio_source_addr(h_, sink, audio_ip, audio_port, format);
     }
+    mxr_result_t select_source_addr(BayUid sink, const mxr_v2ip_route_t &route, const mxr_audio_format_t *format = nullptr) const {
+        return mxr_select_source_addr(h_, sink, &route, format);
+    }
     mxr_result_t set_bay_name(BayUid bay, const char *name) const {
         return mxr_set_bay_name(h_, bay, name);
     }
@@ -684,6 +687,9 @@ public:
     }
     mxr_result_t send_action(BayUid bay, uint16_t action) const {
         return mxr_send_action(h_, bay, action);
+    }
+    mxr_result_t send_key(BayUid bay, uint16_t key) const {
+        return mxr_send_key(h_, bay, key);
     }
     mxr_result_t power_on(BayUid bay) const {
         return mxr_power_on(h_, bay);
@@ -717,6 +723,13 @@ public:
     }
     mxr_result_t select_audio_endpoint_input(Uid sink, uint16_t sink_endpoint, Uid source, uint16_t source_endpoint) const {
         return mxr_select_audio_endpoint_input(h_, sink, sink_endpoint, source, source_endpoint);
+    }
+    mxr_result_t request_edid(Uid device, bool output) const {
+        return mxr_request_edid(h_, device, output);
+    }
+    /// Asks one device, or - with a zero uid - the whole network.
+    mxr_result_t request_signal_status(Uid device = Uid()) const {
+        return mxr_request_signal_status(h_, device);
     }
     mxr_result_t subscribe_v2ip_stats(Uid device, bool subscribe) const {
         return mxr_subscribe_v2ip_stats(h_, device, subscribe);
@@ -781,6 +794,15 @@ public:
     mxr_result_t bay_signal_details(BayUid bay, mxr_signal_details_t &out) const {
         return mxr_bay_signal_details(h_, bay, &out);
     }
+    mxr_result_t bay_audio_details(BayUid bay, mxr_audio_details_t &out) const {
+        return mxr_bay_audio_details(h_, bay, &out);
+    }
+    /// The EDID a device last reported, empty until one has arrived.
+    std::vector<uint8_t> device_edid(Uid device, bool output) const {
+        std::vector<uint8_t> out(MXR_EDID_LEN);
+        if (mxr_device_edid(h_, device, output, out.data(), out.size()) != MXR_OK) out.clear();
+        return out;
+    }
     mxr_result_t bay_amp_settings(BayUid bay, mxr_amp_zone_settings_t &out) const {
         return mxr_bay_amp_settings(h_, bay, &out);
     }
@@ -825,6 +847,15 @@ public:
     }
     mxr_result_t discover() const {
         return mxr_discover(h_);
+    }
+    /// How many frames from other senders have parsed since `start()`.
+    ///
+    /// No device found and a count that is climbing says the traffic is
+    /// arriving on an interface this client cannot get answers back from.
+    uint64_t frames_received() const {
+        uint64_t out = 0;
+        mxr_frames_received(h_, &out);
+        return out;
     }
 
 private:

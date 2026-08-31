@@ -18,13 +18,14 @@ use crate::event::EventHandler;
 use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, BayNameChange, EdidProfileChange,
-    V2ipAudioFormat,
+    EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, op, protocol_for, Addressee,
     BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile, MultiviewerSource,
-    MultiviewerViewMode, Opcode, RcAction, SendError, StreamAddr, V2ipStreams, HEADER_LEN,
-    PROTOCOL_VERSION, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipStreams, HEADER_LEN,
+    PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::control::ControlError;
@@ -51,6 +52,16 @@ fn refused(result: &Result<(), ControlError>) -> bool {
         result,
         Err(ControlError::Send(SendError::ProtocolTooOld { .. }))
     )
+}
+
+/// A route whose three groups differ, so a pair swapped between slots shows.
+fn route(n: u8) -> V2ipRoute {
+    let at = |last| V2ipRouteTarget::new(Ipv4Addr::new(239, 11, n, last));
+    V2ipRoute {
+        video: at(1),
+        audio: at(2),
+        anc: at(3),
+    }
 }
 
 /// A client that has heard from peers, and the tap on what it sends.
@@ -279,6 +290,9 @@ const GUARDED_SENDS: &[Guarded] = &[
     ("select_audio_source_addr", |r, d| {
         r.select_audio_source_addr(BayUid::new(d, 2), Ipv4Addr::new(239, 1, 1, 1), None, None)
     }),
+    ("select_source_addr", |r, d| {
+        r.select_source_addr(BayUid::new(d, 2), route(1), None)
+    }),
     ("set_bay_name", |r, d| {
         r.set_bay_name(BayUid::new(d, 2), "Kitchen")
     }),
@@ -290,6 +304,12 @@ const GUARDED_SENDS: &[Guarded] = &[
     }),
     ("send_action", |r, d| {
         r.send_action(BayUid::new(d, 2), RcAction::POWER_ON)
+    }),
+    ("send_key", |r, d| {
+        r.send_key(BayUid::new(d, 2), RcKey::PLAY)
+    }),
+    ("request_signal_status", |r, d| {
+        r.request_signal_status(Some(d))
     }),
     ("power_on", |r, d| r.power_on(BayUid::new(d, 2))),
     ("set_volume", |r, d| {
@@ -337,6 +357,9 @@ fn every_guarded_send_checks_the_protocol_floor() {
     // floor from the table, so it starts working on its own if SYS_REBOOT ever
     // gains one.
     assert!(!refused(&f.remote.reboot(old)));
+    // DEV_EDID floors at 0x01 too, and is out of the table for the same
+    // reason: asking the oldest device for its EDID must not be refused.
+    assert!(!refused(&f.remote.request_edid(old, true)));
 
     let current = uid_n(162);
     f.everything(current, 0x28, "NEW0001");
@@ -608,6 +631,225 @@ fn a_control_method_decodes_back_to_what_it_asked_for() {
             .and_then(|v| v.volume_left),
         Some(37),
         "volume also landed on the addressed bay; this handler is sender-keyed"
+    );
+}
+
+/// A manual route names all three streams, and always carries a format.
+///
+/// The three groups are read back out of the registry rather than off the
+/// frame: a group written into the wrong slot is a well-formed address at a
+/// well-formed offset, which only the decode can tell apart. The format is the
+/// separate half - firmware hands whatever this frame carries to the FPGA
+/// unexamined, so a frame with no format leaves a zero sample rate there and
+/// the switch dies with it.
+#[test]
+fn a_manual_route_names_three_streams_and_a_format() {
+    let f = Fixture::new();
+    let (sink, peer) = (uid_n(201), uid_n(202));
+    f.everything(sink, 0x28, "MR0001");
+    f.everything(peer, 0x28, "MR0002");
+
+    f.tap.clear();
+    f.round_trip(
+        "select_source_addr",
+        peer,
+        f.remote
+            .select_source_addr(BayUid::new(sink, 2), route(4), None),
+    );
+
+    // Filed under the device the payload names, not under whoever sent the
+    // frame: this handler is one of the addressed-uid ones.
+    let got = f
+        .remote
+        .v2ip_sink(sink)
+        .expect("the route did not decode at all");
+    for (what, addr, last, port) in [
+        ("video", got.addresses.video, 1, V2IP_PORT_VIDEO),
+        ("audio", got.addresses.audio, 2, V2IP_PORT_AUDIO),
+        ("anc", got.addresses.anc, 3, V2IP_PORT_ANC),
+    ] {
+        assert_eq!(
+            (what, addr.ip, addr.port),
+            (what, Ipv4Addr::new(239, 11, 4, last), port),
+            "an unset port must become the stream's standard one"
+        );
+    }
+    let format = got
+        .audio_fmt
+        .expect("no format on the frame; the FPGA is handed zeroes");
+    assert_eq!(
+        (format.sample_rate, format.channels),
+        (V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_AUDIO_DEFAULT_CHANNELS)
+    );
+}
+
+/// A route slot with no address carries no port either.
+///
+/// Firmware reads the pair together and takes 0.0.0.0 as "leave this stream
+/// where it is", so a port beside it describes nothing. Sending one would also
+/// hide the slot being empty from anything reading the frame back.
+#[test]
+fn an_unset_route_slot_carries_neither_address_nor_port() {
+    let f = Fixture::new();
+    let sink = uid_n(203);
+    f.everything(sink, 0x28, "MR0003");
+
+    f.tap.clear();
+    let mut route = route(5);
+    route.anc = V2ipRouteTarget::default();
+    let _ = f
+        .remote
+        .select_source_addr(BayUid::new(sink, 2), route, None);
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+
+    // The three stream slots start 16 bytes into the payload, eight bytes
+    // apart: address, port, two pad.
+    let anc = &frame[HEADER_LEN + 32..HEADER_LEN + 40];
+    assert_eq!(anc, &[0; 8], "an empty slot must be empty entire");
+}
+
+/// A signal-status request addresses one unit or the whole network, and the
+/// payload is the only thing that says which.
+#[test]
+fn a_signal_status_request_says_who_it_is_for() {
+    let f = Fixture::new();
+    let one = uid_n(204);
+    f.everything(one, 0x28, "SS0003");
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .request_signal_status(Some(one))
+        .expect("the socket is open and the device is above the floor");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        &frame[HEADER_LEN..],
+        one.as_bytes(),
+        "a request for one unit carries its uid and nothing else"
+    );
+
+    f.tap.clear();
+    f.remote
+        .request_signal_status(None)
+        .expect("a broadcast names no device to be refused by");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        frame.len(),
+        HEADER_LEN,
+        "an empty payload is what makes it a broadcast request"
+    );
+}
+
+/// What the two request methods and the key send ask for, decoded back.
+#[derive(Default)]
+struct Asks {
+    edid: Mutex<Vec<EdidRequest>>,
+    keys: Mutex<Vec<KeyTransmitRequest>>,
+}
+
+impl EventHandler for Asks {
+    fn on_edid_requested(&self, _device: DeviceUid, request: EdidRequest) {
+        self.edid.lock().expect("test handler").push(request);
+    }
+
+    fn on_key_transmit_requested(&self, _device: DeviceUid, request: KeyTransmitRequest) {
+        self.keys.lock().expect("test handler").push(request);
+    }
+}
+
+#[test]
+fn an_edid_request_and_a_key_decode_back_to_what_was_asked() {
+    let seen = Arc::new(Asks::default());
+    let f = Fixture::with_handler(Arc::clone(&seen) as Arc<dyn EventHandler>);
+    let (target, peer) = (uid_n(205), uid_n(206));
+    f.everything(target, 0x28, "AK0001");
+    f.everything(peer, 0x28, "AK0002");
+
+    f.tap.clear();
+    f.round_trip("request_edid", peer, f.remote.request_edid(target, true));
+    let ask = seen.edid.lock().expect("test handler").pop().expect("none");
+    assert_eq!(ask.target, target);
+    assert!(ask.output, "the flag is what picks display over source");
+
+    // And the other way, so the assertion above is not passing on a constant.
+    f.round_trip("request_edid", peer, f.remote.request_edid(target, false));
+    let ask = seen.edid.lock().expect("test handler").pop().expect("none");
+    assert!(!ask.output);
+
+    f.round_trip(
+        "send_key",
+        peer,
+        f.remote.send_key(BayUid::new(target, 2), RcKey::PLAY),
+    );
+    let key = seen.keys.lock().expect("test handler").pop().expect("none");
+    assert_eq!(key.target, target);
+    assert_eq!(key.local_bay, 2);
+    assert_eq!(key.key, RcKey::PLAY);
+}
+
+/// An EDID a device reports is kept, so a caller reads it back rather than
+/// having to hold on to one from a callback.
+#[test]
+fn a_reported_edid_is_kept_per_direction() {
+    let f = Fixture::new();
+    let unit = uid_n(207);
+    f.everything(unit, 0x28, "ED0001");
+    assert_eq!(f.remote.edid(unit, true), None);
+
+    // One record per direction, each a flag byte and 256 bytes of EDID. The
+    // two differ in every byte, so a reply filed under the wrong direction
+    // cannot read as the right one.
+    let mut reply = Vec::new();
+    for (output, fill) in [(false, 0x11u8), (true, 0x22)] {
+        reply.push(u8::from(output));
+        reply.extend(std::iter::repeat(fill).take(256));
+    }
+    f.feed(unit, op::DEV_EDID, &reply);
+
+    assert_eq!(f.remote.edid(unit, false), Some(vec![0x11; 256]));
+    assert_eq!(f.remote.edid(unit, true), Some(vec![0x22; 256]));
+}
+
+/// The frame counter separates a quiet mesh from an interface nothing is on.
+///
+/// It counts frames from other senders only. This client's own multicast is
+/// looped back by the host whichever interface was chosen, so counting that
+/// would answer "did anything reach this interface" with yes on every one of
+/// them - which is the single question the counter exists to answer.
+#[test]
+fn frames_from_peers_are_counted_and_this_clients_own_are_not() {
+    let f = Fixture::new();
+    assert_eq!(f.remote.frames_received(), 0);
+
+    let peer = uid_n(208);
+    f.everything(peer, 0x28, "FC0001");
+    let after_peer = f.remote.frames_received();
+    assert!(after_peer > 0, "nothing was counted for a peer's frames");
+
+    // An opcode no handler claims still arrived, so it still counts.
+    f.feed(peer, Opcode(0xFFFF), &[]);
+    assert_eq!(
+        f.remote.frames_received(),
+        after_peer + 1,
+        "a frame nothing decoded was not counted"
+    );
+
+    // This client's own uid, which is what its own loopback carries.
+    f.feed(
+        uid_n(CLIENT),
+        op::SYS_HELLO,
+        &hello_payload(
+            0x28,
+            "MXR Rust",
+            "P9SN00000000",
+            "4.8.0",
+            DeviceFeature::MANAGER,
+        ),
+    );
+    assert_eq!(
+        f.remote.frames_received(),
+        after_peer + 1,
+        "this client's own frame was counted"
     );
 }
 

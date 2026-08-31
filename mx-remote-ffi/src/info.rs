@@ -17,13 +17,14 @@
 use std::ffi::c_char;
 
 use mx_remote::{
-    AmpZoneSettings, ArcStatus, BayInfo, BaySignalDetails, DeviceInfo, DeviceStatus, PowerStatus,
-    AMP_EQ_BANDS,
+    AmpZoneSettings, ArcStatus, BayAudioDetails, BayInfo, BaySignalDetails, DeviceInfo,
+    DeviceStatus, PowerStatus, AMP_EQ_BANDS,
 };
 
 use crate::abi::{
     bay_or_zero, fail, guard, mxr_bay_uid_t, mxr_result_t, mxr_tribool_t, mxr_uid_t, put_str,
 };
+use crate::bits::mxr_signal_type_t;
 use crate::remote::{mxr_remote_t, with, MXR_IP_STRING_LEN};
 
 /// Bytes a device, bay or port name needs, the terminator included.
@@ -246,8 +247,9 @@ pub struct mxr_bay_info_t {
     pub decoder_disabled: mxr_tribool_t,
     /// The signal as the device describes it, empty when it has not.
     pub signal_type: [c_char; MXR_SIGNAL_TYPE_LEN],
-    /// The signal format the device reports, as an `mxr_signal_type_t` value.
-    pub signal_mode: u16,
+    /// The signal format the device reports, packed. Read it with the
+    /// `mxr_signal_type_*` functions.
+    pub signal_mode: mxr_signal_type_t,
     /// Whether audio return is active, and over which connector.
     pub arc: mxr_arc_status_t,
     /// Whether the bay has reported a volume.
@@ -282,6 +284,41 @@ pub struct mxr_bay_info_t {
     pub filtered_count: usize,
 }
 
+/// Bytes in one EDID: a base block and exactly one extension block.
+pub const MXR_EDID_LEN: usize = 256;
+
+/// The audio a bay signal report describes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_audio_details_t {
+    /// How the stream is encoded: 0 unknown, 1 L-PCM, 2 high bit rate.
+    pub format: u8,
+    /// Channel count.
+    pub channels: u8,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// Whether the source sent a CTA-861 audio infoframe at all.
+    ///
+    /// Zero is a coding type a source can claim, so without this flag a source
+    /// that said nothing could not be told from one that claimed zero.
+    pub has_coding: bool,
+    /// The coding type the source claims, meaningful only when `has_coding`
+    /// is set.
+    pub coding: u8,
+}
+
+impl From<BayAudioDetails> for mxr_audio_details_t {
+    fn from(d: BayAudioDetails) -> Self {
+        Self {
+            format: d.format,
+            channels: d.channels,
+            sample_rate: d.sample_rate,
+            has_coding: d.coding.is_some(),
+            coding: d.coding.unwrap_or(0),
+        }
+    }
+}
+
 /// The signal a bay measures, beyond the description in
 /// [`mxr_bay_info_t::signal_type`].
 #[repr(C)]
@@ -296,7 +333,7 @@ pub struct mxr_signal_details_t {
     /// The bay status word from the report's bay block.
     pub status: u32,
     /// The signal type the bay is scaling to.
-    pub scaling: u16,
+    pub scaling: mxr_signal_type_t,
 }
 
 /// A ProAmp8 zone's gain, delay, tone and power settings.
@@ -582,6 +619,98 @@ pub unsafe extern "C" fn mxr_bay_signal_details(
                 "the bay has reported no signal details",
             ),
         }
+    })
+}
+
+/// Fills `out` with the audio a bay's signal report describes.
+///
+/// Separate from `mxr_bay_signal_details()` because a report can carry video
+/// and no audio: the video block is filled in whenever there is a signal,
+/// while the audio block appears only once the source claims one. Fails with
+/// `MXR_ERR_NOT_REPORTED` where the report carried none.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// [`mxr_audio_details_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_bay_audio_details(
+    remote: *const mxr_remote_t,
+    bay: mxr_bay_uid_t,
+    out: *mut mxr_audio_details_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if out.is_null() {
+            return null_out("audio details");
+        }
+        let Some(info) = r.remote.bay(bay.into()) else {
+            return fail(
+                mxr_result_t::MXR_ERR_NOT_FOUND,
+                &format!("no bay {}", mx_remote::BayUid::from(bay)),
+            );
+        };
+        match info.signal_details.and_then(|d| d.audio) {
+            Some(audio) => {
+                // SAFETY: checked non-null just above.
+                unsafe { *out = audio.into() };
+                mxr_result_t::MXR_OK
+            }
+            None => fail(
+                mxr_result_t::MXR_ERR_NOT_REPORTED,
+                "the bay has reported no audio alongside its signal",
+            ),
+        }
+    })
+}
+
+/// Copies the EDID a device last reported into `out`.
+///
+/// `output` picks the EDID of the display on the device's output over the one
+/// the device presents to the source on its input. Ask for one with
+/// `mxr_request_edid()`; until a device has answered, or been overheard
+/// answering a peer, this fails with `MXR_ERR_NOT_REPORTED`.
+///
+/// `cap` must be at least `MXR_EDID_LEN`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at `cap` writable
+/// bytes.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_device_edid(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    output: bool,
+    out: *mut u8,
+    cap: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if out.is_null() {
+            return null_out("edid");
+        }
+        if cap < MXR_EDID_LEN {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                &format!("an EDID needs {MXR_EDID_LEN} bytes, and {cap} were offered"),
+            );
+        }
+        let Some(edid) = r.remote.edid(device.into(), output) else {
+            return fail(
+                mxr_result_t::MXR_ERR_NOT_REPORTED,
+                "the device has reported no EDID",
+            );
+        };
+        // A record is one block and one extension, and the receive path drops
+        // a reply of any other length, so this is the whole of what arrived.
+        let n = edid.len().min(MXR_EDID_LEN);
+        // SAFETY: out is non-null with at least MXR_EDID_LEN writable bytes,
+        // checked above, and n is no larger.
+        unsafe { std::ptr::copy_nonoverlapping(edid.as_ptr(), out, n) };
+        mxr_result_t::MXR_OK
     })
 }
 

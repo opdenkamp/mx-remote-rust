@@ -24,6 +24,634 @@
 #define MXR_UID_STRING_LEN 36
 
 /**
+ * Receives infrared.
+ */
+#define MXR_FEATURE_IR_RX (1 << 0)
+
+/**
+ * Transmits infrared.
+ */
+#define MXR_FEATURE_IR_TX (1 << 1)
+
+/**
+ * Speaks CEC.
+ */
+#define MXR_FEATURE_CEC (1 << 2)
+
+/**
+ * Acts as a V2IP stream source.
+ */
+#define MXR_FEATURE_V2IP_SOURCE (1 << 3)
+
+/**
+ * Acts as a V2IP stream sink.
+ */
+#define MXR_FEATURE_V2IP_SINK (1 << 4)
+
+/**
+ * Routes video.
+ */
+#define MXR_FEATURE_VIDEO_ROUTING (1 << 5)
+
+/**
+ * Routes audio.
+ */
+#define MXR_FEATURE_AUDIO_ROUTING (1 << 6)
+
+/**
+ * Controls volume.
+ */
+#define MXR_FEATURE_VOLUME_CONTROL (1 << 7)
+
+/**
+ * Supports audio return.
+ */
+#define MXR_FEATURE_AUDIO_RETURN (1 << 8)
+
+/**
+ * Passes remote-control commands through.
+ */
+#define MXR_FEATURE_REMOTE_CONTROL (1 << 9)
+
+/**
+ * Installer setup has been completed.
+ */
+#define MXR_FEATURE_SETUP_COMPLETED (1 << 10)
+
+/**
+ * Is the master of its mesh.
+ */
+#define MXR_FEATURE_MESH_MASTER (1 << 11)
+
+/**
+ * Has a notification pending.
+ */
+#define MXR_FEATURE_STATUS_NOTIFY (1 << 12)
+
+/**
+ * Has a warning pending.
+ */
+#define MXR_FEATURE_STATUS_WARNING (1 << 13)
+
+/**
+ * Has an error pending.
+ */
+#define MXR_FEATURE_STATUS_ERROR (1 << 14)
+
+/**
+ * Is about to reboot.
+ */
+#define MXR_FEATURE_STATUS_REBOOT (1 << 15)
+
+/**
+ * Is a member of a mesh.
+ */
+#define MXR_FEATURE_MESH_MEMBER (1 << 16)
+
+/**
+ * Is an audio amplifier.
+ */
+#define MXR_FEATURE_AUDIO_AMPLIFIER (1 << 17)
+
+/**
+ * Is still booting.
+ */
+#define MXR_FEATURE_BOOTING (1 << 18)
+
+/**
+ * Is a management client rather than a device.
+ */
+#define MXR_FEATURE_MANAGER (1 << 19)
+
+/**
+ * Is in power-save mode.
+ */
+#define MXR_FEATURE_STATUS_POWER_SAVE (1 << 20)
+
+/**
+ * Supports meshing.
+ */
+#define MXR_FEATURE_MESH (1 << 21)
+
+/**
+ * Is a multiviewer.
+ */
+#define MXR_FEATURE_MULTIVIEWER (1 << 22)
+
+/**
+ * Has crashed since it last booted.
+ */
+#define MXR_FEATURE_STATUS_CRASHED (1 << 23)
+
+/**
+ * Supports video walls.
+ */
+#define MXR_FEATURE_VIDEO_WALL (1 << 24)
+
+/**
+ * Initialises the configuration it broadcasts.
+ *
+ * Firmware without this bit sends a device configuration built over
+ * uninitialised memory, so fields it did not mean to write carry junk.
+ */
+#define MXR_FEATURE_CONFIG_INITIALISED (1 << 25)
+
+/**
+ * Set while the device is in its boot loader.
+ */
+#define MXR_FEATURE_BOOT_BIT (1 << 31)
+
+/**
+ * HDMI output.
+ */
+#define MXR_BAY_HDMI_OUT (1 << 0)
+
+/**
+ * HDMI input.
+ */
+#define MXR_BAY_HDMI_IN (1 << 1)
+
+/**
+ * Digital audio output.
+ */
+#define MXR_BAY_AUDIO_DIG_OUT (1 << 2)
+
+/**
+ * Digital audio input.
+ */
+#define MXR_BAY_AUDIO_DIG_IN (1 << 3)
+
+/**
+ * Analogue audio output.
+ */
+#define MXR_BAY_AUDIO_ANA_OUT (1 << 4)
+
+/**
+ * Analogue audio input.
+ */
+#define MXR_BAY_AUDIO_ANA_IN (1 << 5)
+
+/**
+ * Infrared input.
+ */
+#define MXR_BAY_IR_IN (1 << 6)
+
+/**
+ * Infrared output.
+ */
+#define MXR_BAY_IR_OUT (1 << 7)
+
+/**
+ * Amplified audio output.
+ */
+#define MXR_BAY_AUDIO_AMP_OUT (1 << 8)
+
+/**
+ * Remote-control output.
+ */
+#define MXR_BAY_RC_OUT (1 << 9)
+
+/**
+ * Remote-control input.
+ */
+#define MXR_BAY_RC_IN (1 << 10)
+
+/**
+ * Dolby decoding.
+ */
+#define MXR_BAY_DOLBY (1 << 11)
+
+/**
+ * Switches itself off when idle.
+ */
+#define MXR_BAY_AUTO_OFF (1 << 12)
+
+/**
+ * Is a remote V2IP source.
+ */
+#define MXR_BAY_V2IP_SOURCE_REMOTE (1 << 13)
+
+/**
+ * Is a remote V2IP sink.
+ */
+#define MXR_BAY_V2IP_SINK_REMOTE (1 << 14)
+
+/**
+ * Is a local V2IP source.
+ */
+#define MXR_BAY_V2IP_SOURCE_LOCAL (1 << 15)
+
+/**
+ * Is a local V2IP sink.
+ */
+#define MXR_BAY_V2IP_SINK_LOCAL (1 << 16)
+
+/**
+ * The bay reports a fault.
+ */
+#define MXR_BAY_STATUS_FAULT (1 << 0)
+
+/**
+ * The bay is hidden from the user interface.
+ */
+#define MXR_BAY_STATUS_HIDDEN (1 << 1)
+
+/**
+ * The bay has power.
+ */
+#define MXR_BAY_STATUS_POWERED (1 << 2)
+
+/**
+ * A signal is present.
+ */
+#define MXR_BAY_STATUS_SIGNAL_DETECTED (1 << 3)
+
+/**
+ * Hot-plug detect is asserted.
+ */
+#define MXR_BAY_STATUS_HPD_DETECTED (1 << 4)
+
+/**
+ * The signal is scrambled.
+ */
+#define MXR_BAY_STATUS_SIGNAL_SCRAMBLE (1 << 5)
+
+/**
+ * An HDBaseT link is up.
+ */
+#define MXR_BAY_STATUS_HDBT_CONNECTED (1 << 6)
+
+/**
+ * A CEC device answered.
+ */
+#define MXR_BAY_STATUS_CEC_DETECTED (1 << 7)
+
+/**
+ * The attached device was powered on.
+ */
+#define MXR_BAY_STATUS_POWERED_ON (1 << 8)
+
+/**
+ * The attached device was powered off.
+ */
+#define MXR_BAY_STATUS_POWERED_OFF (1 << 9)
+
+/**
+ * Audio return over HDMI is active.
+ */
+#define MXR_BAY_STATUS_AUDIO_ARC_HDMI (1 << 10)
+
+/**
+ * Audio return over optical is active.
+ */
+#define MXR_BAY_STATUS_AUDIO_ARC_OPTIC (1 << 11)
+
+/**
+ * Audio return over analogue is active.
+ */
+#define MXR_BAY_STATUS_AUDIO_ARC_ANALOG (1 << 12)
+
+/**
+ * The bay is offline.
+ */
+#define MXR_BAY_STATUS_OFFLINE (1 << 13)
+
+/**
+ * The V2IP decoder is disabled.
+ */
+#define MXR_BAY_STATUS_DECODER_DISABLE (1 << 14)
+
+/**
+ * The V2IP encoder is disabled.
+ */
+#define MXR_BAY_STATUS_ENCODER_DISABLE (1 << 15)
+
+/**
+ * CEC is switched off for this bay.
+ */
+#define MXR_BAY_STATUS_CEC_DISABLED (1 << 20)
+
+/**
+ * The V2IP encoder reports an error.
+ */
+#define MXR_BAY_STATUS_ENCODER_ERROR (1 << 21)
+
+/**
+ * Accepts audio.
+ */
+#define MXR_AUDIO_INPUT (1 << 0)
+
+/**
+ * Produces audio.
+ */
+#define MXR_AUDIO_OUTPUT (1 << 1)
+
+/**
+ * Sends a V2IP audio stream.
+ */
+#define MXR_AUDIO_V2IP_TX (1 << 2)
+
+/**
+ * Receives a V2IP audio stream.
+ */
+#define MXR_AUDIO_V2IP_RX (1 << 3)
+
+/**
+ * Carries HDMI audio.
+ */
+#define MXR_AUDIO_HDMI (1 << 4)
+
+/**
+ * Is an analogue RCA connector.
+ */
+#define MXR_AUDIO_RCA (1 << 5)
+
+/**
+ * Is an S/PDIF connector.
+ */
+#define MXR_AUDIO_SPDIF (1 << 6)
+
+/**
+ * Drives a trigger output.
+ */
+#define MXR_AUDIO_TRIGGER (1 << 7)
+
+/**
+ * Can be muted.
+ */
+#define MXR_AUDIO_MUTE (1 << 8)
+
+/**
+ * Can be routed to as an input.
+ */
+#define MXR_AUDIO_ROUTE_INPUT (1 << 9)
+
+/**
+ * Can be routed from as an output.
+ */
+#define MXR_AUDIO_ROUTE_OUTPUT (1 << 10)
+
+/**
+ * Accepts "no input" as a route.
+ */
+#define MXR_AUDIO_ROUTE_IN_NONE (1 << 11)
+
+/**
+ * Is an amplifier output.
+ */
+#define MXR_AUDIO_AMP_OUTPUT (1 << 12)
+
+/**
+ * Has a volume control.
+ */
+#define MXR_AUDIO_VOLUME_CONTROL (1 << 13)
+
+/**
+ * Has a gain control.
+ */
+#define MXR_AUDIO_GAIN_CONTROL (1 << 14)
+
+/**
+ * Digit 0.
+ */
+#define MXR_KEY_NUM0 0
+
+/**
+ * Digit 1.
+ */
+#define MXR_KEY_NUM1 1
+
+/**
+ * Digit 2.
+ */
+#define MXR_KEY_NUM2 2
+
+/**
+ * Digit 3.
+ */
+#define MXR_KEY_NUM3 3
+
+/**
+ * Digit 4.
+ */
+#define MXR_KEY_NUM4 4
+
+/**
+ * Digit 5.
+ */
+#define MXR_KEY_NUM5 5
+
+/**
+ * Digit 6.
+ */
+#define MXR_KEY_NUM6 6
+
+/**
+ * Digit 7.
+ */
+#define MXR_KEY_NUM7 7
+
+/**
+ * Digit 8.
+ */
+#define MXR_KEY_NUM8 8
+
+/**
+ * Digit 9.
+ */
+#define MXR_KEY_NUM9 9
+
+/**
+ * Confirm the highlighted item.
+ */
+#define MXR_KEY_SELECT 10
+
+/**
+ * Go back one step.
+ */
+#define MXR_KEY_BACK 11
+
+/**
+ * Navigate up.
+ */
+#define MXR_KEY_UP 12
+
+/**
+ * Navigate down.
+ */
+#define MXR_KEY_DOWN 13
+
+/**
+ * Navigate left.
+ */
+#define MXR_KEY_LEFT 14
+
+/**
+ * Navigate right.
+ */
+#define MXR_KEY_RIGHT 15
+
+/**
+ * Open the main menu.
+ */
+#define MXR_KEY_MENU 16
+
+/**
+ * Open the content menu.
+ */
+#define MXR_KEY_CONTENT_MENU 17
+
+/**
+ * Next channel.
+ */
+#define MXR_KEY_CHANNEL_UP 18
+
+/**
+ * Previous channel.
+ */
+#define MXR_KEY_CHANNEL_DOWN 19
+
+/**
+ * Start playback.
+ */
+#define MXR_KEY_PLAY 20
+
+/**
+ * Pause playback.
+ */
+#define MXR_KEY_PAUSE 21
+
+/**
+ * Stop playback.
+ */
+#define MXR_KEY_STOP 22
+
+/**
+ * Start recording.
+ */
+#define MXR_KEY_RECORD 23
+
+/**
+ * Fast forward.
+ */
+#define MXR_KEY_FAST_FORWARD 24
+
+/**
+ * Rewind.
+ */
+#define MXR_KEY_REWIND 25
+
+/**
+ * Red colour key.
+ */
+#define MXR_KEY_RED 26
+
+/**
+ * Green colour key.
+ */
+#define MXR_KEY_GREEN 27
+
+/**
+ * Yellow colour key.
+ */
+#define MXR_KEY_YELLOW 28
+
+/**
+ * Blue colour key.
+ */
+#define MXR_KEY_BLUE 29
+
+/**
+ * Open help.
+ */
+#define MXR_KEY_HELP 30
+
+/**
+ * Show information.
+ */
+#define MXR_KEY_INFORMATION 31
+
+/**
+ * Open teletext.
+ */
+#define MXR_KEY_TEXT 32
+
+/**
+ * Open the programme guide.
+ */
+#define MXR_KEY_GUIDE 33
+
+/**
+ * Open video on demand.
+ */
+#define MXR_KEY_VIDEO_ON_DEMAND 34
+
+/**
+ * Return to the previous channel.
+ */
+#define MXR_KEY_PREVIOUS_CHANNEL 80
+
+/**
+ * Toggle 3D mode.
+ */
+#define MXR_KEY_MODE_3D 81
+
+/**
+ * Toggle subtitles.
+ */
+#define MXR_KEY_SUBTITLE 82
+
+/**
+ * Select an audio track.
+ */
+#define MXR_KEY_SOUND_SELECT 83
+
+/**
+ * Select an input.
+ */
+#define MXR_KEY_INPUT_SELECT 84
+
+/**
+ * Eject the medium.
+ */
+#define MXR_KEY_EJECT 85
+
+/**
+ * Next chapter.
+ */
+#define MXR_KEY_NEXT_CHAPTER 86
+
+/**
+ * Previous chapter.
+ */
+#define MXR_KEY_PREV_CHAPTER 87
+
+/**
+ * Open interactive services.
+ */
+#define MXR_KEY_INTERACTIVE 128
+
+/**
+ * Open search.
+ */
+#define MXR_KEY_SEARCH 129
+
+/**
+ * Sky home key.
+ */
+#define MXR_KEY_SKY 130
+
+/**
+ * Base of the range carrying a raw CEC user-control code.
+ */
+#define MXR_KEY_CUSTOM_CEC 1280
+
+/**
+ * Base of the range carrying a raw Sky key code.
+ */
+#define MXR_KEY_CUSTOM_SKY 2048
+
+/**
  * Bytes a device, bay or port name needs, the terminator included.
  *
  * The wire field is 16 bytes wide. The rest is headroom for the names this
@@ -66,6 +694,11 @@
  * against the core crate's value below so the two cannot drift apart.
  */
 #define MXR_AMP_EQ_BANDS 5
+
+/**
+ * Bytes in one EDID: a base block and exactly one extension block.
+ */
+#define MXR_EDID_LEN 256
 
 /**
  * Bytes an IPv4 address needs when written as text, the terminator included.
@@ -326,6 +959,15 @@ typedef struct {
 } mxr_uid_t;
 
 /**
+ * The signal format a device reports, packed into one 16-bit word.
+ *
+ * Read it with the `mxr_signal_type_*` functions rather than by shifting it
+ * directly: the bit depth in it is an index into a table rather than a depth,
+ * and two different encodings both mean "nothing configured".
+ */
+typedef uint16_t mxr_signal_type_t;
+
+/**
  * A single bay: the device it is on, and its port number there.
  */
 typedef struct {
@@ -352,6 +994,47 @@ typedef struct {
    */
   uint8_t channels;
 } mxr_audio_format_t;
+
+/**
+ * One stream of a route the caller assembles.
+ */
+typedef struct {
+  /**
+   * The multicast group, as a dotted quad. Null or empty sends the slot
+   * zeroed, naming no group for that stream.
+   *
+   * It is not a way to leave one stream alone. The firmware decides
+   * whether a sink has a manual route at all by reading the video and
+   * ancillary slots, so an empty one of those disqualifies the whole
+   * route rather than preserving anything - see
+   * `mxr_select_source_addr()`.
+   */
+  const char *ip;
+  /**
+   * The destination UDP port. Zero means the standard port for the stream
+   * this slot names.
+   */
+  uint16_t port;
+} mxr_stream_addr_t;
+
+/**
+ * The three streams a manual route points a V2IP sink at.
+ */
+typedef struct {
+  /**
+   * The video stream, at port 50020 unless the port says otherwise.
+   */
+  mxr_stream_addr_t video;
+  /**
+   * The audio stream, at port 50022 unless the port says otherwise.
+   */
+  mxr_stream_addr_t audio;
+  /**
+   * The ancillary-data stream, at port 50021 unless the port says
+   * otherwise.
+   */
+  mxr_stream_addr_t anc;
+} mxr_v2ip_route_t;
 
 /**
  * A ProAmp8 zone's gain, delay, tone and power settings.
@@ -617,9 +1300,10 @@ typedef struct {
    */
   char signal_type[MXR_SIGNAL_TYPE_LEN];
   /**
-   * The signal format the device reports, as an `mxr_signal_type_t` value.
+   * The signal format the device reports, packed. Read it with the
+   * `mxr_signal_type_*` functions.
    */
-  uint16_t signal_mode;
+  mxr_signal_type_t signal_mode;
   /**
    * Whether audio return is active, and over which connector.
    */
@@ -704,8 +1388,38 @@ typedef struct {
   /**
    * The signal type the bay is scaling to.
    */
-  uint16_t scaling;
+  mxr_signal_type_t scaling;
 } mxr_signal_details_t;
+
+/**
+ * The audio a bay signal report describes.
+ */
+typedef struct {
+  /**
+   * How the stream is encoded: 0 unknown, 1 L-PCM, 2 high bit rate.
+   */
+  uint8_t format;
+  /**
+   * Channel count.
+   */
+  uint8_t channels;
+  /**
+   * Sample rate in Hz.
+   */
+  uint32_t sample_rate;
+  /**
+   * Whether the source sent a CTA-861 audio infoframe at all.
+   *
+   * Zero is a coding type a source can claim, so without this flag a source
+   * that said nothing could not be told from one that claimed zero.
+   */
+  bool has_coding;
+  /**
+   * The coding type the source claims, meaningful only when `has_coding`
+   * is set.
+   */
+  uint8_t coding;
+} mxr_audio_details_t;
 
 /**
  * How a client finds the network.
@@ -2353,6 +3067,57 @@ mxr_result_t mxr_uid_to_string(mxr_uid_t uid, char *out, size_t cap);
 mxr_result_t mxr_uid_from_string(const char *text, mxr_uid_t *out);
 
 /**
+ * The remote-control type a bay status word carries in bits 16-19.
+ */
+uint8_t mxr_bay_status_rc_type(uint32_t status);
+
+/**
+ * The HDCP version a bay status word carries in bits 22-23.
+ */
+uint8_t mxr_bay_status_hdcp(uint32_t status);
+
+/**
+ * The CTA-861 short video descriptor, zero when the signal is not HDMI.
+ */
+uint8_t mxr_signal_type_svd(mxr_signal_type_t signal_type);
+
+/**
+ * The colour space: 0 RGB, 1 4:4:4, 2 4:2:2, 3 4:2:0.
+ */
+uint8_t mxr_signal_type_colour_space(mxr_signal_type_t signal_type);
+
+/**
+ * Whether the frame rate carries a 1000/1001 clock.
+ */
+bool mxr_signal_type_non_integer(mxr_signal_type_t signal_type);
+
+/**
+ * The bit depth in bits per component, zero where the word names none.
+ *
+ * The field on the wire is an index into a table of four depths, so it is not
+ * the depth: a signal at 12 bits reads 3 there. This converts it.
+ */
+uint8_t mxr_signal_type_bpp(mxr_signal_type_t signal_type);
+
+/**
+ * The raw bit-depth index, for a caller that wants the wire value.
+ *
+ * See `mxr_signal_type_bpp()` for the depth it stands for.
+ */
+uint8_t mxr_signal_type_bpp_index(mxr_signal_type_t signal_type);
+
+/**
+ * Whether the word names a signal format at all.
+ *
+ * A bay with nothing configured says so two ways: a sender that zeroes the
+ * word and stamps the unset bit-depth index, and one that writes a plain
+ * zero. Neither is a format, and the svd and colour space beside them are not
+ * answers either - both read as zero, which is what this word says for "not
+ * HDMI" and "RGB" when it is set.
+ */
+bool mxr_signal_type_is_set(mxr_signal_type_t signal_type);
+
+/**
  * Routes a V2IP sink's video to the stream a source port advertises.
  *
  * # Safety
@@ -2421,6 +3186,35 @@ mxr_result_t mxr_select_audio_source_addr(const mxr_remote_t *remote,
                                           const mxr_audio_format_t *format);
 
 /**
+ * Routes a V2IP sink's video, audio and ancillary streams to multicast groups
+ * the caller names.
+ *
+ * This is the only way to reach a stream no device on the mesh advertises,
+ * such as one the calling program is transmitting itself; the routes by
+ * source port and by name can only name a stream some bay has announced.
+ *
+ * Set all three groups. The firmware decides whether a sink has a manual
+ * route by looking at the video and ancillary groups, so a route that leaves
+ * either unset does not register as one and the sink falls back to the audio
+ * source its mesh picks.
+ *
+ * A null `format` sends 48kHz stereo rather than omitting the field. The
+ * firmware stores whatever the frame carries and hands it to the FPGA
+ * unexamined, so a frame without a format leaves a zero sample rate there,
+ * which the FPGA rejects and which takes the switch down with it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, `route` points at an initialised
+ * [`mxr_v2ip_route_t`] whose addresses are null or NUL-terminated strings,
+ * and `format` is null or points at an initialised [`mxr_audio_format_t`].
+ */
+mxr_result_t mxr_select_source_addr(const mxr_remote_t *remote,
+                                    mxr_bay_uid_t sink,
+                                    const mxr_v2ip_route_t *route,
+                                    const mxr_audio_format_t *format);
+
+/**
  * Renames a bay. The device stores the first 16 bytes.
  *
  * # Safety
@@ -2457,6 +3251,23 @@ mxr_result_t mxr_select_edid_profile(const mxr_remote_t *remote,
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_send_action(const mxr_remote_t *remote, mxr_bay_uid_t bay, uint16_t action);
+
+/**
+ * Sends a remote-control key press to whatever is attached to a bay.
+ *
+ * The device forwards it over CEC, infrared or IP, whichever that bay is
+ * configured for; the caller does not choose. `key` is one of the `MXR_KEY_*`
+ * values, or a raw code above `MXR_KEY_CUSTOM_CEC` or `MXR_KEY_CUSTOM_SKY`.
+ * A value this library has no name for is sent as it was given.
+ *
+ * `mxr_send_action()` names an outcome instead, and lets the device decide
+ * which keys reach it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_send_key(const mxr_remote_t *remote, mxr_bay_uid_t bay, uint16_t key);
 
 /**
  * Powers on what is attached to a bay.
@@ -2586,6 +3397,33 @@ mxr_result_t mxr_select_audio_endpoint_input(const mxr_remote_t *remote,
                                              uint16_t sink_endpoint,
                                              mxr_uid_t source,
                                              uint16_t source_endpoint);
+
+/**
+ * Asks a device for an EDID: the one the display on its output publishes, or
+ * the one the device presents to the source on its input.
+ *
+ * The device answers a moment later. The bytes reach `on_edid_received` and
+ * stay readable through `mxr_device_edid()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_edid(const mxr_remote_t *remote, mxr_uid_t device, bool output);
+
+/**
+ * Asks for a detailed signal report from every bay of one device, or - with
+ * the zero uid - from every bay on the network.
+ *
+ * Devices report on their own when a signal changes, so this is what a client
+ * that has just started needs: without it, a bay that has been showing the
+ * same picture for an hour says nothing until it changes.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_signal_status(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
  * Subscribes to, or unsubscribes from, a device's V2IP statistics.
@@ -2815,6 +3653,44 @@ mxr_result_t mxr_bay_signal_details(const mxr_remote_t *remote,
                                     mxr_signal_details_t *out);
 
 /**
+ * Fills `out` with the audio a bay's signal report describes.
+ *
+ * Separate from `mxr_bay_signal_details()` because a report can carry video
+ * and no audio: the video block is filled in whenever there is a signal,
+ * while the audio block appears only once the source claims one. Fails with
+ * `MXR_ERR_NOT_REPORTED` where the report carried none.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * [`mxr_audio_details_t`].
+ */
+mxr_result_t mxr_bay_audio_details(const mxr_remote_t *remote,
+                                   mxr_bay_uid_t bay,
+                                   mxr_audio_details_t *out);
+
+/**
+ * Copies the EDID a device last reported into `out`.
+ *
+ * `output` picks the EDID of the display on the device's output over the one
+ * the device presents to the source on its input. Ask for one with
+ * `mxr_request_edid()`; until a device has answered, or been overheard
+ * answering a peer, this fails with `MXR_ERR_NOT_REPORTED`.
+ *
+ * `cap` must be at least `MXR_EDID_LEN`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at `cap` writable
+ * bytes.
+ */
+mxr_result_t mxr_device_edid(const mxr_remote_t *remote,
+                             mxr_uid_t device,
+                             bool output,
+                             uint8_t *out,
+                             size_t cap);
+
+/**
  * Fills `out` with an amplifier zone's settings.
  *
  * Fails with `MXR_ERR_NOT_REPORTED` on a bay that is not an amplifier zone or
@@ -2953,6 +3829,24 @@ mxr_result_t mxr_remote_name(const mxr_remote_t *remote, char *out, size_t cap);
  * bytes, and `port` is null or points at a writable `uint16_t`.
  */
 mxr_result_t mxr_remote_target(const mxr_remote_t *remote, char *ip, size_t cap, uint16_t *port);
+
+/**
+ * Writes how many frames from other senders have parsed since
+ * `mxr_remote_start()`.
+ *
+ * It separates a mesh with nothing on it from an interface nothing is on: a
+ * client that has discovered no device but is counting frames is hearing
+ * traffic it cannot get answers from, which on a multi-homed host is what a
+ * wrong `mxr_config_t::local_ip` looks like. Frames this client sent are not
+ * counted, because the host loops its own multicast back whichever interface
+ * was selected.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `uint64_t`.
+ */
+mxr_result_t mxr_frames_received(const mxr_remote_t *remote, uint64_t *out);
 
 /**
  * Writes every device heard from, and returns how many there are.

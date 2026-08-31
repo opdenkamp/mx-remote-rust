@@ -19,18 +19,18 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, HiddenStatus, PowerStatus, V2ipAudioFormat, V2ipStreamSources,
-    VolumeMuteStatus,
+    AmpZoneSettings, HiddenStatus, PowerStatus, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget,
+    V2ipStreamSources, VolumeMuteStatus,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
-    build_bay_hide, build_edid_profile, build_rc_action, build_set_bay_name, build_set_volume,
-    build_stats_request, build_target_only, build_v2ip_manual_source_switch,
-    build_v2ip_source_switch, mv_cmd_payload, mv_sub, op, Addressee, BayUid, DeviceUid,
-    EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
-    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, SendError, StreamAddr, V2ipStreams,
-    DEVICE_NAME_LEN, V2IP_PORT_AUDIO,
+    build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
+    build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
+    build_v2ip_manual_source_switch, build_v2ip_source_switch, mv_cmd_payload, mv_sub, op,
+    Addressee, BayUid, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, RcKey, SendError,
+    StreamAddr, V2ipStreams, DEVICE_NAME_LEN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -162,6 +162,21 @@ fn v2ip_sink(state: &State, uid: BayUid) -> Result<(&Device, &Bay), ControlError
     Ok((device, bay))
 }
 
+/// One route slot as the wire carries it, substituting the stream's standard
+/// port for an unset one.
+///
+/// An unset address sends the slot zeroed, port included: the firmware reads
+/// the pair together, and a port beside 0.0.0.0 describes nothing.
+fn stream_addr(target: V2ipRouteTarget, standard_port: u16) -> StreamAddr {
+    if target.ip.is_unspecified() {
+        return StreamAddr::default();
+    }
+    StreamAddr {
+        ip: target.ip,
+        port: target.port_or(standard_port),
+    }
+}
+
 /// The name as the device will store it: the field is
 /// [`DEVICE_NAME_LEN`] bytes wide, so a longer one is cut there.
 fn stored_name(name: &str) -> String {
@@ -236,6 +251,45 @@ impl Remote {
                 Addressee::device(device),
                 op::V2IP_MANUAL_SRC_SWITCH,
                 build_v2ip_manual_source_switch(device.uid, streams, format),
+            ))
+        })
+    }
+
+    /// Routes this V2IP sink's video, audio and ancillary streams to
+    /// multicast groups the caller names.
+    ///
+    /// This is the only way to reach a stream no device on the mesh
+    /// advertises, such as one the host is transmitting itself; a route by
+    /// source port can only name a stream some bay has announced.
+    ///
+    /// Set all three groups. The firmware decides whether a sink has a manual
+    /// route by looking at the video and ancillary groups, so a route that
+    /// leaves either unset does not register as one and the sink falls back to
+    /// the audio source its mesh picks.
+    ///
+    /// An unset `format` sends [`V2ipAudioFormat::STANDARD`] rather than
+    /// omitting the trailer. The firmware stores whatever this frame carries
+    /// and hands it to the FPGA unexamined, so a frame without one leaves a
+    /// zero rate and zero channel count there, which the FPGA rejects and
+    /// which takes the switch down with it.
+    pub fn select_source_addr(
+        &self,
+        sink: BayUid,
+        route: V2ipRoute,
+        format: Option<V2ipAudioFormat>,
+    ) -> Result<(), ControlError> {
+        let streams = V2ipStreams {
+            video: stream_addr(route.video, V2IP_PORT_VIDEO),
+            audio: stream_addr(route.audio, V2IP_PORT_AUDIO),
+            anc: stream_addr(route.anc, V2IP_PORT_ANC),
+        };
+        let format = format.unwrap_or(V2ipAudioFormat::STANDARD);
+        self.shared.command(move |state| {
+            let (device, _) = v2ip_sink(state, sink)?;
+            Ok(Command::new(
+                Addressee::device(device),
+                op::V2IP_MANUAL_SRC_SWITCH,
+                build_v2ip_manual_source_switch(device.uid, streams, Some(format)),
             ))
         })
     }
@@ -355,6 +409,23 @@ impl Remote {
                 Addressee::device(device),
                 op::RC_TX_ACTION,
                 build_rc_action(device.uid, bay.port, action),
+            ))
+        })
+    }
+
+    /// Sends a remote-control key press to whatever is attached to a bay.
+    ///
+    /// The device forwards it over CEC, infrared or IP, whichever that bay is
+    /// configured for; the caller does not choose. An action from
+    /// [`Remote::send_action`] names an outcome instead, and the device
+    /// decides which keys reach it.
+    pub fn send_key(&self, bay: BayUid, key: RcKey) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let (device, _) = bay_of(state, bay)?;
+            Ok(Command::new(
+                Addressee::device(device),
+                op::RC_TX_KEY,
+                build_rc_key(device.uid, bay.port, key),
             ))
         })
     }
@@ -564,6 +635,45 @@ impl Remote {
                 Addressee::device(device),
                 op::V2IP_STATS,
                 build_stats_request(device.uid, subscribe),
+            ))
+        })
+    }
+
+    /// Asks a device for an EDID: the one the display on its output
+    /// publishes, or the one it presents to the source on its input.
+    ///
+    /// The device answers with a frame the receive path decodes, so the bytes
+    /// arrive at [`crate::EventHandler::on_edid_received`] and stay readable
+    /// through [`Remote::edid`].
+    pub fn request_edid(&self, device: DeviceUid, output: bool) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let device = device_of(state, device)?;
+            Ok(Command::new(
+                Addressee::device(device),
+                op::DEV_EDID,
+                build_edid_request(device.uid, output),
+            ))
+        })
+    }
+
+    /// Asks for a detailed signal report from every bay of one device, or -
+    /// with no device named - from every bay on the network.
+    ///
+    /// Devices report on their own when a signal changes, so this is what a
+    /// client that has just started needs: without it, a bay that has been
+    /// showing the same picture for an hour says nothing until it changes.
+    pub fn request_signal_status(&self, device: Option<DeviceUid>) -> Result<(), ControlError> {
+        let Some(device) = device else {
+            self.shared
+                .send(&Addressee::Broadcast, op::BAY_SIGNAL_STATUS, &[])?;
+            return Ok(());
+        };
+        self.shared.command(move |state| {
+            let device = device_of(state, device)?;
+            Ok(Command::new(
+                Addressee::device(device),
+                op::BAY_SIGNAL_STATUS,
+                build_target_only(device.uid),
             ))
         })
     }

@@ -11,7 +11,7 @@ use std::net::Ipv4Addr;
 
 use crate::types::{AmpZoneSettings, V2ipAudioFormat, VolumeMuteStatus};
 
-use super::enums::{EdidProfile, RcAction};
+use super::enums::{EdidProfile, RcAction, RcKey};
 use super::opcode::audio_sub;
 use super::uid::DeviceUid;
 
@@ -197,12 +197,37 @@ pub(crate) fn build_rc_action(target: DeviceUid, port: u16, action: RcAction) ->
     p
 }
 
-/// Builds the `V2IP_STATS` (0x3F) request payload.
-pub(crate) fn build_stats_request(target: DeviceUid, subscribe: bool) -> Vec<u8> {
+/// Builds the `RC_TX_KEY` (0x0C) payload for one bay.
+///
+/// The device routes the key onward over CEC, infrared or IP, whichever that
+/// bay is configured for.
+pub(crate) fn build_rc_key(target: DeviceUid, port: u16, key: RcKey) -> Vec<u8> {
+    let mut p = Vec::with_capacity(20);
+    p.extend_from_slice(target.as_bytes());
+    p.extend_from_slice(&port.to_le_bytes());
+    p.extend_from_slice(&key.to_wire().to_le_bytes());
+    p
+}
+
+/// Builds a payload naming a target device and one flag byte.
+fn build_target_and_flag(target: DeviceUid, flag: bool) -> Vec<u8> {
     let mut p = Vec::with_capacity(17);
     p.extend_from_slice(target.as_bytes());
-    p.push(u8::from(subscribe));
+    p.push(u8::from(flag));
     p
+}
+
+/// Builds the `V2IP_STATS` (0x3F) request payload.
+pub(crate) fn build_stats_request(target: DeviceUid, subscribe: bool) -> Vec<u8> {
+    build_target_and_flag(target, subscribe)
+}
+
+/// Builds the `DEV_EDID` (0x07) request payload.
+///
+/// `output` asks for the EDID of the display on the device's output rather
+/// than the one the device presents on its input.
+pub(crate) fn build_edid_request(target: DeviceUid, output: bool) -> Vec<u8> {
+    build_target_and_flag(target, output)
 }
 
 /// Builds the `V2IP_SOURCE_SWITCH` (0x1F) payload: the sink uid, then the

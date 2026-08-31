@@ -475,6 +475,12 @@ fn a_captured_input_report_decodes_to_the_mode_it_names() {
     // it. Read as an ordinal rather than a bitmask, 0x00810188 names nothing.
     assert!(!d.status.has(BayStatus::HPD_DETECTED));
 
+    let audio = d.audio.expect("no audio block");
+    assert_eq!(audio.format, 1); // L-PCM
+    assert_eq!(audio.channels, 2);
+    assert_eq!(audio.sample_rate, 48_000);
+    assert_eq!(audio.coding, Some(0));
+
     // An input bay scales nothing, and says so with a plain zero.
     assert!(!d.scaling.is_set());
 }
@@ -494,6 +500,11 @@ fn a_captured_output_report_decodes_to_the_mode_it_names() {
     // plugged in" from "no picture".
     assert!(d.status.has(BayStatus::HPD_DETECTED));
     assert!(d.status.has(BayStatus::SIGNAL_DETECTED));
+
+    let audio = d.audio.expect("no audio block");
+    assert_eq!(audio.format, 1);
+    assert_eq!(audio.channels, 2);
+    assert_eq!(audio.sample_rate, 48_000);
 
     // Nothing configured, said the other way: the word is zeroed and stamped
     // with the bpp index that names no depth.
@@ -518,6 +529,38 @@ fn a_bay_with_no_signal_is_described_as_firmware_describes_it() {
 
     assert_eq!(h.bay(0).signal_type.as_deref(), Some("no signal"));
     assert_eq!(h.bay(0).signal_detected, Some(false));
+}
+
+#[test]
+fn a_report_without_the_audio_bit_carries_no_audio() {
+    let mut h = captured_unit();
+    let mut p = CAPTURED_INPUT_BAY;
+    // Support flags with the audio block and the infoframe both unclaimed.
+    p[2] &= !((1 << 4) | (1 << 5));
+    h.feed(op::BAY_SIGNAL_STATUS, &p);
+
+    let d = h.bay(0).signal_details.expect("no signal details");
+    assert!(d.audio.is_none(), "the block was not claimed");
+}
+
+#[test]
+fn a_source_sending_no_infoframe_claims_no_coding() {
+    let mut h = captured_unit();
+    let mut p = CAPTURED_INPUT_BAY;
+    // The audio block stays claimed; only the infoframe bit goes.
+    p[2] &= !(1 << 4);
+    h.feed(op::BAY_SIGNAL_STATUS, &p);
+
+    let audio = h
+        .bay(0)
+        .signal_details
+        .expect("details")
+        .audio
+        .expect("audio");
+    // The rest of the block is still read.
+    assert_eq!(audio.sample_rate, 48_000);
+    // Zero is a coding type a source can claim, so "did not say" is not it.
+    assert_eq!(audio.coding, None);
 }
 
 #[test]

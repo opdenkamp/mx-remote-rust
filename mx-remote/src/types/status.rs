@@ -208,6 +208,27 @@ pub struct BaySignalDetails {
     pub scaling: MxrSignalType,
     /// Video clock rate in Hz.
     pub clock_rate: u32,
+    /// The audio alongside the video, absent when the report carried no audio
+    /// block.
+    pub audio: Option<BayAudioDetails>,
+}
+
+/// The audio a bay signal report describes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BayAudioDetails {
+    /// How the stream is encoded: 0 unknown, 1 L-PCM, 2 high bit rate.
+    pub format: u8,
+    /// Channel count.
+    pub channels: u8,
+    /// Sample rate in Hz.
+    pub sample_rate: u32,
+    /// The coding type the source claims in its CTA-861 audio infoframe, and
+    /// `None` where it sent no infoframe at all.
+    ///
+    /// The two are worth keeping apart: a source sending no infoframe leaves
+    /// this field zero, and zero is also what a source claiming "refer to the
+    /// stream header" writes into it.
+    pub coding: Option<u8>,
 }
 
 /// A firmware component reported by a device.

@@ -95,7 +95,8 @@ pub(crate) enum Addressee {
         /// The version the device reports.
         protocol: u16,
     },
-    /// No single recipient. Only discovery, hello and the monitoring pulse.
+    /// No single recipient: discovery, hello, the monitoring pulse and the
+    /// signal-status request that asks every bay on the network to report.
     Broadcast,
 }
 

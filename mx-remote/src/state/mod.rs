@@ -34,6 +34,8 @@ pub(crate) struct State {
     pub(crate) uid: DeviceUid,
     pub(crate) devices: HashMap<DeviceUid, Device>,
     pub(crate) links: BayLinks,
+    /// How many frames from other senders have parsed, whatever they carried.
+    pub(crate) frames_received: u64,
 }
 
 impl State {
@@ -42,6 +44,7 @@ impl State {
             uid,
             devices: HashMap::new(),
             links: BayLinks::default(),
+            frames_received: 0,
         }
     }
 

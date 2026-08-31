@@ -372,6 +372,40 @@ pub unsafe extern "C" fn mxr_remote_target(
     })
 }
 
+/// Writes how many frames from other senders have parsed since
+/// `mxr_remote_start()`.
+///
+/// It separates a mesh with nothing on it from an interface nothing is on: a
+/// client that has discovered no device but is counting frames is hearing
+/// traffic it cannot get answers from, which on a multi-homed host is what a
+/// wrong `mxr_config_t::local_ip` looks like. Frames this client sent are not
+/// counted, because the host loops its own multicast back whichever interface
+/// was selected.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_frames_received(
+    remote: *const mxr_remote_t,
+    out: *mut u64,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if out.is_null() {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "frame count output pointer is null",
+            );
+        }
+        // SAFETY: checked non-null just above.
+        unsafe { *out = r.remote.frames_received() };
+        mxr_result_t::MXR_OK
+    })
+}
+
 /// Writes every device heard from, and returns how many there are.
 ///
 /// Returns the full count even when it exceeds `cap`, so calling with `cap`

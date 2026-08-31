@@ -59,12 +59,17 @@ pub(super) fn edid(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         }),
         len if len == EDID_SIZE + 1 || len == 2 * (EDID_SIZE + 1) => {
             for record in p.chunks_exact(EDID_SIZE + 1) {
+                let output = record[0] != 0;
+                let data = record[1..].to_vec();
+                // Kept as well as announced: the event carries the bytes past
+                // the handler, and a caller that asked for an EDID reads it
+                // back rather than having to hold on to one from a callback.
+                if let Some(d) = state.device_mut(device) {
+                    d.set_edid(output, data.clone());
+                }
                 ev.push(Event::EdidReceived {
                     device,
-                    edid: EdidRecord {
-                        output: record[0] != 0,
-                        data: record[1..].to_vec(),
-                    },
+                    edid: EdidRecord { output, data },
                 });
             }
         }

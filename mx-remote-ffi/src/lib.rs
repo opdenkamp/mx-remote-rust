@@ -68,6 +68,7 @@
 //! per event.
 
 mod abi;
+mod bits;
 mod control;
 mod events;
 mod info;
@@ -77,6 +78,7 @@ mod subsystems;
 // Everything the header exposes, re-exported flat: a Rust caller reaching for
 // this crate wants the same surface a C caller gets, under the same names.
 pub use abi::*;
+pub use bits::*;
 pub use control::*;
 pub use events::*;
 pub use info::*;

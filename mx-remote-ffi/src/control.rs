@@ -17,13 +17,14 @@
 use std::ffi::c_char;
 
 use mx_remote::{
-    EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
+    DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, RcAction, V2ipAudioFormat,
+    MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipRoute,
+    V2ipRouteTarget,
 };
 
 use crate::abi::{
-    fail, from_control, mxr_bay_uid_t, mxr_result_t, mxr_tribool_t, mxr_uid_t, req_str,
+    fail, from_control, mxr_bay_uid_t, mxr_result_t, mxr_tribool_t, mxr_uid_t, opt_str, req_str,
 };
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
@@ -186,6 +187,116 @@ pub unsafe extern "C" fn mxr_select_audio_source_addr(
     })
 }
 
+/// One stream of a route the caller assembles.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_stream_addr_t {
+    /// The multicast group, as a dotted quad. Null or empty sends the slot
+    /// zeroed, naming no group for that stream.
+    ///
+    /// It is not a way to leave one stream alone. The firmware decides
+    /// whether a sink has a manual route at all by reading the video and
+    /// ancillary slots, so an empty one of those disqualifies the whole
+    /// route rather than preserving anything - see
+    /// `mxr_select_source_addr()`.
+    pub ip: *const c_char,
+    /// The destination UDP port. Zero means the standard port for the stream
+    /// this slot names.
+    pub port: u16,
+}
+
+/// The three streams a manual route points a V2IP sink at.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_route_t {
+    /// The video stream, at port 50020 unless the port says otherwise.
+    pub video: mxr_stream_addr_t,
+    /// The audio stream, at port 50022 unless the port says otherwise.
+    pub audio: mxr_stream_addr_t,
+    /// The ancillary-data stream, at port 50021 unless the port says
+    /// otherwise.
+    pub anc: mxr_stream_addr_t,
+}
+
+/// Reads one route slot, where a null or empty address means "not set".
+///
+/// # Safety
+///
+/// `slot.ip` is null or a NUL-terminated string.
+unsafe fn to_target(slot: mxr_stream_addr_t, what: &str) -> Result<V2ipRouteTarget, mxr_result_t> {
+    // SAFETY: the caller guarantees a NUL-terminated string or null.
+    let text = unsafe { opt_str(slot.ip) }?.unwrap_or_default();
+    if text.is_empty() {
+        return Ok(V2ipRouteTarget::default());
+    }
+    match text.parse() {
+        Ok(ip) => Ok(V2ipRouteTarget {
+            ip,
+            port: slot.port,
+        }),
+        Err(_) => Err(fail(
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+            &format!("{what} is not an IPv4 address: {text:?}"),
+        )),
+    }
+}
+
+/// Routes a V2IP sink's video, audio and ancillary streams to multicast groups
+/// the caller names.
+///
+/// This is the only way to reach a stream no device on the mesh advertises,
+/// such as one the calling program is transmitting itself; the routes by
+/// source port and by name can only name a stream some bay has announced.
+///
+/// Set all three groups. The firmware decides whether a sink has a manual
+/// route by looking at the video and ancillary groups, so a route that leaves
+/// either unset does not register as one and the sink falls back to the audio
+/// source its mesh picks.
+///
+/// A null `format` sends 48kHz stereo rather than omitting the field. The
+/// firmware stores whatever the frame carries and hands it to the FPGA
+/// unexamined, so a frame without a format leaves a zero sample rate there,
+/// which the FPGA rejects and which takes the switch down with it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, `route` points at an initialised
+/// [`mxr_v2ip_route_t`] whose addresses are null or NUL-terminated strings,
+/// and `format` is null or points at an initialised [`mxr_audio_format_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_select_source_addr(
+    remote: *const mxr_remote_t,
+    sink: mxr_bay_uid_t,
+    route: *const mxr_v2ip_route_t,
+    format: *const mxr_audio_format_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(route) = (unsafe { route.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the route pointer is null",
+            );
+        };
+        // SAFETY: the caller guarantees NUL-terminated strings or null.
+        let route = unsafe {
+            match (
+                to_target(route.video, "video ip"),
+                to_target(route.audio, "audio ip"),
+                to_target(route.anc, "anc ip"),
+            ) {
+                (Ok(video), Ok(audio), Ok(anc)) => V2ipRoute { video, audio, anc },
+                (Err(code), _, _) | (_, Err(code), _) | (_, _, Err(code)) => return code,
+            }
+        };
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let format = unsafe { format.as_ref() }.map(|f| (*f).into());
+        from_control(r.remote.select_source_addr(sink.into(), route, format))
+    })
+}
+
 // ---- bays ----
 
 /// Renames a bay. The device stores the first 16 bytes.
@@ -267,6 +378,32 @@ pub unsafe extern "C" fn mxr_send_action(
             r.remote
                 .send_action(bay.into(), RcAction::from_wire(action)),
         )
+    })
+}
+
+/// Sends a remote-control key press to whatever is attached to a bay.
+///
+/// The device forwards it over CEC, infrared or IP, whichever that bay is
+/// configured for; the caller does not choose. `key` is one of the `MXR_KEY_*`
+/// values, or a raw code above `MXR_KEY_CUSTOM_CEC` or `MXR_KEY_CUSTOM_SKY`.
+/// A value this library has no name for is sent as it was given.
+///
+/// `mxr_send_action()` names an outcome instead, and lets the device decide
+/// which keys reach it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_key(
+    remote: *const mxr_remote_t,
+    bay: mxr_bay_uid_t,
+    key: u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.send_key(bay.into(), RcKey::from_wire(key)))
     })
 }
 
@@ -511,6 +648,52 @@ pub unsafe extern "C" fn mxr_select_audio_endpoint_input(
 }
 
 // ---- devices ----
+
+/// Asks a device for an EDID: the one the display on its output publishes, or
+/// the one the device presents to the source on its input.
+///
+/// The device answers a moment later. The bytes reach `on_edid_received` and
+/// stay readable through `mxr_device_edid()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_edid(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    output: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_edid(device.into(), output))
+    })
+}
+
+/// Asks for a detailed signal report from every bay of one device, or - with
+/// the zero uid - from every bay on the network.
+///
+/// Devices report on their own when a signal changes, so this is what a client
+/// that has just started needs: without it, a bay that has been showing the
+/// same picture for an hour says nothing until it changes.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_signal_status(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let uid = DeviceUid::from(device);
+        let target = (uid != DeviceUid::ZERO).then_some(uid);
+        from_control(r.remote.request_signal_status(target))
+    })
+}
 
 /// Subscribes to, or unsubscribes from, a device's V2IP statistics.
 ///

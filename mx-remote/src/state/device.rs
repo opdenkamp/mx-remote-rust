@@ -81,6 +81,10 @@ pub(crate) struct Device {
     pub(crate) audio: Option<AudioEndpoints>,
     pub(crate) multiviewer: Option<MultiviewerStatus>,
     pub(crate) dolby_settings: Option<AmpDolbySettings>,
+    /// The EDID the device presents on its input, as it last reported it.
+    pub(crate) edid_input: Option<Vec<u8>>,
+    /// The EDID of the display on the device's output, as it last reported it.
+    pub(crate) edid_output: Option<Vec<u8>>,
 }
 
 impl Device {
@@ -114,6 +118,27 @@ impl Device {
             audio: None,
             multiviewer: None,
             dolby_settings: None,
+            edid_input: None,
+            edid_output: None,
+        }
+    }
+
+    /// The EDID the device last reported, for its output or for its input.
+    pub(crate) fn edid(&self, output: bool) -> Option<&[u8]> {
+        let stored = if output {
+            &self.edid_output
+        } else {
+            &self.edid_input
+        };
+        stored.as_deref()
+    }
+
+    /// Stores an EDID the device reported.
+    pub(crate) fn set_edid(&mut self, output: bool, data: Vec<u8>) {
+        if output {
+            self.edid_output = Some(data);
+        } else {
+            self.edid_input = Some(data);
         }
     }
 

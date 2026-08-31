@@ -395,6 +395,29 @@ impl Remote {
         })
     }
 
+    /// The EDID a device last reported: the display on its output, or the one
+    /// it presents to the source on its input.
+    ///
+    /// Filled in by a device's answer to [`Remote::request_edid`], and by any
+    /// answer to a peer's request that this client happened to hear.
+    pub fn edid(&self, uid: DeviceUid, output: bool) -> Option<Vec<u8>> {
+        self.shared
+            .read(|state| state.device(uid)?.edid(output).map(<[u8]>::to_vec))
+    }
+
+    /// How many frames from other senders have parsed since this client
+    /// started.
+    ///
+    /// It separates a mesh with nothing on it from an interface nothing is on:
+    /// a client that has discovered no device but is counting frames is
+    /// hearing traffic it cannot get answers from, which on a multi-homed host
+    /// is what a wrong [`Config::local_ip`] looks like. Frames this client
+    /// sent are not counted, because the host loops its own multicast back
+    /// whichever interface was selected.
+    pub fn frames_received(&self) -> u64 {
+        self.shared.read(|state| state.frames_received)
+    }
+
     /// Every firmware image a device reports a version for.
     pub fn firmware(&self, uid: DeviceUid) -> Vec<(FirmwareType, FirmwareVersion)> {
         self.shared.read(|state| {
