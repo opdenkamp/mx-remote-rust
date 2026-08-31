@@ -51,7 +51,8 @@ pub(crate) use tx::{Addressee, ProtocolTarget, Tx};
 // from a release build rather than carried there behind an allow.
 #[cfg(test)]
 pub(crate) use frame::HEADER_LEN;
-#[cfg(test)]
+// Read only by the socket tests, which are Linux-only.
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) use netif::default_local_ip;
 #[cfg(test)]
 pub(crate) use opcode::protocol_for;

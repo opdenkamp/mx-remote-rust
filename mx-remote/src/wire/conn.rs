@@ -151,14 +151,20 @@ impl Conn {
     }
 
     /// Whether the socket is in a reuseport group, which it must not be.
-    #[cfg(test)]
+    ///
+    /// Linux-only, because SO_REUSEPORT is: socket2 declares no accessor on
+    /// Windows, so naming one there does not compile.
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn reuse_port(&self) -> io::Result<bool> {
         socket2::SockRef::from(&self.socket).reuse_port()
     }
 
     /// Waits for a datagram for up to `timeout`, restoring the socket's own
     /// timeout afterwards.
-    #[cfg(test)]
+    ///
+    /// Carried on the one target whose socket tests call it, so that a build
+    /// for any other does not warn on it as dead.
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn recv_within(&self, timeout: Duration) -> Option<Vec<u8>> {
         self.socket.set_read_timeout(Some(timeout)).ok()?;
         let mut buf = vec![0u8; 2048];
