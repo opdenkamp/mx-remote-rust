@@ -312,7 +312,13 @@ struct Bit {
 /// found none, which is the one answer it must not be able to give.
 fn workspace_source(path: &str) -> String {
     let full = format!("{}/../{path}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{full} could not be read: {e}"))
+    let text =
+        std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{full} could not be read: {e}"));
+    // The blocks are located by patterns written with "\n", so a checkout that
+    // stores line endings the other way would report a missing block rather
+    // than a constant that disagrees - a pass this test must not be able to
+    // give for a reason that has nothing to do with the constants.
+    text.replace("\r\n", "\n")
 }
 
 /// Evaluates the expressions these constants are written with: a decimal or
