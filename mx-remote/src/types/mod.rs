@@ -21,6 +21,8 @@ pub use commands::{
     EdidRecord, EdidRequest, FactoryResetRequest, IrCapture, IrMeta, IrTransmitRequest,
     KeyTransmitRequest, MultiviewerCommand, PduState, RcSettings, RebootRequest, SetRouteRequest,
     V2ipBlacklistChange, V2ipPowerSaveRequest, V2ipTilingConfig, VideoWallCommand, VideoWallOp,
+    VideoWallWindow, VIDEO_WALL_CLEARED, VIDEO_WALL_MIN_SIZE, VIDEO_WALL_POS_ALIGN,
+    VIDEO_WALL_WIDTH_ALIGN,
 };
 pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{MacAddress, NetworkPortStatus, UtpCableStatus, UtpLinkErrors, VctStatus};

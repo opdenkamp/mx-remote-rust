@@ -189,6 +189,9 @@ pub(crate) fn from_control(result: Result<(), ControlError>) -> mxr_result_t {
         | ControlError::UnknownBay(_)
         | ControlError::UnknownSource(_) => mxr_result_t::MXR_ERR_NOT_FOUND,
         ControlError::Unsupported(_) => mxr_result_t::MXR_ERR_UNSUPPORTED,
+        // The caller's to fix, not the device's, so it reads as an argument
+        // error rather than as something the addressee cannot do.
+        ControlError::InvalidRequest(_) => mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
         ControlError::NotReported(_) => mxr_result_t::MXR_ERR_NOT_REPORTED,
         ControlError::Send(e) => send_code(e),
         // ControlError is non_exhaustive: an unnamed variant is a failure

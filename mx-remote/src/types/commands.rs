@@ -319,6 +319,111 @@ impl fmt::Display for VideoWallOp {
     }
 }
 
+/// Where a video-wall sink's window sits, and the picture it was measured
+/// against.
+///
+/// The raster travels with the window because only the sender knows what the
+/// installer drew against; a sink deriving it from what it happens to be
+/// showing would place the window against the wrong picture.
+///
+/// Nothing on the receiving side is guaranteed to check any of this, so
+/// [`VideoWallWindow::validate`] runs before every send. See
+/// [`crate::Remote::store_video_wall`] for why that matters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VideoWallWindow {
+    /// Window origin, horizontal. A multiple of [`VIDEO_WALL_POS_ALIGN`].
+    pub pos_x: u16,
+    /// Window origin, vertical. No alignment constraint.
+    pub pos_y: u16,
+    /// Window width. A multiple of [`VIDEO_WALL_WIDTH_ALIGN`], and at least
+    /// [`VIDEO_WALL_MIN_SIZE`] unless it is zero.
+    pub width: u16,
+    /// Window height, at least [`VIDEO_WALL_MIN_SIZE`] unless it is zero. No
+    /// alignment constraint.
+    pub height: u16,
+    /// Active picture width the window was measured against.
+    pub raster_w: u16,
+    /// Active picture height the window was measured against.
+    pub raster_h: u16,
+}
+
+/// The window that clears a wall, leaving the sink showing the whole frame.
+///
+/// A zero width or height is how the protocol spells "clear", so this is a
+/// legitimate window rather than one that fails [`VideoWallWindow::validate`].
+pub const VIDEO_WALL_CLEARED: VideoWallWindow = VideoWallWindow {
+    pos_x: 0,
+    pos_y: 0,
+    width: 0,
+    height: 0,
+    raster_w: 0,
+    raster_h: 0,
+};
+
+/// The horizontal origin must be a multiple of this: the sink's buffer start
+/// has to be aligned.
+pub const VIDEO_WALL_POS_ALIGN: u16 = 64;
+
+/// The width must be a multiple of this: the sink's pipeline moves four pixels
+/// per clock.
+pub const VIDEO_WALL_WIDTH_ALIGN: u16 = 4;
+
+/// Neither side of a window may be smaller than this, the scaler's minimum.
+pub const VIDEO_WALL_MIN_SIZE: u16 = 64;
+
+impl VideoWallWindow {
+    /// Reports whether this window clears the wall rather than placing one.
+    pub const fn is_cleared(&self) -> bool {
+        self.width == 0 || self.height == 0
+    }
+
+    /// Checks the geometry the sink is not guaranteed to check itself.
+    ///
+    /// The three alignments follow the sink's hardware and a live unit reports
+    /// them over HTTP, so a caller with access to one can read them rather
+    /// than trust the constants here. The containment rule has no such source:
+    /// it is checked by the sink's own HTTP path and by nothing on the mesh
+    /// path, at any version.
+    ///
+    /// A cleared window passes: zero is the protocol's word for "clear", not a
+    /// window too small to draw.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.is_cleared() {
+            return Ok(());
+        }
+        if self.pos_x % VIDEO_WALL_POS_ALIGN != 0 {
+            return Err("a video wall window's horizontal origin must be a multiple of 64");
+        }
+        if self.width % VIDEO_WALL_WIDTH_ALIGN != 0 {
+            return Err("a video wall window's width must be a multiple of 4");
+        }
+        if self.width < VIDEO_WALL_MIN_SIZE || self.height < VIDEO_WALL_MIN_SIZE {
+            return Err("neither side of a video wall window may be smaller than 64");
+        }
+        // Widened, because a window running off the raster is exactly the case
+        // where a u16 sum would wrap and read as containment.
+        if u32::from(self.pos_x) + u32::from(self.width) > u32::from(self.raster_w)
+            || u32::from(self.pos_y) + u32::from(self.height) > u32::from(self.raster_h)
+        {
+            return Err("a video wall window must fit inside the raster it names");
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for VideoWallWindow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_cleared() {
+            return f.write_str("cleared");
+        }
+        write!(
+            f,
+            "{}x{}+{}+{} of {}x{}",
+            self.width, self.height, self.pos_x, self.pos_y, self.raster_w, self.raster_h
+        )
+    }
+}
+
 /// Asks one sink to crop its source to a wall window.
 ///
 /// This replaces the sink's window outright: unlike a V2IP device config, no

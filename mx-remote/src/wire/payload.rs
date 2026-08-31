@@ -9,7 +9,10 @@
 
 use std::net::Ipv4Addr;
 
-use crate::types::{AmpZoneSettings, V2ipAudioFormat, VolumeMuteStatus};
+use crate::types::{
+    AmpZoneSettings, V2ipAudioFormat, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+    VIDEO_WALL_CLEARED,
+};
 
 use super::enums::{EdidProfile, RcAction, RcKey};
 use super::opcode::audio_sub;
@@ -220,6 +223,43 @@ fn build_target_and_flag(target: DeviceUid, flag: bool) -> Vec<u8> {
     let mut p = Vec::with_capacity(17);
     p.extend_from_slice(target.as_bytes());
     p.push(u8::from(flag));
+    p
+}
+
+/// Builds the `V2IP_VIDEO_WALL` (0x49) payload.
+///
+/// 32 bytes, not the 29 its fields add up to. The struct is 4-aligned, so the
+/// op byte at 28 is followed by three bytes of padding, and the receiver's
+/// length check is against the whole struct: a payload built by summing field
+/// widths is three bytes short and dropped without a word.
+///
+/// A revert carries no window, so the geometry is zeroed rather than filled
+/// in: the receiver ignores it, and sending a window there would leave a
+/// reader of the frame unable to tell a revert from a placement.
+pub(crate) fn build_video_wall(
+    target: DeviceUid,
+    window: VideoWallWindow,
+    op: VideoWallOp,
+) -> Vec<u8> {
+    let mut p = Vec::with_capacity(32);
+    p.extend_from_slice(target.as_bytes());
+    let geometry = if op == VideoWallOp::REVERT {
+        VIDEO_WALL_CLEARED
+    } else {
+        window
+    };
+    for value in [
+        geometry.pos_x,
+        geometry.pos_y,
+        geometry.width,
+        geometry.height,
+        geometry.raster_w,
+        geometry.raster_h,
+    ] {
+        p.extend_from_slice(&value.to_le_bytes());
+    }
+    p.push(op.to_wire());
+    p.extend_from_slice(&[0, 0, 0]);
     p
 }
 

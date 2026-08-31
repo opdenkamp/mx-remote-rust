@@ -28,17 +28,18 @@ use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, HiddenStatus, PowerStatus, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget,
-    V2ipStreamSources, VolumeMuteStatus,
+    V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
     build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
-    build_v2ip_manual_source_switch, build_v2ip_source_switch, mv_cmd_payload, mv_sub, op,
-    Addressee, BayUid, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
-    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, RcKey, SendError,
-    StreamAddr, V2ipStreams, DEVICE_NAME_LEN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_manual_source_switch, build_v2ip_source_switch, build_video_wall, mv_cmd_payload,
+    mv_sub, op, Addressee, BayUid, DeviceUid, EdidProfile, MultiviewerAspectRatio,
+    MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode,
+    MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, Opcode,
+    RcAction, RcKey, SendError, StreamAddr, V2ipStreams, DEVICE_NAME_LEN, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -55,6 +56,13 @@ pub enum ControlError {
     UnknownSource(String),
     /// The addressee does not do what was asked of it.
     Unsupported(&'static str),
+    /// The request breaks a rule the device is not guaranteed to check.
+    ///
+    /// Nothing was sent. This is the caller's to fix, and it is separate from
+    /// [`ControlError::Unsupported`] because the device would have taken the
+    /// frame: refusing here is this library declining to let a bad value
+    /// reach hardware that may store it rather than reject it.
+    InvalidRequest(&'static str),
     /// The device has not reported something the request is assembled from.
     ///
     /// Unlike [`ControlError::Unsupported`], the same call may succeed once it
@@ -71,6 +79,7 @@ impl fmt::Display for ControlError {
             Self::UnknownBay(uid) => write!(f, "no bay {uid}"),
             Self::UnknownSource(name) => write!(f, "no source named {name:?}"),
             Self::Unsupported(what) => f.write_str(what),
+            Self::InvalidRequest(what) => f.write_str(what),
             Self::NotReported(what) => write!(f, "{what} has not been reported"),
             Self::Send(e) => write!(f, "{e}"),
         }
@@ -719,6 +728,75 @@ impl Remote {
         self.shared
             .send(&Addressee::Broadcast, op::SYS_MONITORING_PULSE, &[])?;
         Ok(())
+    }
+
+    // ---- video wall ----
+
+    /// Shows a window on a sink's video wall without persisting it.
+    ///
+    /// The window survives until the sink is told otherwise or restarts.
+    /// [`Remote::revert_video_wall`] puts back whatever was stored.
+    ///
+    /// Pass [`crate::VIDEO_WALL_CLEARED`] to show the whole frame again.
+    pub fn preview_video_wall(
+        &self,
+        sink: DeviceUid,
+        window: VideoWallWindow,
+    ) -> Result<(), ControlError> {
+        self.set_video_wall(sink, window, VideoWallOp::PREVIEW)
+    }
+
+    /// Persists a window as a sink's video wall.
+    ///
+    /// The geometry is checked here, before anything is sent, because the sink
+    /// is not guaranteed to check it. A sink running a video-wall module older
+    /// than 2026083100 writes the window to its configuration *before* asking
+    /// its video processor to apply it, and the processor's refusal does not
+    /// undo that write - so an out-of-spec window survives a reboot and is
+    /// re-offered on every stream restart until something else replaces it. A
+    /// power cycle does not clear it.
+    ///
+    /// Nothing acknowledges this frame either way, so an `Ok` says only that
+    /// it was sent. Read the sink's state back to learn what it did.
+    ///
+    /// Pass [`crate::VIDEO_WALL_CLEARED`] to store "show the whole frame".
+    pub fn store_video_wall(
+        &self,
+        sink: DeviceUid,
+        window: VideoWallWindow,
+    ) -> Result<(), ControlError> {
+        self.set_video_wall(sink, window, VideoWallOp::STORE)
+    }
+
+    /// Restores the window a sink has stored, discarding a preview.
+    ///
+    /// Carries no window of its own: the sink already holds the one this puts
+    /// back.
+    pub fn revert_video_wall(&self, sink: DeviceUid) -> Result<(), ControlError> {
+        self.set_video_wall(sink, VIDEO_WALL_CLEARED, VideoWallOp::REVERT)
+    }
+
+    /// The one send behind the three video-wall methods.
+    ///
+    /// Validation sits here rather than in each of them, so an operation added
+    /// later cannot reach the wire without it.
+    fn set_video_wall(
+        &self,
+        sink: DeviceUid,
+        window: VideoWallWindow,
+        op: VideoWallOp,
+    ) -> Result<(), ControlError> {
+        if op != VideoWallOp::REVERT {
+            window.validate().map_err(ControlError::InvalidRequest)?;
+        }
+        self.shared.command(move |state| {
+            let device = device_of(state, sink)?;
+            Ok(Command::new(
+                Addressee::device(device),
+                op::V2IP_VIDEO_WALL,
+                build_video_wall(device.uid, window, op),
+            ))
+        })
     }
 
     // ---- multiviewer ----

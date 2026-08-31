@@ -21,11 +21,11 @@ use crate::types::{
     EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget, VOLUME_UNCHANGED,
 };
 use crate::wire::{
-    build_amp_zone_settings, build_v2ip_manual_source_switch, op, protocol_for, Addressee,
-    BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile, MultiviewerSource,
-    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipStreams, HEADER_LEN,
-    PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
+    Addressee, BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile,
+    MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr,
+    V2ipStreams, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::control::ControlError;
@@ -334,6 +334,10 @@ const GUARDED_SENDS: &[Guarded] = &[
         r.set_multiviewer_video_source(d, 1, MultiviewerSource::from_wire(2))
     }),
     ("multiviewer_auto_route", |r, d| r.multiviewer_auto_route(d)),
+    ("store_video_wall", |r, d| {
+        r.store_video_wall(d, VIDEO_WALL_CLEARED)
+    }),
+    ("revert_video_wall", |r, d| r.revert_video_wall(d)),
 ];
 
 #[test]
@@ -632,6 +636,236 @@ fn a_control_method_decodes_back_to_what_it_asked_for() {
         Some(37),
         "volume also landed on the addressed bay; this handler is sender-keyed"
     );
+}
+
+/// A video-wall frame is 32 bytes, which is three more than its fields.
+///
+/// The struct is 4-aligned, so the op byte at 28 is followed by padding, and
+/// the sink's length check is against the whole struct. A payload built by
+/// summing field widths is 29 bytes and is dropped without a word, which is
+/// the one mistake on this opcode that no amount of correct geometry saves.
+/// Collects the video-wall commands a round trip decodes back.
+#[derive(Default)]
+struct Walls(Mutex<Vec<VideoWallCommand>>);
+
+impl EventHandler for Walls {
+    fn on_video_wall_command(&self, _device: DeviceUid, command: VideoWallCommand) {
+        self.0.lock().expect("test handler").push(command);
+    }
+}
+
+impl Walls {
+    fn latest(&self) -> VideoWallCommand {
+        *self
+            .0
+            .lock()
+            .expect("test handler")
+            .last()
+            .expect("no wall command")
+    }
+}
+
+#[test]
+fn a_video_wall_frame_carries_its_trailing_padding() {
+    let f = Fixture::new();
+    let sink = uid_n(210);
+    f.everything(sink, 0x28, "VW0001");
+    f.connect();
+
+    let window = VideoWallWindow {
+        pos_x: 1920,
+        pos_y: 1080,
+        width: 1920,
+        height: 1080,
+        raster_w: 3840,
+        raster_h: 2160,
+    };
+
+    f.tap.clear();
+    f.remote
+        .store_video_wall(sink, window)
+        .expect("the socket is open and the device is above the floor");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        frame.len() - HEADER_LEN,
+        32,
+        "the payload is not the size the sink measures against"
+    );
+    // The declared length has to agree, or the frame is dropped on the
+    // envelope check before any handler sees it.
+    assert_eq!(u16::from_le_bytes([frame[22], frame[23]]), 32);
+    assert_eq!(frame[HEADER_LEN + 28], VideoWallOp::STORE.to_wire());
+}
+
+/// Each of the three operations decodes back to what it asked for.
+#[test]
+fn a_video_wall_command_decodes_back_to_what_was_asked() {
+    let seen = Arc::new(Walls::default());
+    let f = Fixture::with_handler(Arc::clone(&seen) as Arc<dyn EventHandler>);
+    let (sink, peer) = (uid_n(211), uid_n(212));
+    f.everything(sink, 0x28, "VW0002");
+    f.everything(peer, 0x28, "VW0003");
+
+    // Every field a distinct value, so a pair read into each other's offsets
+    // cannot pass.
+    let window = VideoWallWindow {
+        pos_x: 64,
+        pos_y: 100,
+        width: 128,
+        height: 200,
+        raster_w: 1920,
+        raster_h: 1080,
+    };
+
+    f.tap.clear();
+    f.round_trip(
+        "store_video_wall",
+        peer,
+        f.remote.store_video_wall(sink, window),
+    );
+    let got = seen.latest();
+    assert_eq!(got.target, sink);
+    assert_eq!((got.pos_x, got.pos_y), (64, 100));
+    assert_eq!((got.width, got.height), (128, 200));
+    assert_eq!((got.raster_w, got.raster_h), (1920, 1080));
+    assert_eq!(got.op, VideoWallOp::STORE);
+    assert!(got.has_window() && !got.is_cleared());
+
+    // A preview names the same window under a different operation, which is
+    // the only thing separating "show this" from "keep this".
+    f.round_trip(
+        "preview_video_wall",
+        peer,
+        f.remote.preview_video_wall(sink, window),
+    );
+    assert_eq!(seen.latest().op, VideoWallOp::PREVIEW);
+
+    // A clear is a window of zero size rather than an operation of its own.
+    f.round_trip(
+        "clear",
+        peer,
+        f.remote.store_video_wall(sink, VIDEO_WALL_CLEARED),
+    );
+    let got = seen.latest();
+    assert!(got.is_cleared());
+    assert_eq!(got.op, VideoWallOp::STORE);
+
+    // A revert carries no window, and must not carry the last one sent: a
+    // reader of the frame could not otherwise tell it from a placement.
+    f.round_trip("revert_video_wall", peer, f.remote.revert_video_wall(sink));
+    let got = seen.latest();
+    assert_eq!(got.op, VideoWallOp::REVERT);
+    assert!(!got.has_window());
+    assert_eq!((got.pos_x, got.pos_y, got.width, got.height), (0, 0, 0, 0));
+
+    // That the frame above was empty proves nothing on its own, because the
+    // method hands the builder a cleared window to begin with. The guarantee
+    // lives in the builder, so reaching it is the only way to test it: a
+    // future caller with a window in hand must not be able to put one on a
+    // revert. The six geometry fields sit between the uid and the op byte.
+    let carried = build_video_wall(sink, window, VideoWallOp::REVERT);
+    assert_eq!(
+        &carried[16..28],
+        &[0u8; 12],
+        "a revert carried the geometry it was handed"
+    );
+    assert_eq!(carried[28], VideoWallOp::REVERT.to_wire());
+}
+
+/// A window the sink might store and never recover from is refused here.
+///
+/// Every case is one value away from the accepted window, and that window is
+/// asserted to pass, so a guard that refused everything would fail this too.
+#[test]
+fn an_out_of_spec_video_wall_window_is_refused_before_it_is_sent() {
+    let f = Fixture::new();
+    let sink = uid_n(213);
+    f.everything(sink, 0x28, "VW0004");
+    f.connect();
+
+    let good = VideoWallWindow {
+        pos_x: 64,
+        pos_y: 100,
+        width: 128,
+        height: 200,
+        raster_w: 1920,
+        raster_h: 1080,
+    };
+    assert!(
+        f.remote.store_video_wall(sink, good).is_ok(),
+        "the window every case below is derived from was itself refused"
+    );
+
+    let refused = |what: &str, window: VideoWallWindow| {
+        f.tap.clear();
+        let got = f.remote.store_video_wall(sink, window);
+        assert!(
+            matches!(got, Err(ControlError::InvalidRequest(_))),
+            "{what}: {got:?}"
+        );
+        assert!(
+            f.tap.frames().is_empty(),
+            "{what} reached the wire despite being refused"
+        );
+    };
+
+    refused(
+        "origin off the 64-pixel grid",
+        VideoWallWindow { pos_x: 32, ..good },
+    );
+    refused(
+        "width not a multiple of 4",
+        VideoWallWindow { width: 130, ..good },
+    );
+    refused(
+        "width below the scaler minimum",
+        VideoWallWindow { width: 60, ..good },
+    );
+    refused(
+        "height below the scaler minimum",
+        VideoWallWindow { height: 63, ..good },
+    );
+    refused(
+        "window running off the raster horizontally",
+        VideoWallWindow {
+            pos_x: 1920,
+            ..good
+        },
+    );
+    refused(
+        "window running off the raster vertically",
+        VideoWallWindow {
+            pos_y: 1000,
+            ..good
+        },
+    );
+    // A sum that wraps reads as containment on 16 bits.
+    refused(
+        "origin and width wrapping past the raster",
+        VideoWallWindow {
+            pos_x: 65472,
+            width: 128,
+            ..good
+        },
+    );
+
+    // The vertical origin and the height carry no alignment rule, so a client
+    // generalising the two horizontal ones would refuse windows a sink takes.
+    for window in [
+        VideoWallWindow { pos_y: 101, ..good },
+        VideoWallWindow {
+            height: 201,
+            ..good
+        },
+    ] {
+        assert!(
+            f.remote.store_video_wall(sink, window).is_ok(),
+            "an unaligned vertical value was refused: {window}"
+        );
+    }
+
+    // A revert is not geometry and is never refused for it.
+    assert!(f.remote.revert_video_wall(sink).is_ok());
 }
 
 /// A volume command that names no mute state says so on the wire.

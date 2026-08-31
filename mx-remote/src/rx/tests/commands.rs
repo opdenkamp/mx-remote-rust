@@ -317,6 +317,56 @@ fn a_video_wall_command_separates_a_clear_from_a_revert() {
     assert!(!got.is_cleared());
 }
 
+/// The length check is a floor, matching the device's.
+///
+/// A sink accepts a payload longer than the struct and ignores the tail, which
+/// is the room the frame has to grow in. A decoder that demanded the exact
+/// size would refuse traffic the sinks are already honouring, and would do it
+/// on the wire rather than at a version boundary anyone could see coming.
+#[test]
+fn a_longer_video_wall_frame_is_read_and_its_tail_ignored() {
+    let mut h = command_device(47);
+    let target = uid_n(78);
+
+    let mut p = poisoned(48);
+    p[0..16].copy_from_slice(target.as_bytes());
+    p[16..18].copy_from_slice(&64u16.to_le_bytes());
+    p[18..20].copy_from_slice(&128u16.to_le_bytes());
+    p[20..22].copy_from_slice(&1920u16.to_le_bytes());
+    p[22..24].copy_from_slice(&1080u16.to_le_bytes());
+    p[24..26].copy_from_slice(&3840u16.to_le_bytes());
+    p[26..28].copy_from_slice(&2160u16.to_le_bytes());
+    p[28] = VideoWallOp::STORE.to_wire();
+    // Everything from 29 on stays poisoned: a field read past the struct picks
+    // it up, and the assertions below are all inside the struct.
+    h.feed(op::V2IP_VIDEO_WALL, &p);
+
+    let got = h
+        .events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::VideoWallCommand { command, .. } => Some(*command),
+            _ => None,
+        })
+        .expect("a frame longer than the struct was dropped");
+    assert_eq!(got.target, target);
+    assert_eq!((got.pos_x, got.pos_y), (64, 128));
+    assert_eq!((got.width, got.height), (1920, 1080));
+    assert_eq!((got.raster_w, got.raster_h), (3840, 2160));
+    assert_eq!(got.op, VideoWallOp::STORE);
+
+    // The paired direction: one byte short of the struct is still dropped, so
+    // the acceptance above is not one a decoder without any check would give.
+    let before = h.events.len();
+    h.feed(op::V2IP_VIDEO_WALL, &poisoned(31));
+    assert_eq!(
+        h.events.len(),
+        before,
+        "a payload shorter than the struct produced an event"
+    );
+}
+
 // ---- remote control ----
 
 #[test]

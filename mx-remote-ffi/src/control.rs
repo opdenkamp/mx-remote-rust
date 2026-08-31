@@ -20,7 +20,7 @@ use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipRoute,
-    V2ipRouteTarget,
+    V2ipRouteTarget, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -760,6 +760,164 @@ pub unsafe extern "C" fn mxr_send_monitoring_pulse(remote: *const mxr_remote_t) 
     // SAFETY: the caller guarantees a live handle or null.
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| from_control(r.remote.send_monitoring_pulse()))
+}
+
+// ---- video wall ----
+
+/// Where a video-wall sink's window sits, and the picture it was measured
+/// against.
+///
+/// `pos_x` must be a multiple of `MXR_VIDEO_WALL_POS_ALIGN`, `width` a
+/// multiple of `MXR_VIDEO_WALL_WIDTH_ALIGN`, both sides at least
+/// `MXR_VIDEO_WALL_MIN_SIZE`, and the window must fit inside the raster it
+/// names. `pos_y` and `height` have no alignment rule. A zero `width` or
+/// `height` clears the wall and is checked against none of this.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_video_wall_window_t {
+    /// Window origin, horizontal.
+    pub pos_x: u16,
+    /// Window origin, vertical.
+    pub pos_y: u16,
+    /// Window width, or zero to clear the wall.
+    pub width: u16,
+    /// Window height, or zero to clear the wall.
+    pub height: u16,
+    /// Active picture width the window was measured against.
+    pub raster_w: u16,
+    /// Active picture height the window was measured against.
+    pub raster_h: u16,
+}
+
+/// A window's horizontal origin must be a multiple of this.
+pub const MXR_VIDEO_WALL_POS_ALIGN: u16 = 64;
+
+/// A window's width must be a multiple of this.
+pub const MXR_VIDEO_WALL_WIDTH_ALIGN: u16 = 4;
+
+/// Neither side of a window may be smaller than this.
+pub const MXR_VIDEO_WALL_MIN_SIZE: u16 = 64;
+
+impl From<mxr_video_wall_window_t> for VideoWallWindow {
+    fn from(w: mxr_video_wall_window_t) -> Self {
+        Self {
+            pos_x: w.pos_x,
+            pos_y: w.pos_y,
+            width: w.width,
+            height: w.height,
+            raster_w: w.raster_w,
+            raster_h: w.raster_h,
+        }
+    }
+}
+
+/// Reads a window argument, refusing a null pointer.
+unsafe fn wall_window(
+    window: *const mxr_video_wall_window_t,
+) -> Result<VideoWallWindow, mxr_result_t> {
+    // SAFETY: the caller guarantees an initialised struct or null.
+    match unsafe { window.as_ref() } {
+        Some(w) => Ok((*w).into()),
+        None => Err(fail(
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+            "the window pointer is null",
+        )),
+    }
+}
+
+/// Shows a window on a sink's video wall without storing it.
+///
+/// The window lasts until the sink is told otherwise or restarts;
+/// `mxr_revert_video_wall()` puts back whatever it has stored. A zero width or
+/// height shows the whole frame again.
+///
+/// The geometry is checked here and `MXR_ERR_INVALID_ARGUMENT` returned
+/// without sending anything, because the sink is not guaranteed to check it
+/// itself.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `window` points at an initialised
+/// [`mxr_video_wall_window_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_preview_video_wall(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+    window: *const mxr_video_wall_window_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        match unsafe { wall_window(window) } {
+            Ok(w) => from_control(r.remote.preview_video_wall(sink.into(), w)),
+            Err(code) => code,
+        }
+    })
+}
+
+/// Stores a window as a sink's video wall.
+///
+/// The geometry is checked here and `MXR_ERR_INVALID_ARGUMENT` returned
+/// without sending anything. That matters more than a refused frame would: a
+/// sink running a video-wall module older than 2026083100 writes the window to
+/// its configuration before asking its video processor to apply it, and the
+/// processor's refusal does not undo the write, so an out-of-spec window
+/// survives a reboot and is re-offered on every stream restart until something
+/// else replaces it. A power cycle does not clear it.
+///
+/// A zero width or height stores "show the whole frame".
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `window` points at an initialised
+/// [`mxr_video_wall_window_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_store_video_wall(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+    window: *const mxr_video_wall_window_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        match unsafe { wall_window(window) } {
+            Ok(w) => from_control(r.remote.store_video_wall(sink.into(), w)),
+            Err(code) => code,
+        }
+    })
+}
+
+/// Restores the window a sink has stored, discarding a preview.
+///
+/// Carries no window: the sink already holds the one this puts back.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_revert_video_wall(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.revert_video_wall(sink.into()))
+    })
 }
 
 // ---- multiviewer ----

@@ -652,6 +652,21 @@
 #define MXR_KEY_CUSTOM_SKY 2048
 
 /**
+ * A window's horizontal origin must be a multiple of this.
+ */
+#define MXR_VIDEO_WALL_POS_ALIGN 64
+
+/**
+ * A window's width must be a multiple of this.
+ */
+#define MXR_VIDEO_WALL_WIDTH_ALIGN 4
+
+/**
+ * Neither side of a window may be smaller than this.
+ */
+#define MXR_VIDEO_WALL_MIN_SIZE 64
+
+/**
  * Bytes a device, bay or port name needs, the terminator included.
  *
  * The wire field is 16 bytes wide. The rest is headroom for the names this
@@ -1100,6 +1115,43 @@ typedef struct {
    */
   uint8_t eq_right[MXR_AMP_EQ_BANDS];
 } mxr_amp_zone_settings_t;
+
+/**
+ * Where a video-wall sink's window sits, and the picture it was measured
+ * against.
+ *
+ * `pos_x` must be a multiple of `MXR_VIDEO_WALL_POS_ALIGN`, `width` a
+ * multiple of `MXR_VIDEO_WALL_WIDTH_ALIGN`, both sides at least
+ * `MXR_VIDEO_WALL_MIN_SIZE`, and the window must fit inside the raster it
+ * names. `pos_y` and `height` have no alignment rule. A zero `width` or
+ * `height` clears the wall and is checked against none of this.
+ */
+typedef struct {
+  /**
+   * Window origin, horizontal.
+   */
+  uint16_t pos_x;
+  /**
+   * Window origin, vertical.
+   */
+  uint16_t pos_y;
+  /**
+   * Window width, or zero to clear the wall.
+   */
+  uint16_t width;
+  /**
+   * Window height, or zero to clear the wall.
+   */
+  uint16_t height;
+  /**
+   * Active picture width the window was measured against.
+   */
+  uint16_t raster_w;
+  /**
+   * Active picture height the window was measured against.
+   */
+  uint16_t raster_h;
+} mxr_video_wall_window_t;
 
 /**
  * What a device is, and what it is doing.
@@ -3473,6 +3525,71 @@ mxr_result_t mxr_reboot(const mxr_remote_t *remote, mxr_uid_t device);
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
+
+/**
+ * Shows a window on a sink's video wall without storing it.
+ *
+ * The window lasts until the sink is told otherwise or restarts;
+ * `mxr_revert_video_wall()` puts back whatever it has stored. A zero width or
+ * height shows the whole frame again.
+ *
+ * The geometry is checked here and `MXR_ERR_INVALID_ARGUMENT` returned
+ * without sending anything, because the sink is not guaranteed to check it
+ * itself.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `window` points at an initialised
+ * [`mxr_video_wall_window_t`].
+ */
+mxr_result_t mxr_preview_video_wall(const mxr_remote_t *remote,
+                                    mxr_uid_t sink,
+                                    const mxr_video_wall_window_t *window);
+
+/**
+ * Stores a window as a sink's video wall.
+ *
+ * The geometry is checked here and `MXR_ERR_INVALID_ARGUMENT` returned
+ * without sending anything. That matters more than a refused frame would: a
+ * sink running a video-wall module older than 2026083100 writes the window to
+ * its configuration before asking its video processor to apply it, and the
+ * processor's refusal does not undo the write, so an out-of-spec window
+ * survives a reboot and is re-offered on every stream restart until something
+ * else replaces it. A power cycle does not clear it.
+ *
+ * A zero width or height stores "show the whole frame".
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `window` points at an initialised
+ * [`mxr_video_wall_window_t`].
+ */
+mxr_result_t mxr_store_video_wall(const mxr_remote_t *remote,
+                                  mxr_uid_t sink,
+                                  const mxr_video_wall_window_t *window);
+
+/**
+ * Restores the window a sink has stored, discarding a preview.
+ *
+ * Carries no window: the sink already holds the one this puts back.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_revert_video_wall(const mxr_remote_t *remote, mxr_uid_t sink);
 
 /**
  * Switches a multiviewer's window layout.

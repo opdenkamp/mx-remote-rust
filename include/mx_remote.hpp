@@ -785,6 +785,15 @@ public:
     mxr_result_t multiviewer_auto_route(Uid device) const {
         return mxr_multiviewer_auto_route(h_, device);
     }
+    mxr_result_t preview_video_wall(Uid sink, const mxr_video_wall_window_t &window) const {
+        return mxr_preview_video_wall(h_, sink, &window);
+    }
+    mxr_result_t store_video_wall(Uid sink, const mxr_video_wall_window_t &window) const {
+        return mxr_store_video_wall(h_, sink, &window);
+    }
+    mxr_result_t revert_video_wall(Uid sink) const {
+        return mxr_revert_video_wall(h_, sink);
+    }
     mxr_result_t device(Uid uid, mxr_device_info_t &out) const {
         return mxr_device(h_, uid, &out);
     }

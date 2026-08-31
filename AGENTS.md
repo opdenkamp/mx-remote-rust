@@ -142,6 +142,72 @@ carries no window at all. `0x40` V2IP_TILING is not a substitute — on a sink
 running that module a `0x40` write is transient, because the module's reconciler
 pushes its own window back within about a second.
 
+**Validate a `0x49` window before sending it: nothing on the mesh will tell
+you.** There is no reply on this opcode, so an accepted window and a refused
+one look identical from here and only a state read distinguishes them. A sender
+must check `pos_x` a multiple of 64 and `width` a multiple of 4 - the buffer
+start has to be aligned and the pipeline moves four pixels per clock - `width`
+and `height` at least 64, which is the scaler's minimum, and `pos_x + width`
+and `pos_y + height` within the raster. `pos_y` and `height` have no alignment
+constraint. A zero width or height is a clear rather than a violation, and `op`
+is 0 preview, 1 store or 2 revert, with anything else discarded in silence. A
+live unit reports the alignments back, so they can be read rather than
+hardcoded: they follow the module's hardware design and can move with it.
+`VideoWallWindow::validate` is where this library does it, and it runs on the
+one send behind all three video-wall methods so that an operation added later
+cannot reach the wire without it.
+
+Validating matters more than a rejected frame would, and how much more depends
+on what the sink is running. A module before v2026083100 checked the geometry
+only on its own HTTP path, so a window arriving on the mesh was written to
+persistent configuration before anything tried to apply it; the video
+processor's later refusal did not undo that write, and the bad window then
+survived a reboot and was re-offered on every stream restart until some other
+write replaced it. From v2026083100 the check sits at the point both paths pass
+through, so a bad frame is rejected before anything is stored, and a unit
+already holding an out-of-spec window drops it at boot and falls back to the
+full frame. Fielded units run both, so a sender still owns the constraints.
+
+Released firmware does not implement the opcode at all: `0x49` is the
+opcode-count sentinel there, so a frame is dropped on the bound before any
+handler sees it, and that build caps at 0x27 while this opcode stamps 0x28, so
+the protocol gate here refuses the send before it reaches the wire. Both of
+those are visible outcomes rather than silent ones, and they bound the hazard
+above to builds that know the opcode.
+
+The boundary is not something to branch on, and the version above is the
+module's rather than the firmware's. The guard lives in a loadable module that
+can be hot-reloaded independently of any firmware upgrade, so a firmware
+version implies nothing about which module is loaded. A unit's HTTP module list
+does report it, in hex: `v2ipwall v0x78c3931c` is the same 2026083100 written
+the other way, which is worth knowing as a pair because meeting one form after
+the other reads as two different builds. Nothing on the mesh reports it at all,
+so from the wire it is invisible.
+
+No version could gate this correctly in any case. A unit may load no video-wall
+module - its model may not include one or may not support it, and a load that
+fails is rejected without a log line - so "guarded", "unguarded" and "no handler
+at all" are three states with one appearance from outside, and the third is
+legitimate rather than a fault. An absent module ignores a window exactly as
+silently as a present one refuses a bad one. Validate unconditionally; the
+version dates the behaviour for a reader and is not an input to code.
+
+Length is checked twice, and only the second check is a floor. The receive path
+requires the header's declared payload length plus the header size to equal the
+datagram that actually arrived, before any handler runs; a frame that fails
+that is dropped outright and in silence, which makes a wrong length field an
+easy mistake with no symptom. What is a floor is each handler's own check
+against its struct: a payload longer than the handler expects is accepted with
+the excess ignored, so that the payload can grow.
+
+So a frame being accepted says only that its envelope was self-consistent and
+its payload met a minimum. It is no evidence that the layout was right.
+`build_frame` declares exactly what it appends, so everything this library
+sends satisfies the first check by construction. On receive it is more
+permissive than the firmware: a frame whose declared length disagrees with what
+arrived is not rejected here, and the payload is clamped to whichever is
+shorter.
+
 `0x14` AUDIO_SET_VOLUME reserves 0xFF in each of its volume and mute fields for
 "leave this one alone", and the right channel also reads it as "no such
 channel". It is not a level and not a mute state: sent as the mute byte it
