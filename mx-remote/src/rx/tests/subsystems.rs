@@ -370,7 +370,7 @@ fn svd_lookup_and_signal_status() {
     let bay = h.bay(2);
     assert_eq!(bay.signal_detected, Some(true));
     let described = bay.signal_type.clone().expect("no signal description");
-    assert_ne!(described, "No Signal");
+    assert_ne!(described, "no signal");
     assert!(
         described.starts_with("1920x1080 / RGB / 8bpp"),
         "description = {described}"

@@ -120,6 +120,10 @@ const STREAM_INTERLACED: u8 = 1 << 1;
 const STREAM_NON_INTEGER_CLOCK: u8 = 1 << 3;
 const STREAM_HDR: u8 = 1 << 4;
 
+/// How firmware describes a bay with nothing on it, in the same field this
+/// library fills in from a signal report.
+const NO_SIGNAL: &str = "no signal";
+
 /// The support-flags bit that says the stream block holds a real signal.
 const SUPPORT_STREAM_VALID: u8 = 1 << 1;
 
@@ -174,7 +178,12 @@ pub(super) fn signal_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
             description.push_str(&format!(" / {frame_rate}Hz"));
             description
         }
-        _ => "No Signal".to_owned(),
+        // Spelled as the firmware spells it. A device sends its own signal
+        // description in its bay configuration, including this one for a bay
+        // with nothing on it, and both land in the same field: a second
+        // spelling here would put two states on a caller's screen where the
+        // device is describing one.
+        _ => NO_SIGNAL.to_owned(),
     };
 
     let details = BaySignalDetails {

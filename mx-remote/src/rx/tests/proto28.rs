@@ -399,6 +399,127 @@ fn signal_status_decodes_the_video_and_bay_blocks() {
     assert!(d.scaling.is_set());
 }
 
+/// The two payloads below came off a live mesh, from the input and the output
+/// bay of one OneIP unit. Every other signal-report fixture here is one this
+/// file made up, which can only show that the decoder agrees with its author;
+/// these are checked against the published CTA-861 timings for the modes they
+/// name, so agreement means the offsets are right rather than merely
+/// self-consistent.
+const CAPTURED_INPUT_BAY: [u8; 112] = [
+    0x01, 0x00, 0xFF, 0x28, 0x00, 0x00, 0x00, 0x00, 0x02, 0x50, 0xA8, 0x00, 0x10, 0x00, 0x00, 0x34,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x02, 0x80, 0xBB, 0x00, 0x00, 0x10, 0x01, 0x08, 0x02, 0x01, 0x00, 0x00, 0x00,
+    0x3C, 0x00, 0x20, 0xEE, 0xD9, 0x08, 0x00, 0x00, 0x98, 0x08, 0x80, 0x07, 0x58, 0x00, 0x94, 0x00,
+    0x2C, 0x00, 0x65, 0x04, 0x38, 0x04, 0x04, 0x00, 0x24, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x88, 0x01, 0x81, 0x00, 0x00, 0x00, 0x20, 0xEE, 0xD9, 0x08,
+];
+
+const CAPTURED_OUTPUT_BAY: [u8; 112] = [
+    0x01, 0x00, 0xFF, 0x28, 0x00, 0x00, 0x00, 0x00, 0x02, 0x72, 0xA8, 0x00, 0x61, 0x00, 0x00, 0xA4,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x01, 0x02, 0x80, 0xBB, 0x00, 0x00, 0x61, 0x03, 0x08, 0x02, 0x01, 0x00, 0x00, 0x00,
+    0x3C, 0x00, 0x80, 0xB8, 0x67, 0x23, 0x00, 0x00, 0x30, 0x11, 0x00, 0x0F, 0xB0, 0x00, 0x28, 0x01,
+    0x58, 0x00, 0xCA, 0x08, 0x70, 0x08, 0x08, 0x00, 0x48, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x98, 0x01, 0x81, 0x00, 0x00, 0xA0, 0x40, 0xDC, 0xB3, 0x11,
+];
+
+/// A unit with the two bays the captured reports name: an input on port 0 and
+/// an output on port 16.
+fn captured_unit() -> Harness {
+    let mut h = Harness::new(27);
+    h.hello(0x28, "ONEIP", "CAP0001", DeviceFeature::V2IP_SOURCE);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            0,
+            0,
+            "Input 1",
+            "Apple TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
+    );
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            16,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    h
+}
+
+#[test]
+fn a_captured_input_report_decodes_to_the_mode_it_names() {
+    let mut h = captured_unit();
+    h.feed(op::BAY_SIGNAL_STATUS, &CAPTURED_INPUT_BAY);
+
+    let d = h.bay(0).signal_details.expect("no signal details");
+    // CTA-861 mode 16 is 1920x1080p60, whose pixel clock is 148.5MHz. The
+    // clock is read from the video block and the mode from the bay block, so
+    // the pair agreeing is what pins both.
+    assert_eq!(d.tmds_clock, 148_500_000);
+    // Sent as 60 with the non-integer-clock flag set, never as a fraction.
+    assert_eq!(d.frame_rate, 59.94);
+    assert_eq!(d.status, BayStatus::from_bits(0x0081_0188));
+    assert!(d.status.has(BayStatus::SIGNAL_DETECTED));
+    // Hot-plug detect is asserted by a display, so an input bay never reports
+    // it. Read as an ordinal rather than a bitmask, 0x00810188 names nothing.
+    assert!(!d.status.has(BayStatus::HPD_DETECTED));
+
+    // An input bay scales nothing, and says so with a plain zero.
+    assert!(!d.scaling.is_set());
+}
+
+#[test]
+fn a_captured_output_report_decodes_to_the_mode_it_names() {
+    let mut h = captured_unit();
+    h.feed(op::BAY_SIGNAL_STATUS, &CAPTURED_OUTPUT_BAY);
+
+    let d = h.bay(16).signal_details.expect("no signal details");
+    // Mode 97 is 3840x2160p60 at 594MHz.
+    assert_eq!(d.tmds_clock, 594_000_000);
+    assert_eq!(d.frame_rate, 59.94);
+    assert_eq!(d.clock_rate, 297_000_000);
+    assert_eq!(d.status, BayStatus::from_bits(0x0081_0198));
+    // A display plugged in and being driven: the pair that separates "nothing
+    // plugged in" from "no picture".
+    assert!(d.status.has(BayStatus::HPD_DETECTED));
+    assert!(d.status.has(BayStatus::SIGNAL_DETECTED));
+
+    // Nothing configured, said the other way: the word is zeroed and stamped
+    // with the bpp index that names no depth.
+    assert_eq!(d.scaling.bpp_index(), 5);
+    assert!(!d.scaling.is_set());
+    // The bay the report is filed under comes from the bay block, not from the
+    // frame: the input bay this unit also has must not have moved.
+    assert!(h.bay(0).signal_details.is_none());
+}
+
+/// A bay with nothing on it is described the way firmware describes one.
+///
+/// A device sends its own signal description in its bay configuration and this
+/// library builds one from a signal report; both land in the same field, so a
+/// second spelling would show a caller two states where there is one.
+#[test]
+fn a_bay_with_no_signal_is_described_as_firmware_describes_it() {
+    let mut h = captured_unit();
+    let mut p = CAPTURED_INPUT_BAY;
+    p[2] &= !(1 << 1); // the stream block no longer holds a real signal
+    h.feed(op::BAY_SIGNAL_STATUS, &p);
+
+    assert_eq!(h.bay(0).signal_type.as_deref(), Some("no signal"));
+    assert_eq!(h.bay(0).signal_detected, Some(false));
+}
+
 #[test]
 fn a_short_signal_report_is_dropped() {
     let mut h = Harness::new(26);

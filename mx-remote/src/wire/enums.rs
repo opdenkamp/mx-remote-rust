@@ -769,6 +769,9 @@ wire_enum! {
 }
 
 /// The bpp index a sender writes when it has no bit depth to report.
+///
+/// It sits outside the four indices that name a real depth, so an unset
+/// format reads differently from every genuine one.
 const SIG_BPP_UNSET: u16 = 5;
 
 impl MxrSignalType {
@@ -804,9 +807,16 @@ impl MxrSignalType {
         }
     }
 
-    /// Reports whether the signal type carries anything but the unset sentinel.
+    /// Reports whether the word carries a signal format at all.
+    ///
+    /// A bay with nothing configured says so two ways. A sender that zeroes
+    /// the word and stamps the unset bpp index leaves an index no real depth
+    /// uses, and one that writes a plain zero leaves nothing at all. Neither
+    /// is a format, and the svd and colour space beside them are not answers
+    /// either: both read as zero, which is what this word says for "not HDMI"
+    /// and "RGB" when it *is* set.
     pub const fn is_set(self) -> bool {
-        self.bpp_index() as u16 != SIG_BPP_UNSET
+        self.0 != 0 && self.bpp_index() as u16 != SIG_BPP_UNSET
     }
 }
 
