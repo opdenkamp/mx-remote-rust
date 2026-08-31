@@ -108,8 +108,29 @@ cargo build -p mx-remote-ffi --release
 cc -Iinclude prog.c target/release/libmx_remote_ffi.a -lpthread -ldl -lm
 ```
 
-The archive has no runtime to initialise, takes no signal handlers from the
-host process, and pulls in nothing but libc and pthreads.
+The archive has no runtime to initialise and takes no signal handlers from the
+host process. What it needs from the platform is the toolchain's to decide, and
+
+```bash
+cargo rustc -p mx-remote-ffi --release --crate-type staticlib -- \
+    --print native-static-libs
+```
+
+prints the current list for the target being built. A link that fails for a
+missing symbol is asking for one of those.
+
+On Windows with MSVC, build the archive against the same C runtime the program
+linking it uses, or the two disagree over the runtime at link time. A program
+on the static CRT (`/MT`) wants
+
+```bat
+set RUSTFLAGS=-Ctarget-feature=+crt-static
+cargo build -p mx-remote-ffi --release
+```
+
+and links `mx_remote_ffi.lib` alongside the libraries that same command names.
+CI builds and prints both, so what it reports is what the release archive
+needs.
 
 ```c
 #include <mx_remote.h>

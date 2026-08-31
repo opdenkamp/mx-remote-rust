@@ -56,6 +56,27 @@ jobs:
       - run: cargo build -p mx-remote-ffi
       - run: make -C examples
 
+  windows:
+    name: Windows, linked the way a C++ consumer links it
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal
+      - run: cargo test --workspace
+      # A consumer linking against MSVC's static CRT needs the archive built
+      # against the same one, or the two disagree over the C runtime at link
+      # time. The README documents this build, so it is the build CI proves.
+      - run: cargo build -p mx-remote-ffi --release
+        env:
+          RUSTFLAGS: -Ctarget-feature=+crt-static
+      # What the archive needs from the platform, in the form a linker wants
+      # it. It is printed rather than asserted: the list is the toolchain's to
+      # decide, and a consumer whose link fails needs to read the current one.
+      - name: system libraries the archive needs
+        run: cargo rustc -p mx-remote-ffi --release --crate-type staticlib -- --print native-static-libs
+        env:
+          RUSTFLAGS: -Ctarget-feature=+crt-static
+
   package:
     name: crates are publishable
     runs-on: ubuntu-latest
