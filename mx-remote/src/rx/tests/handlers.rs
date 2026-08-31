@@ -8,7 +8,9 @@
 //! that run, and an unexercised handler does not.
 
 use crate::event::Event;
-use crate::types::{ArcStatus, PowerStatus, AMP_TONE_HTTP_MAX, AMP_TONE_HTTP_MIN};
+use crate::types::{
+    ArcStatus, PowerStatus, AMP_TONE_HTTP_MAX, AMP_TONE_HTTP_MIN, VOLUME_UNCHANGED,
+};
 use crate::wire::{
     op, parse_bay_config, BayFeatures, BayStatus, DeviceFeature, EdidProfile, MxrSignalType,
     RcAction, RcKey, RcType, V2IP_PORT_VIDEO,
@@ -142,6 +144,66 @@ fn a_volume_request_is_read_at_the_layout_its_length_says() {
         .expect("the current form did not decode");
     assert_eq!((v.volume_left, v.volume_right), (Some(55), Some(66)));
     assert_eq!((v.muted_left, v.muted_right), (Some(false), Some(true)));
+}
+
+/// The value that means "leave this alone" is not a volume and not a mute.
+///
+/// A sender changing only the volume writes it into the mute byte. Read as a
+/// bitmask it sets both channel bits, which says the opposite of what was
+/// sent: a bay reported fully muted by a request that was declining to touch
+/// mute at all.
+#[test]
+fn the_unchanged_value_is_not_read_as_a_setting() {
+    let mut h = bay_state(128);
+    let sender = h.sender;
+    let vol = |bytes: &[u8; 8]| {
+        let mut p = sender.as_bytes().to_vec();
+        p.extend_from_slice(bytes);
+        p
+    };
+
+    // Leave the bay unmuted. Muting it first would not do: "both channels
+    // muted" is exactly what the unchanged value decodes to when it is read as
+    // a bitmask, so the assertion below would hold whether or not the value
+    // was understood.
+    h.feed(op::AUDIO_SET_VOLUME, &vol(&[2, 0, 20, 20, 0, 0, 0, 0]));
+    assert_eq!(
+        h.bay(2).audio_volume.expect("no volume").muted(),
+        Some(false)
+    );
+
+    h.feed(
+        op::AUDIO_SET_VOLUME,
+        &vol(&[2, 0, 70, 70, VOLUME_UNCHANGED, 0, 0, 0]),
+    );
+    let v = h.bay(2).audio_volume.expect("no volume");
+    // The volume it did carry is applied, so this is not a frame being dropped.
+    assert_eq!((v.volume_left, v.volume_right), (Some(70), Some(70)));
+    // And the mute it declined to name is the one that was already there.
+    assert_eq!(
+        v.muted(),
+        Some(false),
+        "the unchanged value was read as a mute state"
+    );
+
+    // The paired direction: a frame that does name a mute state moves it, so
+    // the assertion above is not one that would hold for a decoder ignoring
+    // the mute byte altogether.
+    h.feed(op::AUDIO_SET_VOLUME, &vol(&[2, 0, 70, 70, 3, 0, 0, 0]));
+    assert_eq!(
+        h.bay(2).audio_volume.expect("no volume").muted(),
+        Some(true)
+    );
+
+    // The same value in a volume field is outside the percentage range and
+    // drops out with it, leaving the volume that was there rather than 255.
+    h.feed(
+        op::AUDIO_SET_VOLUME,
+        &vol(&[2, 0, VOLUME_UNCHANGED, VOLUME_UNCHANGED, 0, 0, 0, 0]),
+    );
+    let v = h.bay(2).audio_volume.expect("no volume");
+    assert_eq!((v.volume_left, v.volume_right), (Some(70), Some(70)));
+    assert_eq!(v.muted(), Some(false), "this frame did name a mute state");
 }
 
 #[test]

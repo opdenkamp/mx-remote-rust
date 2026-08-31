@@ -18,7 +18,7 @@ use crate::event::EventHandler;
 use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, BayNameChange, EdidProfileChange,
-    EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget,
+    EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, op, protocol_for, Addressee,
@@ -632,6 +632,47 @@ fn a_control_method_decodes_back_to_what_it_asked_for() {
         Some(37),
         "volume also landed on the addressed bay; this handler is sender-keyed"
     );
+}
+
+/// A volume command that names no mute state says so on the wire.
+///
+/// Zero is what a device is told to unmute by, so sending it for a caller who
+/// asked only for a volume would unmute a bay they never mentioned. The byte
+/// is read off the frame rather than from the type that built it: a builder
+/// and a decoder that are wrong together agree with each other, and only the
+/// wire says which of them is right.
+#[test]
+fn a_volume_with_no_mute_state_sends_the_unchanged_value() {
+    let f = Fixture::new();
+    let uid = uid_n(209);
+    f.everything(uid, 0x28, "VU0001");
+    f.connect();
+    let bay = BayUid::new(uid, 2);
+
+    // The mute byte sits after the uid, the u16 port and the two volumes.
+    let mute_byte = |frame: &[u8]| frame[HEADER_LEN + 20];
+
+    f.tap.clear();
+    f.remote
+        .set_volume(bay, 40, None)
+        .expect("the socket is open and the device is above the floor");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        mute_byte(&frame),
+        VOLUME_UNCHANGED,
+        "a command naming no mute state told the device to unmute"
+    );
+
+    // Both named states, so the assertion above cannot be passing for an
+    // encoder that writes the same byte whatever it is given.
+    for (muted, want) in [(false, 0u8), (true, 3)] {
+        f.tap.clear();
+        f.remote
+            .set_volume(bay, 40, Some(muted))
+            .expect("the socket is open and the device is above the floor");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(mute_byte(&frame), want, "muted={muted}");
+    }
 }
 
 /// A manual route names all three streams, and always carries a format.

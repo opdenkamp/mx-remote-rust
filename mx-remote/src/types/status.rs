@@ -101,6 +101,14 @@ impl fmt::Display for HiddenStatus {
     }
 }
 
+/// The value that means "leave this one alone" in a volume or mute field.
+///
+/// It is not a level and not a mute state. A device reads it as "do not
+/// change", and the right channel additionally as "no such channel", so a
+/// decoder that surfaces it as a volume of 255 or as a muted pair reports a
+/// setting the sender was declining to touch.
+pub const VOLUME_UNCHANGED: u8 = 0xFF;
+
 /// The per-channel mute bitfield: bit 0 is left, bit 1 is right.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MuteStatus(u8);
@@ -178,18 +186,24 @@ impl VolumeMuteStatus {
         ]
     }
 
-    /// Encodes the mute field as `MXR_AUDIO_MUTE_*`: a per-channel bitmask.
+    /// Encodes the mute field: a per-channel bitmask, or
+    /// [`VOLUME_UNCHANGED`] where neither channel says.
+    ///
+    /// Not knowing is not the same as knowing it is unmuted. Zero is what a
+    /// device is told to unmute by, so sending it for a caller who named no
+    /// mute state would unmute a bay they only meant to set the volume of.
     fn muted_value(&self) -> u8 {
-        if self.muted() != Some(true) {
-            return 0;
-        }
-        match (
-            self.muted_left.unwrap_or(false),
-            self.muted_right.unwrap_or(false),
-        ) {
-            (true, true) => 3,
-            (true, false) => 1,
-            _ => 2,
+        match self.muted() {
+            None => VOLUME_UNCHANGED,
+            Some(false) => 0,
+            Some(true) => match (
+                self.muted_left.unwrap_or(false),
+                self.muted_right.unwrap_or(false),
+            ) {
+                (true, true) => 3,
+                (true, false) => 1,
+                _ => 2,
+            },
         }
     }
 }

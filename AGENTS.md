@@ -124,6 +124,13 @@ carries no window at all. `0x40` V2IP_TILING is not a substitute — on a sink
 running that module a `0x40` write is transient, because the module's reconciler
 pushes its own window back within about a second.
 
+`0x14` AUDIO_SET_VOLUME reserves 0xFF in each of its volume and mute fields for
+"leave this one alone", and the right channel also reads it as "no such
+channel". It is not a level and not a mute state: sent as the mute byte it
+means the sender is not touching mute, while zero there means unmute. A
+decoder that reads it as a bitmask reports both channels muted, which is the
+opposite of what arrived.
+
 `0x07` DEV_EDID is answered only by V2IP hardware. A matrix or an amplifier
 registers no handler for it, so a request reaches them, is accepted and is
 never answered, at any stamp. Silence from one of those is the end of the

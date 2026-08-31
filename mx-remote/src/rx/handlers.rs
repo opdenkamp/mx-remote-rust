@@ -11,7 +11,7 @@ use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TopologyEntry, V2ipDscpConfig,
     V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus,
-    SCALING_FLAGS_DEFINED,
+    SCALING_FLAGS_DEFINED, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
@@ -196,7 +196,12 @@ pub(super) fn volume_set(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(port) = port else {
         return;
     };
-    let muted = f.u8(at + 2);
+    // A volume above 100 is not a percentage, which drops the "leave this
+    // alone" value along with anything else out of range. The mute byte has
+    // no such range to fall outside of, so it is checked for that value
+    // directly: read as a bitmask it would say both channels are muted, which
+    // is the opposite of the "do not change" it means.
+    let muted = f.u8(at + 2).filter(|m| *m != VOLUME_UNCHANGED);
     let volume = VolumeMuteStatus {
         volume_left: f.u8(at).filter(|v| *v <= 100),
         volume_right: f.u8(at + 1).filter(|v| *v <= 100),

@@ -27,6 +27,7 @@ pub use network::{MacAddress, NetworkPortStatus, UtpCableStatus, UtpLinkErrors, 
 pub use status::{
     ArcStatus, BayAudioDetails, BayMirrorStatus, BaySignalDetails, ConnectStatus, DeviceStatus,
     FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TopologyEntry, VolumeMuteStatus,
+    VOLUME_UNCHANGED,
 };
 pub use v2ip::{
     DeviceV2ipDetails, DeviceV2ipSink, StreamKind, V2ipAudioFormat, V2ipDecoderState,
