@@ -3,7 +3,7 @@ resolver = "2"
 members = ["mx-remote", "mx-remote-ffi"]
 
 [workspace.package]
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.79"
 authors = ["Lars Op den Kamp <lars@opdenkamp-it.nl>"]

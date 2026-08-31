@@ -19,4 +19,4 @@ categories = ["development-tools::ffi", "network-programming", "hardware-support
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-mx-remote = { path = "../mx-remote", version = "1.0.0" }
+mx-remote = { path = "../mx-remote", version = "2.0.0" }
