@@ -424,6 +424,227 @@ pub const MXR_KEY_CUSTOM_CEC: u16 = 1280;
 /// Base of the range carrying a raw Sky key code.
 pub const MXR_KEY_CUSTOM_SKY: u16 = 2048;
 
+// ---- multiviewer settings, for the `mxr_set_multiviewer_*` calls ----
+//
+// The same values come back in `mxr_multiviewer_status_t`, whose fields are
+// the wire's bytes rather than a decoded set: a multiviewer running firmware
+// newer than this library reports a mode named here by none of these, and
+// passing it through is what lets a caller see it at all.
+
+/// The multiviewer reports no window layout.
+pub const MXR_MV_VIEW_MODE_UNKNOWN: u8 = 0;
+
+/// One full-screen window.
+pub const MXR_MV_VIEW_MODE_SINGLE: u8 = 1;
+
+/// Picture in picture.
+pub const MXR_MV_VIEW_MODE_PIP: u8 = 2;
+
+/// Two windows, large.
+pub const MXR_MV_VIEW_MODE_TWO_SCREEN_LARGE: u8 = 3;
+
+/// Two windows, small.
+pub const MXR_MV_VIEW_MODE_TWO_SCREEN_SMALL: u8 = 4;
+
+/// Three windows, large.
+pub const MXR_MV_VIEW_MODE_THREE_SCREEN_LARGE: u8 = 5;
+
+/// Three windows, small.
+pub const MXR_MV_VIEW_MODE_THREE_SCREEN_SMALL: u8 = 6;
+
+/// Four windows, equal size.
+pub const MXR_MV_VIEW_MODE_FOUR_SCREEN_EQUAL: u8 = 7;
+
+/// Four windows, small.
+pub const MXR_MV_VIEW_MODE_FOUR_SCREEN_SMALL: u8 = 8;
+
+/// The multiviewer reports no picture-in-picture position.
+pub const MXR_MV_PIP_POSITION_UNKNOWN: u8 = 0;
+
+/// Top left.
+pub const MXR_MV_PIP_POSITION_LEFT_TOP: u8 = 1;
+
+/// Bottom left.
+pub const MXR_MV_PIP_POSITION_LEFT_BOTTOM: u8 = 2;
+
+/// Top right.
+pub const MXR_MV_PIP_POSITION_RIGHT_TOP: u8 = 3;
+
+/// Bottom right.
+pub const MXR_MV_PIP_POSITION_RIGHT_BOTTOM: u8 = 4;
+
+/// The multiviewer reports no picture-in-picture size.
+pub const MXR_MV_PIP_SIZE_UNKNOWN: u8 = 0;
+
+/// Small.
+pub const MXR_MV_PIP_SIZE_SMALL: u8 = 1;
+
+/// Medium.
+pub const MXR_MV_PIP_SIZE_MEDIUM: u8 = 2;
+
+/// Large.
+pub const MXR_MV_PIP_SIZE_LARGE: u8 = 3;
+
+/// The multiviewer reports no output mode.
+pub const MXR_MV_OUTPUT_UNKNOWN: u8 = 0;
+
+/// 4096x2160p60.
+pub const MXR_MV_OUTPUT_DCI4K_P60: u8 = 1;
+
+/// 4096x2160p50.
+pub const MXR_MV_OUTPUT_DCI4K_P50: u8 = 2;
+
+/// 3840x2160p60.
+pub const MXR_MV_OUTPUT_UHD_P60: u8 = 3;
+
+/// 3840x2160p50.
+pub const MXR_MV_OUTPUT_UHD_P50: u8 = 4;
+
+/// 3840x2160p30.
+pub const MXR_MV_OUTPUT_UHD_P30: u8 = 5;
+
+/// 3840x2160p25.
+pub const MXR_MV_OUTPUT_UHD_P25: u8 = 6;
+
+/// 1920x1200p60, reduced blanking.
+pub const MXR_MV_OUTPUT_WUXGA_P60_RB: u8 = 7;
+
+/// 1920x1080p60.
+pub const MXR_MV_OUTPUT_HD1080_P60: u8 = 8;
+
+/// 1920x1080p50.
+pub const MXR_MV_OUTPUT_HD1080_P50: u8 = 9;
+
+/// 1360x768p60.
+pub const MXR_MV_OUTPUT_WXGA_P60: u8 = 10;
+
+/// 1280x800p60.
+pub const MXR_MV_OUTPUT_WXGA800_P60: u8 = 11;
+
+/// 1280x720p60.
+pub const MXR_MV_OUTPUT_HD720_P60: u8 = 12;
+
+/// 1280x720p50.
+pub const MXR_MV_OUTPUT_HD720_P50: u8 = 13;
+
+/// 1024x768p60.
+pub const MXR_MV_OUTPUT_XGA_P60: u8 = 14;
+
+/// The multiviewer reports no HDCP mode.
+pub const MXR_MV_HDCP_UNKNOWN: u8 = 0;
+
+/// HDCP 1.4.
+pub const MXR_MV_HDCP_V14: u8 = 1;
+
+/// HDCP 2.2.
+pub const MXR_MV_HDCP_V22: u8 = 2;
+
+/// Content protection off.
+pub const MXR_MV_HDCP_OFF: u8 = 3;
+
+/// The multiviewer reports no EDID template.
+pub const MXR_MV_EDID_UNKNOWN: u8 = 0;
+
+/// 4K2K60 4:4:4, stereo 2.0.
+pub const MXR_MV_EDID_4K2K60_444_STEREO: u8 = 1;
+
+/// 4K2K60 4:4:4, Dolby/DTS 5.1.
+pub const MXR_MV_EDID_4K2K60_444_DOLBY_DTS_51: u8 = 2;
+
+/// 4K2K60 4:4:4, HD audio 7.1.
+pub const MXR_MV_EDID_4K2K60_444_HD_AUDIO_71: u8 = 3;
+
+/// 4K2K30 4:4:4, stereo 2.0.
+pub const MXR_MV_EDID_4K2K30_444_STEREO: u8 = 4;
+
+/// 4K2K30 4:4:4, Dolby/DTS 5.1.
+pub const MXR_MV_EDID_4K2K30_444_DOLBY_DTS_51: u8 = 5;
+
+/// 4K2K30 4:4:4, HD audio 7.1.
+pub const MXR_MV_EDID_4K2K30_444_HD_AUDIO_71: u8 = 6;
+
+/// 1080p, stereo 2.0.
+pub const MXR_MV_EDID_1080P_STEREO: u8 = 7;
+
+/// 1080p, Dolby/DTS 5.1.
+pub const MXR_MV_EDID_1080P_DOLBY_DTS_51: u8 = 8;
+
+/// 1080p, HD audio 7.1.
+pub const MXR_MV_EDID_1080P_HD_AUDIO_71: u8 = 9;
+
+/// 1920x1200, stereo 2.0.
+pub const MXR_MV_EDID_1920X1200_STEREO: u8 = 10;
+
+/// 1680x1050, stereo 2.0.
+pub const MXR_MV_EDID_1680X1050_STEREO: u8 = 11;
+
+/// 1600x1200, stereo 2.0.
+pub const MXR_MV_EDID_1600X1200_STEREO: u8 = 12;
+
+/// 1440x900, stereo 2.0.
+pub const MXR_MV_EDID_1440X900_STEREO: u8 = 13;
+
+/// 1360x768, stereo 2.0.
+pub const MXR_MV_EDID_1360X768_STEREO: u8 = 14;
+
+/// 1280x1024, stereo 2.0.
+pub const MXR_MV_EDID_1280X1024_STEREO: u8 = 15;
+
+/// 1024x768, stereo 2.0.
+pub const MXR_MV_EDID_1024X768_STEREO: u8 = 16;
+
+/// 720p, stereo 2.0.
+pub const MXR_MV_EDID_720P_STEREO: u8 = 17;
+
+/// Whatever the display connected to the HDMI output presents. The template a
+/// multiviewer leaves the factory with.
+pub const MXR_MV_EDID_COPY_OUTPUT: u8 = 18;
+
+/// The EDID loaded onto the device.
+pub const MXR_MV_EDID_CUSTOM: u8 = 19;
+
+/// The multiviewer reports no IT-content mode.
+pub const MXR_MV_ITC_UNKNOWN: u8 = 0;
+
+/// Video content.
+pub const MXR_MV_ITC_VIDEO: u8 = 1;
+
+/// PC content.
+pub const MXR_MV_ITC_PC: u8 = 2;
+
+/// The multiviewer reports no aspect ratio.
+pub const MXR_MV_ASPECT_UNKNOWN: u8 = 0;
+
+/// Fill the window.
+pub const MXR_MV_ASPECT_FULL: u8 = 1;
+
+/// 16:9.
+pub const MXR_MV_ASPECT_RATIO_16_9: u8 = 2;
+
+/// Off.
+pub const MXR_MV_BOOL_OFF: u8 = 0;
+
+/// On.
+pub const MXR_MV_BOOL_ON: u8 = 1;
+
+/// The multiviewer reports no value.
+pub const MXR_MV_BOOL_UNKNOWN: u8 = 255;
+
+/// The multiviewer reports no source.
+pub const MXR_MV_SOURCE_UNKNOWN: u8 = 0;
+
+/// Input 1.
+pub const MXR_MV_SOURCE_INPUT_1: u8 = 1;
+
+/// Input 2.
+pub const MXR_MV_SOURCE_INPUT_2: u8 = 2;
+
+/// Input 3.
+pub const MXR_MV_SOURCE_INPUT_3: u8 = 3;
+
+/// Input 4.
+pub const MXR_MV_SOURCE_INPUT_4: u8 = 4;
+
 // ---- reading the packed words ----
 
 /// The remote-control type a bay status word carries in bits 16-19.

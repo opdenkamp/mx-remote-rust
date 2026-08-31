@@ -20,6 +20,14 @@ use super::Rx;
 /// target uid, sub-opcode and seven padding bytes.
 const PARAMS_OFFSET: usize = 24;
 
+/// The shortest status report that carries a whole settings block.
+///
+/// Every field in the block is read with a fallback, so a report cut short
+/// would decode as zeros and unknowns rather than fail - and would then
+/// replace a good cached status with that. The length is what separates a
+/// device reporting nothing from a frame that lost the bytes saying so.
+const STATUS_SIZE: usize = PARAMS_OFFSET + 168;
+
 /// Decodes a status report into the multiviewer's complete state.
 fn status(rx: &Rx<'_>) -> MultiviewerStatus {
     let f = &rx.frame;
@@ -31,7 +39,7 @@ fn status(rx: &Rx<'_>) -> MultiviewerStatus {
     let mut video_sources = [MultiviewerSource::UNKNOWN; MULTIVIEWER_INPUTS];
     for (index, (mapping, source)) in mappings.iter_mut().zip(&mut video_sources).enumerate() {
         *mapping = uid_at(40 + index * 16);
-        *source = MultiviewerSource::from_wire(u8_at(182 + index));
+        *source = MultiviewerSource::from_zero_based(u8_at(182 + index));
     }
 
     MultiviewerStatus {
@@ -66,7 +74,7 @@ pub(super) fn multiviewer(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     if state.device(rx.sender()).is_none() {
         return;
     }
-    if op == sub::STATUS {
+    if op == sub::STATUS && rx.frame.payload().len() >= STATUS_SIZE {
         let status = status(rx);
         if let Some(device) = state.device_mut(rx.sender()) {
             device.set_multiviewer_status(status, ev);

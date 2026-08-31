@@ -21,7 +21,13 @@ pub const MULTIVIEWER_INPUTS: usize = 4;
 pub struct MultiviewerStatus {
     /// The multiviewer this report describes.
     pub uid: DeviceUid,
-    /// The source device mapped to each of the four inputs.
+    /// The source device mapped to each of the four inputs, or
+    /// [`DeviceUid::ZERO`] where the input has none.
+    ///
+    /// A multiviewer running a module older than version 2026083100 leaves the
+    /// previous device here when a mapping is removed, so on those an
+    /// identifier is what was last mapped rather than what is mapped now, and
+    /// nothing on the wire separates the two.
     pub mappings: [DeviceUid; MULTIVIEWER_INPUTS],
     /// The MCU firmware version.
     pub mcu_version: String,
@@ -58,4 +64,27 @@ pub struct MultiviewerStatus {
     pub video_sources: [MultiviewerSource; MULTIVIEWER_INPUTS],
     /// The window receiving remote-control passthrough.
     pub remote_control: MultiviewerSource,
+}
+
+/// How many windows each hardware layout shows, indexed by `hw_view_mode`.
+///
+/// Single is one window, picture-in-picture and the two-window layouts are
+/// two, and so on up to four. Slot zero is the layout a multiviewer reports
+/// before it has read one back from its scaler, which names no count.
+const WINDOWS_PER_HW_VIEW_MODE: [u8; 6] = [0, 1, 2, 2, 3, 4];
+
+impl MultiviewerStatus {
+    /// How many windows the multiviewer is showing, or `None` when it has
+    /// reported no layout.
+    ///
+    /// This reads `hw_view_mode` rather than `view_mode`: the second is
+    /// derived from the first plus a separate size read back from the scaler,
+    /// so a failed readback leaves `view_mode` naming nothing while the window
+    /// count is still known.
+    pub fn window_count(&self) -> Option<u8> {
+        WINDOWS_PER_HW_VIEW_MODE
+            .get(usize::from(self.hw_view_mode))
+            .copied()
+            .filter(|count| *count != 0)
+    }
 }

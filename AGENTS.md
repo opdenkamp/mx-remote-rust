@@ -135,6 +135,61 @@ frame left the socket and nothing more, and "worked", "the module is absent",
 payload was short" are one observation from outside. Read the state back to
 learn which - over HTTP for the video wall, which reports nothing on the wire.
 
+`0x42` V2IP_MULTIVIEWER carries sixteen sub-commands behind one envelope: the
+target uid, the sub-opcode at 16, seven pad bytes, and the parameters from 24.
+Sub-opcode 0 is a status report of 192 bytes; the other fifteen are settings,
+and every length check on them is a floor, so no trailing padding is owed.
+
+**The multiviewer numbers its windows and inputs from zero.** Firmware's first
+input is the byte 0 and its unknown is 0xFF, which is why `MultiviewerSource`
+converts through `from_zero_based` and `to_zero_based` rather than `from_wire`
+and `to_wire`: this library counts inputs from one so that zero can mean "not
+reported", as it does for every other multiviewer setting. Get the direction
+wrong and input 1 reads as unknown, input 4 is unreachable, and a source
+naming nothing switches to input 1. The status report's `audio_source` (179),
+`video_sources` (182-185) and `rc_route` (186) are the zero-based fields; every
+other enumerated byte in it is one-based with zero for "nothing read back yet".
+
+**A multiviewer drops a setting it does not accept without saying so, so check
+the range before sending.** view mode 1-8, pip size 1-3, pip position 1-4,
+aspect 1-2, output mode 1-14, IT-content 1-2, HDCP 1-3 where 3 is off, EDID
+template 1-19, volume 0-100, and any window, input or source index 0-3. Volume
+is the one worth naming, because what a device does with a bad one moved: from
+module version 2026083100 the whole frame is dropped, and before that the
+volume alone was dropped while the mute byte beside it still landed. Unlike
+the video wall, a value that gets past the range check but not past the
+hardware is never persisted - the module applies first and stores only on
+success - so the client-side check is for the caller's sake rather than the
+device's.
+
+**Never send a window index equal to the number of windows the layout shows.**
+Firmware before module version 2026083100 validates the index with `<=`, then
+indexes a four-entry array and a twelve-byte table with it, so the frame one
+past the last window corrupts state on the receiving multiviewer. The count
+comes from `hw_view_mode` at status offset 168 - 1 single, 2 pip, 3 two, 4
+three, 5 four, giving 1, 2, 2, 3 and 4 windows. That field is the one to bound
+against rather than `view_mode` at 169, which is derived from it and reads zero
+when the scaler readback that refines it fails. Before any status report has
+arrived the count is unknown and window 0 is the only safe index, which is what
+`Remote::set_multiviewer_video_source` falls back to.
+
+A multiviewer answers no `0x42` command directly, but a successful setting
+schedules a full status broadcast about 100ms later - except for `route_rc` (6)
+and `config_source` (14), which trigger none. So "set, then wait for the
+status" confirms every setting but those two, and there is no way to ask for a
+status: the opcode has no request sub-command. `config_source` never checks
+that a uid names a device on the mesh; an all-zero uid clears the mapping from
+module version 2026083100 and is stored as a mapping on anything older.
+
+**A mapping in a status report is what was last mapped, not what is mapped**,
+on any multiviewer older than module version 2026083100: removing a mapping
+left the previous uid in `mappings[n]` at status offset 40+n*16 rather than
+zeroing it, by any route and not only over the mesh. From 2026083100 a cleared
+input reads all-zero there, which is also the only way to tell a firmware that
+cleared a mapping from one that stored the zero uid as a mapping.
+`config_source` is one of the two sub-commands that schedule no status
+broadcast, so that reading arrives on whatever prompts the next one.
+
 `0x49` V2IP_VIDEO_WALL is owned by a loadable module rather than MatrixOS, and
 unlike `0x3C` it **replaces** rather than merges: no field carries a validity
 marker, and a zero width or height means "clear the wall", not "unset". A revert

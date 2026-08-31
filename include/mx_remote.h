@@ -652,6 +652,362 @@
 #define MXR_KEY_CUSTOM_SKY 2048
 
 /**
+ * The multiviewer reports no window layout.
+ */
+#define MXR_MV_VIEW_MODE_UNKNOWN 0
+
+/**
+ * One full-screen window.
+ */
+#define MXR_MV_VIEW_MODE_SINGLE 1
+
+/**
+ * Picture in picture.
+ */
+#define MXR_MV_VIEW_MODE_PIP 2
+
+/**
+ * Two windows, large.
+ */
+#define MXR_MV_VIEW_MODE_TWO_SCREEN_LARGE 3
+
+/**
+ * Two windows, small.
+ */
+#define MXR_MV_VIEW_MODE_TWO_SCREEN_SMALL 4
+
+/**
+ * Three windows, large.
+ */
+#define MXR_MV_VIEW_MODE_THREE_SCREEN_LARGE 5
+
+/**
+ * Three windows, small.
+ */
+#define MXR_MV_VIEW_MODE_THREE_SCREEN_SMALL 6
+
+/**
+ * Four windows, equal size.
+ */
+#define MXR_MV_VIEW_MODE_FOUR_SCREEN_EQUAL 7
+
+/**
+ * Four windows, small.
+ */
+#define MXR_MV_VIEW_MODE_FOUR_SCREEN_SMALL 8
+
+/**
+ * The multiviewer reports no picture-in-picture position.
+ */
+#define MXR_MV_PIP_POSITION_UNKNOWN 0
+
+/**
+ * Top left.
+ */
+#define MXR_MV_PIP_POSITION_LEFT_TOP 1
+
+/**
+ * Bottom left.
+ */
+#define MXR_MV_PIP_POSITION_LEFT_BOTTOM 2
+
+/**
+ * Top right.
+ */
+#define MXR_MV_PIP_POSITION_RIGHT_TOP 3
+
+/**
+ * Bottom right.
+ */
+#define MXR_MV_PIP_POSITION_RIGHT_BOTTOM 4
+
+/**
+ * The multiviewer reports no picture-in-picture size.
+ */
+#define MXR_MV_PIP_SIZE_UNKNOWN 0
+
+/**
+ * Small.
+ */
+#define MXR_MV_PIP_SIZE_SMALL 1
+
+/**
+ * Medium.
+ */
+#define MXR_MV_PIP_SIZE_MEDIUM 2
+
+/**
+ * Large.
+ */
+#define MXR_MV_PIP_SIZE_LARGE 3
+
+/**
+ * The multiviewer reports no output mode.
+ */
+#define MXR_MV_OUTPUT_UNKNOWN 0
+
+/**
+ * 4096x2160p60.
+ */
+#define MXR_MV_OUTPUT_DCI4K_P60 1
+
+/**
+ * 4096x2160p50.
+ */
+#define MXR_MV_OUTPUT_DCI4K_P50 2
+
+/**
+ * 3840x2160p60.
+ */
+#define MXR_MV_OUTPUT_UHD_P60 3
+
+/**
+ * 3840x2160p50.
+ */
+#define MXR_MV_OUTPUT_UHD_P50 4
+
+/**
+ * 3840x2160p30.
+ */
+#define MXR_MV_OUTPUT_UHD_P30 5
+
+/**
+ * 3840x2160p25.
+ */
+#define MXR_MV_OUTPUT_UHD_P25 6
+
+/**
+ * 1920x1200p60, reduced blanking.
+ */
+#define MXR_MV_OUTPUT_WUXGA_P60_RB 7
+
+/**
+ * 1920x1080p60.
+ */
+#define MXR_MV_OUTPUT_HD1080_P60 8
+
+/**
+ * 1920x1080p50.
+ */
+#define MXR_MV_OUTPUT_HD1080_P50 9
+
+/**
+ * 1360x768p60.
+ */
+#define MXR_MV_OUTPUT_WXGA_P60 10
+
+/**
+ * 1280x800p60.
+ */
+#define MXR_MV_OUTPUT_WXGA800_P60 11
+
+/**
+ * 1280x720p60.
+ */
+#define MXR_MV_OUTPUT_HD720_P60 12
+
+/**
+ * 1280x720p50.
+ */
+#define MXR_MV_OUTPUT_HD720_P50 13
+
+/**
+ * 1024x768p60.
+ */
+#define MXR_MV_OUTPUT_XGA_P60 14
+
+/**
+ * The multiviewer reports no HDCP mode.
+ */
+#define MXR_MV_HDCP_UNKNOWN 0
+
+/**
+ * HDCP 1.4.
+ */
+#define MXR_MV_HDCP_V14 1
+
+/**
+ * HDCP 2.2.
+ */
+#define MXR_MV_HDCP_V22 2
+
+/**
+ * Content protection off.
+ */
+#define MXR_MV_HDCP_OFF 3
+
+/**
+ * The multiviewer reports no EDID template.
+ */
+#define MXR_MV_EDID_UNKNOWN 0
+
+/**
+ * 4K2K60 4:4:4, stereo 2.0.
+ */
+#define MXR_MV_EDID_4K2K60_444_STEREO 1
+
+/**
+ * 4K2K60 4:4:4, Dolby/DTS 5.1.
+ */
+#define MXR_MV_EDID_4K2K60_444_DOLBY_DTS_51 2
+
+/**
+ * 4K2K60 4:4:4, HD audio 7.1.
+ */
+#define MXR_MV_EDID_4K2K60_444_HD_AUDIO_71 3
+
+/**
+ * 4K2K30 4:4:4, stereo 2.0.
+ */
+#define MXR_MV_EDID_4K2K30_444_STEREO 4
+
+/**
+ * 4K2K30 4:4:4, Dolby/DTS 5.1.
+ */
+#define MXR_MV_EDID_4K2K30_444_DOLBY_DTS_51 5
+
+/**
+ * 4K2K30 4:4:4, HD audio 7.1.
+ */
+#define MXR_MV_EDID_4K2K30_444_HD_AUDIO_71 6
+
+/**
+ * 1080p, stereo 2.0.
+ */
+#define MXR_MV_EDID_1080P_STEREO 7
+
+/**
+ * 1080p, Dolby/DTS 5.1.
+ */
+#define MXR_MV_EDID_1080P_DOLBY_DTS_51 8
+
+/**
+ * 1080p, HD audio 7.1.
+ */
+#define MXR_MV_EDID_1080P_HD_AUDIO_71 9
+
+/**
+ * 1920x1200, stereo 2.0.
+ */
+#define MXR_MV_EDID_1920X1200_STEREO 10
+
+/**
+ * 1680x1050, stereo 2.0.
+ */
+#define MXR_MV_EDID_1680X1050_STEREO 11
+
+/**
+ * 1600x1200, stereo 2.0.
+ */
+#define MXR_MV_EDID_1600X1200_STEREO 12
+
+/**
+ * 1440x900, stereo 2.0.
+ */
+#define MXR_MV_EDID_1440X900_STEREO 13
+
+/**
+ * 1360x768, stereo 2.0.
+ */
+#define MXR_MV_EDID_1360X768_STEREO 14
+
+/**
+ * 1280x1024, stereo 2.0.
+ */
+#define MXR_MV_EDID_1280X1024_STEREO 15
+
+/**
+ * 1024x768, stereo 2.0.
+ */
+#define MXR_MV_EDID_1024X768_STEREO 16
+
+/**
+ * 720p, stereo 2.0.
+ */
+#define MXR_MV_EDID_720P_STEREO 17
+
+/**
+ * Whatever the display connected to the HDMI output presents. The template a
+ * multiviewer leaves the factory with.
+ */
+#define MXR_MV_EDID_COPY_OUTPUT 18
+
+/**
+ * The EDID loaded onto the device.
+ */
+#define MXR_MV_EDID_CUSTOM 19
+
+/**
+ * The multiviewer reports no IT-content mode.
+ */
+#define MXR_MV_ITC_UNKNOWN 0
+
+/**
+ * Video content.
+ */
+#define MXR_MV_ITC_VIDEO 1
+
+/**
+ * PC content.
+ */
+#define MXR_MV_ITC_PC 2
+
+/**
+ * The multiviewer reports no aspect ratio.
+ */
+#define MXR_MV_ASPECT_UNKNOWN 0
+
+/**
+ * Fill the window.
+ */
+#define MXR_MV_ASPECT_FULL 1
+
+/**
+ * 16:9.
+ */
+#define MXR_MV_ASPECT_RATIO_16_9 2
+
+/**
+ * Off.
+ */
+#define MXR_MV_BOOL_OFF 0
+
+/**
+ * On.
+ */
+#define MXR_MV_BOOL_ON 1
+
+/**
+ * The multiviewer reports no value.
+ */
+#define MXR_MV_BOOL_UNKNOWN 255
+
+/**
+ * The multiviewer reports no source.
+ */
+#define MXR_MV_SOURCE_UNKNOWN 0
+
+/**
+ * Input 1.
+ */
+#define MXR_MV_SOURCE_INPUT_1 1
+
+/**
+ * Input 2.
+ */
+#define MXR_MV_SOURCE_INPUT_2 2
+
+/**
+ * Input 3.
+ */
+#define MXR_MV_SOURCE_INPUT_3 3
+
+/**
+ * Input 4.
+ */
+#define MXR_MV_SOURCE_INPUT_4 4
+
+/**
  * A window's horizontal origin must be a multiple of this.
  */
 #define MXR_VIDEO_WALL_POS_ALIGN 64

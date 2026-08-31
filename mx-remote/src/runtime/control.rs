@@ -19,7 +19,10 @@
 //! nothing either way, so an `Ok` from one of those methods says a frame left
 //! the socket and no more: "the device did it" and "nothing on the device
 //! handles this" are the same observation from here. Read the state back to
-//! tell them apart.
+//! tell them apart. A multiviewer broadcasts its whole status shortly after a
+//! setting it accepted, which serves as that read for every one of its methods
+//! but [`Remote::set_multiviewer_remote_control`] and
+//! [`Remote::set_multiviewer_input_source`], which broadcast nothing.
 
 use std::fmt;
 use std::net::Ipv4Addr;
@@ -27,8 +30,9 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, HiddenStatus, PowerStatus, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget,
-    V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat, V2ipRoute,
+    V2ipRouteTarget, V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+    MULTIVIEWER_INPUTS, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -152,6 +156,49 @@ impl Shared {
 
 fn device_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
     state.device(uid).ok_or(ControlError::UnknownDevice(uid))
+}
+
+/// The device behind `uid`, once it is known to be a multiviewer.
+fn multiviewer_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
+    let device = device_of(state, uid)?;
+    if !device.is_multiviewer() {
+        return Err(ControlError::Unsupported("the device is not a multiviewer"));
+    }
+    Ok(device)
+}
+
+/// Wraps one multiviewer sub-command in the envelope every one of them shares.
+fn mv_command(device: &Device, sub: u8, args: &[u8]) -> Command {
+    Command::new(
+        Addressee::device(device),
+        op::V2IP_MULTIVIEWER,
+        mv_cmd_payload(device.uid, sub, args),
+    )
+}
+
+/// The zero-based input a source names, refused when it names none.
+///
+/// A multiviewer reads zero as its first input, so there is no value that says
+/// "no input": a source that names none would arrive as a request to switch to
+/// input 1.
+fn source_index(source: MultiviewerSource, what: &'static str) -> Result<u8, ControlError> {
+    source
+        .to_zero_based()
+        .ok_or(ControlError::InvalidRequest(what))
+}
+
+/// A multiviewer setting within the range its firmware accepts.
+///
+/// Every one of these settings is numbered from one, with zero reserved for
+/// "the device has reported nothing". The device drops a value it does not
+/// know without answering, so a caller sending one would see a send succeed
+/// and the setting stay as it was; this is what turns that into an error.
+fn mv_setting(value: u8, highest: u8, what: &'static str) -> Result<u8, ControlError> {
+    if (1..=highest).contains(&value) {
+        Ok(value)
+    } else {
+        Err(ControlError::InvalidRequest(what))
+    }
 }
 
 fn bay_of(state: &State, uid: BayUid) -> Result<(&Device, &Bay), ControlError> {
@@ -807,17 +854,40 @@ impl Remote {
         device: DeviceUid,
         mode: MultiviewerViewMode,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::VIEW_MODE, &[mode.to_wire()])
+        let mode = mv_setting(mode.to_wire(), 8, "the multiviewer has no such view mode")?;
+        self.multiviewer(device, mv_sub::VIEW_MODE, &[mode])
     }
 
-    /// Assigns a source to one window.
+    /// Assigns a source to one window, counting windows from zero.
+    ///
+    /// A window index the multiviewer is not currently showing is refused
+    /// rather than sent: firmware accepts an index one past the last window
+    /// and writes through the end of the array it indexes, so the frame that
+    /// would carry it is the one frame this library must never put on the
+    /// wire. The bound comes from the layout in the multiviewer's last status
+    /// report, so a multiviewer that has reported none can only be given
+    /// window zero, which every layout has.
     pub fn set_multiviewer_video_source(
         &self,
         device: DeviceUid,
         screen: u8,
         source: MultiviewerSource,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::VIDEO_SOURCE, &[screen, source.to_wire()])
+        let source = source_index(source, "the source names no multiviewer input")?;
+        self.shared.command(|state| {
+            let target = multiviewer_of(state, device)?;
+            let windows = target
+                .multiviewer
+                .as_ref()
+                .and_then(MultiviewerStatus::window_count)
+                .unwrap_or(1);
+            if screen >= windows {
+                return Err(ControlError::InvalidRequest(
+                    "the window is not one the multiviewer is showing",
+                ));
+            }
+            Ok(mv_command(target, mv_sub::VIDEO_SOURCE, &[screen, source]))
+        })
     }
 
     /// Selects which window's audio is output.
@@ -826,22 +896,28 @@ impl Remote {
         device: DeviceUid,
         source: MultiviewerSource,
     ) -> Result<(), ControlError> {
-        // The status report numbers the windows from one and this command from
-        // zero.
-        self.multiviewer(
-            device,
-            mv_sub::AUDIO_SOURCE,
-            &[source.to_wire().saturating_sub(1)],
-        )
+        let source = source_index(source, "the audio source names no multiviewer input")?;
+        self.multiviewer(device, mv_sub::AUDIO_SOURCE, &[source])
     }
 
-    /// Sets the output volume and mute state.
+    /// Sets the output volume, as a percentage, and the mute state.
+    ///
+    /// A volume above 100 is refused rather than sent. What a multiviewer does
+    /// with one depends on its module version: from 2026083100 it drops the
+    /// whole frame, and before that it dropped the volume alone and still
+    /// acted on the mute beside it. Neither is what the caller asked for, and
+    /// neither is reported back.
     pub fn set_multiviewer_audio_volume(
         &self,
         device: DeviceUid,
         volume: u8,
         muted: bool,
     ) -> Result<(), ControlError> {
+        if volume > 100 {
+            return Err(ControlError::InvalidRequest(
+                "a multiviewer volume is a percentage",
+            ));
+        }
         self.multiviewer(device, mv_sub::AUDIO_VOLUME, &[volume, u8::from(muted)])
     }
 
@@ -851,7 +927,12 @@ impl Remote {
         device: DeviceUid,
         template: MultiviewerEdidTemplate,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::EDID_TEMPLATE, &[template.to_wire()])
+        let template = mv_setting(
+            template.to_wire(),
+            19,
+            "the multiviewer has no such EDID template",
+        )?;
+        self.multiviewer(device, mv_sub::EDID_TEMPLATE, &[template])
     }
 
     /// Selects which window receives remote-control passthrough.
@@ -860,13 +941,11 @@ impl Remote {
         device: DeviceUid,
         source: MultiviewerSource,
     ) -> Result<(), ControlError> {
-        // Numbered from zero here, as on
-        // [`Remote::set_multiviewer_audio_source`].
-        self.multiviewer(
-            device,
-            mv_sub::ROUTE_RC,
-            &[source.to_wire().saturating_sub(1)],
-        )
+        let source = source_index(
+            source,
+            "the remote-control source names no multiviewer input",
+        )?;
+        self.multiviewer(device, mv_sub::ROUTE_RC, &[source])
     }
 
     /// Sets how large the picture-in-picture window is.
@@ -875,7 +954,12 @@ impl Remote {
         device: DeviceUid,
         size: MultiviewerPipSize,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::PIP_SIZE, &[size.to_wire()])
+        let size = mv_setting(
+            size.to_wire(),
+            3,
+            "the multiviewer has no such picture-in-picture size",
+        )?;
+        self.multiviewer(device, mv_sub::PIP_SIZE, &[size])
     }
 
     /// Sets which corner the picture-in-picture window sits in.
@@ -884,7 +968,12 @@ impl Remote {
         device: DeviceUid,
         position: MultiviewerPipPosition,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::PIP_POSITION, &[position.to_wire()])
+        let position = mv_setting(
+            position.to_wire(),
+            4,
+            "the multiviewer has no such picture-in-picture position",
+        )?;
+        self.multiviewer(device, mv_sub::PIP_POSITION, &[position])
     }
 
     /// Sets the aspect ratio the windows are scaled to.
@@ -893,7 +982,12 @@ impl Remote {
         device: DeviceUid,
         aspect: MultiviewerAspectRatio,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::ASPECT, &[aspect.to_wire()])
+        let aspect = mv_setting(
+            aspect.to_wire(),
+            2,
+            "the multiviewer has no such aspect ratio",
+        )?;
+        self.multiviewer(device, mv_sub::ASPECT, &[aspect])
     }
 
     /// Enables or disables switching windows on its own.
@@ -911,7 +1005,12 @@ impl Remote {
         device: DeviceUid,
         mode: MultiviewerOutputMode,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::OUTPUT_MODE, &[mode.to_wire()])
+        let mode = mv_setting(
+            mode.to_wire(),
+            14,
+            "the multiviewer has no such output mode",
+        )?;
+        self.multiviewer(device, mv_sub::OUTPUT_MODE, &[mode])
     }
 
     /// Sets the IT-content flag on the output.
@@ -920,7 +1019,12 @@ impl Remote {
         device: DeviceUid,
         mode: MultiviewerItcMode,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::OUTPUT_ITC_MODE, &[mode.to_wire()])
+        let mode = mv_setting(
+            mode.to_wire(),
+            2,
+            "the multiviewer has no such IT-content mode",
+        )?;
+        self.multiviewer(device, mv_sub::OUTPUT_ITC_MODE, &[mode])
     }
 
     /// Sets the HDCP version negotiated on the output.
@@ -929,18 +1033,34 @@ impl Remote {
         device: DeviceUid,
         mode: MultiviewerHdcpMode,
     ) -> Result<(), ControlError> {
-        self.multiviewer(device, mv_sub::HDCP_MODE, &[mode.to_wire()])
+        let mode = mv_setting(mode.to_wire(), 3, "the multiviewer has no such HDCP mode")?;
+        self.multiviewer(device, mv_sub::HDCP_MODE, &[mode])
     }
 
-    /// Maps a source device onto one of the multiviewer's inputs.
+    /// Maps a source device onto one of the multiviewer's inputs, counting
+    /// inputs from zero.
     ///
-    /// The zero identifier clears the mapping.
+    /// [`DeviceUid::ZERO`] clears the mapping on a multiviewer running module
+    /// version 2026083100 or newer, and is stored as a mapping like any other
+    /// on anything older. No version checks that a mapping names a device on
+    /// the mesh.
+    ///
+    /// Which of the two happened shows in `mappings` on a later status report,
+    /// where a cleared input reads as [`DeviceUid::ZERO`] only from that same
+    /// version. It will not be the next frame this multiviewer sends: this is
+    /// one of the two settings that schedule no status broadcast of their own,
+    /// so the answer arrives whenever something else prompts one.
     pub fn set_multiviewer_input_source(
         &self,
         device: DeviceUid,
         input: u8,
         source: DeviceUid,
     ) -> Result<(), ControlError> {
+        if usize::from(input) >= MULTIVIEWER_INPUTS {
+            return Err(ControlError::InvalidRequest(
+                "the multiviewer has no such input",
+            ));
+        }
         let mut args = Vec::with_capacity(24);
         args.extend_from_slice(source.as_bytes());
         args.push(input);
@@ -956,16 +1076,7 @@ impl Remote {
     }
 
     fn multiviewer(&self, device: DeviceUid, sub: u8, args: &[u8]) -> Result<(), ControlError> {
-        self.shared.command(|state| {
-            let device = device_of(state, device)?;
-            if !device.is_multiviewer() {
-                return Err(ControlError::Unsupported("the device is not a multiviewer"));
-            }
-            Ok(Command::new(
-                Addressee::device(device),
-                op::V2IP_MULTIVIEWER,
-                mv_cmd_payload(device.uid, sub, args),
-            ))
-        })
+        self.shared
+            .command(|state| Ok(mv_command(multiviewer_of(state, device)?, sub, args)))
     }
 }

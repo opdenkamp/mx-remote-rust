@@ -582,8 +582,8 @@ wire_enum! {
         THREE_SCREEN_LARGE = 5;
         /// Three windows, small.
         THREE_SCREEN_SMALL = 6;
-        /// Four windows, large.
-        FOUR_SCREEN_LARGE = 7;
+        /// Four windows, equal size.
+        FOUR_SCREEN_EQUAL = 7;
         /// Four windows, small.
         FOUR_SCREEN_SMALL = 8;
     }
@@ -664,6 +664,8 @@ wire_enum! {
         V14 = 1;
         /// HDCP 2.2.
         V22 = 2;
+        /// Content protection off.
+        OFF = 3;
     }
 }
 
@@ -681,9 +683,51 @@ wire_enum! {
 
 wire_enum! {
     /// The EDID template a multiviewer presents to its sources.
+    ///
+    /// A template's name is the largest resolution it advertises and the audio
+    /// format it declares support for.
     MultiviewerEdidTemplate: u8 {
         /// The device reports no template.
-        UNKNOWN = 0;
+        EDID_UNKNOWN = 0;
+        /// 4K2K60 4:4:4, stereo 2.0.
+        EDID_4K2K60_444_STEREO = 1;
+        /// 4K2K60 4:4:4, Dolby/DTS 5.1.
+        EDID_4K2K60_444_DOLBY_DTS_51 = 2;
+        /// 4K2K60 4:4:4, HD audio 7.1.
+        EDID_4K2K60_444_HD_AUDIO_71 = 3;
+        /// 4K2K30 4:4:4, stereo 2.0.
+        EDID_4K2K30_444_STEREO = 4;
+        /// 4K2K30 4:4:4, Dolby/DTS 5.1.
+        EDID_4K2K30_444_DOLBY_DTS_51 = 5;
+        /// 4K2K30 4:4:4, HD audio 7.1.
+        EDID_4K2K30_444_HD_AUDIO_71 = 6;
+        /// 1080p, stereo 2.0.
+        EDID_1080P_STEREO = 7;
+        /// 1080p, Dolby/DTS 5.1.
+        EDID_1080P_DOLBY_DTS_51 = 8;
+        /// 1080p, HD audio 7.1.
+        EDID_1080P_HD_AUDIO_71 = 9;
+        /// 1920x1200, stereo 2.0.
+        EDID_1920X1200_STEREO = 10;
+        /// 1680x1050, stereo 2.0.
+        EDID_1680X1050_STEREO = 11;
+        /// 1600x1200, stereo 2.0.
+        EDID_1600X1200_STEREO = 12;
+        /// 1440x900, stereo 2.0.
+        EDID_1440X900_STEREO = 13;
+        /// 1360x768, stereo 2.0.
+        EDID_1360X768_STEREO = 14;
+        /// 1280x1024, stereo 2.0.
+        EDID_1280X1024_STEREO = 15;
+        /// 1024x768, stereo 2.0.
+        EDID_1024X768_STEREO = 16;
+        /// 720p, stereo 2.0.
+        EDID_720P_STEREO = 17;
+        /// Whatever the display connected to the HDMI output presents. The
+        /// template a multiviewer leaves the factory with.
+        EDID_COPY_OUTPUT = 18;
+        /// The EDID loaded onto the device.
+        EDID_CUSTOM = 19;
     }
 }
 
@@ -716,7 +760,9 @@ wire_enum! {
     ///
     /// The wire numbers the inputs from zero and this type from one, so that
     /// zero can mean "not reported" the way it does for every other
-    /// multiviewer setting.
+    /// multiviewer setting. So `to_wire` and `from_wire` carry this type's
+    /// numbering rather than the wire's, and neither is the conversion to
+    /// reach for when a raw multiviewer byte is what is in hand.
     MultiviewerSource: u8 {
         /// The device reports no source.
         UNKNOWN = 0;
@@ -734,11 +780,27 @@ wire_enum! {
 impl MultiviewerSource {
     /// Reads a zero-based wire value, mapping anything past input 4 to
     /// [`MultiviewerSource::UNKNOWN`].
+    ///
+    /// The firmware spells "not known" as 0xFF, which lands past input 4 and
+    /// so needs no case of its own.
     pub(crate) const fn from_zero_based(value: u8) -> Self {
         if value > 3 {
             Self::UNKNOWN
         } else {
             Self(value + 1)
+        }
+    }
+
+    /// The zero-based value the wire carries, or `None` for a source naming no
+    /// input.
+    ///
+    /// A multiviewer reads zero as its first input, so there is no value that
+    /// says "leave this alone": a request that cannot name an input has to be
+    /// refused rather than sent.
+    pub(crate) const fn to_zero_based(self) -> Option<u8> {
+        match self.0 {
+            1..=4 => Some(self.0 - 1),
+            _ => None,
         }
     }
 }

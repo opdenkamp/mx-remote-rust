@@ -704,7 +704,8 @@ fn an_unnamed_enum_value_reaches_the_caller_as_itself() {
         DeviceFeature::V2IP_SINK | DeviceFeature::MULTIVIEWER,
     );
 
-    let mut p = vec![0u8; 190];
+    // The 192 bytes a status report carries; a shorter one is not decoded.
+    let mut p = vec![0u8; 192];
     p[169] = 200; // a view mode far beyond anything named
     h.feed(op::V2IP_MULTIVIEWER, &p);
     let status = h.device().multiviewer.clone().expect("no multiviewer");

@@ -23,9 +23,11 @@ use crate::types::{
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
     Addressee, BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile,
-    MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr,
-    V2ipStreams, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
-    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
+    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
+    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipStreams, HEADER_LEN,
+    PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::control::ControlError;
@@ -116,6 +118,18 @@ impl Fixture {
                 BayFeatures::AUDIO_AMP_OUT,
             ),
         );
+    }
+
+    /// Feeds a status report putting `uid`'s multiviewer in the layout whose
+    /// hardware view mode is `hw_view_mode`, which is what bounds the window
+    /// index a caller may address.
+    fn multiviewer_showing(&self, uid: DeviceUid, hw_view_mode: u8) {
+        let mut p = vec![0u8; 192];
+        p[..16].copy_from_slice(uid.as_bytes());
+        p[16] = 0;
+        p[24..40].copy_from_slice(uid.as_bytes());
+        p[168] = hw_view_mode;
+        self.feed(uid, op::V2IP_MULTIVIEWER, &p);
     }
 
     /// Announces a unit that is every kind of thing a guarded send addresses:
@@ -331,7 +345,7 @@ const GUARDED_SENDS: &[Guarded] = &[
         r.set_multiviewer_view_mode(d, MultiviewerViewMode::PIP)
     }),
     ("set_multiviewer_video_source", |r, d| {
-        r.set_multiviewer_video_source(d, 1, MultiviewerSource::from_wire(2))
+        r.set_multiviewer_video_source(d, 0, MultiviewerSource::INPUT_2)
     }),
     ("multiviewer_auto_route", |r, d| r.multiviewer_auto_route(d)),
     ("store_video_wall", |r, d| {
@@ -1325,6 +1339,8 @@ fn a_multiviewer_command_carries_its_sub_opcode_and_parameters() {
     let f = Fixture::new();
     let uid = uid_n(197);
     f.everything(uid, 0x28, "MV0002");
+    // Four windows, so window 1 is one this multiviewer is showing.
+    f.multiviewer_showing(uid, 5);
 
     let mapped = uid_n(60);
     let mut config_source = mapped.as_bytes().to_vec();
@@ -1333,12 +1349,13 @@ fn a_multiviewer_command_carries_its_sub_opcode_and_parameters() {
 
     // The sub-opcodes are written out rather than read from `mv_sub`, which is
     // the table under test: comparing it against itself would hold for any
-    // value in it. These are `MultiviewerOpcode` in the reference Python
-    // library, which is where the numbering comes from.
+    // value in it.
     //
-    // Window two throughout, which the status report numbers 2 and these
-    // commands 1. Every other parameter differs from its neighbour, so a
-    // transposed pair shows.
+    // Every byte a window or a source is named by is written here as the
+    // number the wire carries, so this holds the encoder to the firmware's
+    // numbering rather than to this library's. The wire counts both from zero,
+    // while `MultiviewerSource` counts inputs from one; input 2 is therefore
+    // the byte 1, and window 1 is the second window.
     type Call = fn(&Remote, DeviceUid) -> Result<(), ControlError>;
     let calls: Vec<(&str, u8, Vec<u8>, Call)> = vec![
         (
@@ -1347,17 +1364,19 @@ fn a_multiviewer_command_carries_its_sub_opcode_and_parameters() {
             vec![MultiviewerViewMode::PIP.to_wire()],
             |r, d| r.set_multiviewer_view_mode(d, MultiviewerViewMode::PIP),
         ),
-        ("video_source", 2, vec![1, 2], |r, d| {
-            r.set_multiviewer_video_source(d, 1, MultiviewerSource::from_wire(2))
+        ("video_source", 2, vec![1, 3], |r, d| {
+            // Input 4 is the one a one-based encoding cannot reach: the
+            // firmware's validator stops at 3.
+            r.set_multiviewer_video_source(d, 1, MultiviewerSource::INPUT_4)
         }),
         ("audio_source", 3, vec![1], |r, d| {
-            r.set_multiviewer_audio_source(d, MultiviewerSource::from_wire(2))
+            r.set_multiviewer_audio_source(d, MultiviewerSource::INPUT_2)
         }),
         ("audio_volume", 4, vec![70, 1], |r, d| {
             r.set_multiviewer_audio_volume(d, 70, true)
         }),
         ("remote_control", 6, vec![1], |r, d| {
-            r.set_multiviewer_remote_control(d, MultiviewerSource::from_wire(2))
+            r.set_multiviewer_remote_control(d, MultiviewerSource::INPUT_2)
         }),
         ("input_source", 14, config_source, |r, d| {
             r.set_multiviewer_input_source(d, 3, uid_n(60))
@@ -1675,4 +1694,189 @@ fn a_volume_against_a_later_zone_is_not_spread_over_the_group() {
         vec![None, None, Some(42), None],
         "a report against a later zone was spread over the group"
     );
+}
+
+/// A window index the multiviewer is not showing never reaches the wire.
+///
+/// Firmware accepts an index one past the last window and then indexes its
+/// window array with it, so the frame carrying one corrupts state on the
+/// receiving device. That makes this the one multiviewer frame this library
+/// must refuse to build rather than merely discourage.
+#[test]
+fn a_window_the_multiviewer_is_not_showing_is_refused() {
+    let f = Fixture::new();
+    let uid = uid_n(150);
+    f.everything(uid, 0x28, "MV0010");
+    f.connect();
+
+    let sent = |screen: u8| {
+        f.tap.clear();
+        let got = f
+            .remote
+            .set_multiviewer_video_source(uid, screen, MultiviewerSource::INPUT_1);
+        assert!(
+            !matches!(got, Err(ControlError::InvalidRequest(_))),
+            "window {screen}: {got:?}"
+        );
+        assert_eq!(f.tap.frames().len(), 1, "window {screen} reached no frame");
+    };
+    let refused = |screen: u8, what: &str| {
+        f.tap.clear();
+        let got = f
+            .remote
+            .set_multiviewer_video_source(uid, screen, MultiviewerSource::INPUT_1);
+        assert!(
+            matches!(got, Err(ControlError::InvalidRequest(_))),
+            "{what}: {got:?}"
+        );
+        assert!(f.tap.frames().is_empty(), "{what} reached the wire");
+    };
+
+    // Before any status report the layout is unknown, and window zero is the
+    // one window every layout has.
+    sent(0);
+    refused(
+        1,
+        "a second window on a multiviewer that has reported no layout",
+    );
+
+    // Two windows: the second is addressable and the third is not. The index
+    // equal to the count is the value firmware mishandles, so it is the one
+    // this has to catch.
+    f.multiviewer_showing(uid, 3);
+    sent(1);
+    refused(2, "the window one past a two-window layout");
+
+    // Four windows, where the same index is now legitimate: the bound has to
+    // follow the layout rather than being a constant that happens to fit.
+    f.multiviewer_showing(uid, 5);
+    sent(3);
+    refused(4, "the window one past a four-window layout");
+}
+
+/// A source that names no input is refused rather than sent as input 1.
+///
+/// The wire counts inputs from zero, so the value a source naming nothing
+/// would encode to is the first input. Passing it through would turn "I do not
+/// know" into a switch the caller never asked for.
+#[test]
+fn a_source_naming_no_input_is_refused_rather_than_selecting_the_first() {
+    let f = Fixture::new();
+    let uid = uid_n(151);
+    f.everything(uid, 0x28, "MV0011");
+    f.connect();
+
+    type Call = fn(&Remote, DeviceUid, MultiviewerSource) -> Result<(), ControlError>;
+    let calls: [(&str, Call); 3] = [
+        ("audio_source", |r, d, s| {
+            r.set_multiviewer_audio_source(d, s)
+        }),
+        ("remote_control", |r, d, s| {
+            r.set_multiviewer_remote_control(d, s)
+        }),
+        ("video_source", |r, d, s| {
+            r.set_multiviewer_video_source(d, 0, s)
+        }),
+    ];
+
+    for (name, call) in calls {
+        f.tap.clear();
+        assert!(
+            call(&f.remote, uid, MultiviewerSource::INPUT_1).is_ok(),
+            "{name} refused the input this case is measured against"
+        );
+        assert_eq!(f.tap.frames().len(), 1, "{name} reached no frame");
+
+        f.tap.clear();
+        let got = call(&f.remote, uid, MultiviewerSource::UNKNOWN);
+        assert!(
+            matches!(got, Err(ControlError::InvalidRequest(_))),
+            "{name} accepted a source naming no input: {got:?}"
+        );
+        assert!(f.tap.frames().is_empty(), "{name} reached the wire");
+    }
+}
+
+/// A setting outside the range firmware accepts is refused here.
+///
+/// The device drops one without answering, so a caller would otherwise see a
+/// send succeed and the setting stay as it was. Each case is paired with the
+/// highest value that is accepted, so a check that refused everything would
+/// fail rather than look thorough.
+#[test]
+fn a_setting_the_multiviewer_would_drop_never_reaches_the_wire() {
+    let f = Fixture::new();
+    let uid = uid_n(152);
+    f.everything(uid, 0x28, "MV0012");
+    f.connect();
+
+    type Call = fn(&Remote, DeviceUid, u8) -> Result<(), ControlError>;
+    let calls: [(&str, u8, Call); 9] = [
+        ("view_mode", 8, |r, d, v| {
+            r.set_multiviewer_view_mode(d, MultiviewerViewMode::from_wire(v))
+        }),
+        ("edid_template", 19, |r, d, v| {
+            r.set_multiviewer_edid_template(d, MultiviewerEdidTemplate::from_wire(v))
+        }),
+        ("pip_size", 3, |r, d, v| {
+            r.set_multiviewer_pip_size(d, MultiviewerPipSize::from_wire(v))
+        }),
+        ("pip_position", 4, |r, d, v| {
+            r.set_multiviewer_pip_position(d, MultiviewerPipPosition::from_wire(v))
+        }),
+        ("aspect", 2, |r, d, v| {
+            r.set_multiviewer_aspect_ratio(d, MultiviewerAspectRatio::from_wire(v))
+        }),
+        ("output_mode", 14, |r, d, v| {
+            r.set_multiviewer_output_mode(d, MultiviewerOutputMode::from_wire(v))
+        }),
+        ("output_itc", 2, |r, d, v| {
+            r.set_multiviewer_output_itc(d, MultiviewerItcMode::from_wire(v))
+        }),
+        // Three is HDCP off, which a range stopping at the two HDCP versions
+        // would refuse.
+        ("hdcp_mode", 3, |r, d, v| {
+            r.set_multiviewer_hdcp_mode(d, MultiviewerHdcpMode::from_wire(v))
+        }),
+        ("audio_volume", 100, |r, d, v| {
+            r.set_multiviewer_audio_volume(d, v, false)
+        }),
+    ];
+
+    for (name, highest, call) in calls {
+        f.tap.clear();
+        assert!(
+            call(&f.remote, uid, highest).is_ok(),
+            "{name} refused {highest}, the highest value firmware accepts"
+        );
+        assert_eq!(f.tap.frames().len(), 1, "{name} reached no frame");
+
+        f.tap.clear();
+        let got = call(&f.remote, uid, highest + 1);
+        assert!(
+            matches!(got, Err(ControlError::InvalidRequest(_))),
+            "{name} accepted {}: {got:?}",
+            highest + 1
+        );
+        assert!(f.tap.frames().is_empty(), "{name} reached the wire");
+    }
+
+    // Zero is what every one of these settings reads as "the device has
+    // reported nothing", and it is not a value to send either.
+    assert!(matches!(
+        f.remote
+            .set_multiviewer_view_mode(uid, MultiviewerViewMode::UNKNOWN),
+        Err(ControlError::InvalidRequest(_))
+    ));
+
+    // The input index the mapping command carries is bounded by the array it
+    // indexes rather than by a layout.
+    assert!(f
+        .remote
+        .set_multiviewer_input_source(uid, 3, uid_n(60))
+        .is_ok());
+    assert!(matches!(
+        f.remote.set_multiviewer_input_source(uid, 4, uid_n(60)),
+        Err(ControlError::InvalidRequest(_))
+    ));
 }

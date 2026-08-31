@@ -315,10 +315,15 @@ fn workspace_source(path: &str) -> String {
     std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{full} could not be read: {e}"))
 }
 
-/// Evaluates the expressions these constants are written with: a literal, or a
-/// shift of one. Anything else fails rather than being skipped over.
+/// Evaluates the expressions these constants are written with: a decimal or
+/// hexadecimal literal, or a shift of one. Anything else fails rather than
+/// being skipped over.
 fn value_of(expr: &str, whose: &str) -> u64 {
     let expr = expr.trim();
+    if let Some(hex) = expr.strip_prefix("0x") {
+        return u64::from_str_radix(hex, 16)
+            .unwrap_or_else(|_| panic!("{whose}: {expr} is not a hexadecimal literal"));
+    }
     if let Some((lhs, rhs)) = expr.split_once("<<") {
         let base: u64 = lhs
             .trim()
@@ -407,7 +412,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 5] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 15] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 27),
         (
             "MXR_BAY_",
@@ -418,6 +423,73 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
         ("MXR_BAY_STATUS_", core_bits(&enums, "BayStatus"), &[], 18),
         ("MXR_KEY_", core_bits(&enums, "RcKey"), &[], 48),
         ("MXR_AUDIO_", core_consts(&audio, "AudioFeatures"), &[], 15),
+        (
+            "MXR_MV_VIEW_MODE_",
+            core_bits(&enums, "MultiviewerViewMode"),
+            &[],
+            9,
+        ),
+        (
+            "MXR_MV_PIP_POSITION_",
+            core_bits(&enums, "MultiviewerPipPosition"),
+            &[],
+            5,
+        ),
+        (
+            "MXR_MV_PIP_SIZE_",
+            core_bits(&enums, "MultiviewerPipSize"),
+            &[],
+            4,
+        ),
+        (
+            "MXR_MV_OUTPUT_",
+            core_bits(&enums, "MultiviewerOutputMode"),
+            &[],
+            15,
+        ),
+        (
+            "MXR_MV_HDCP_",
+            core_bits(&enums, "MultiviewerHdcpMode"),
+            &[],
+            4,
+        ),
+        // The EDID names already carry their own word, so they take the bare
+        // multiviewer prefix and every other multiviewer list is excluded
+        // rather than the names being spelled MXR_MV_EDID_EDID_*.
+        (
+            "MXR_MV_",
+            core_bits(&enums, "MultiviewerEdidTemplate"),
+            &[
+                "MXR_MV_VIEW_MODE_",
+                "MXR_MV_PIP_",
+                "MXR_MV_OUTPUT_",
+                "MXR_MV_HDCP_",
+                "MXR_MV_ITC_",
+                "MXR_MV_ASPECT_",
+                "MXR_MV_BOOL_",
+                "MXR_MV_SOURCE_",
+            ],
+            20,
+        ),
+        (
+            "MXR_MV_ITC_",
+            core_bits(&enums, "MultiviewerItcMode"),
+            &[],
+            3,
+        ),
+        (
+            "MXR_MV_ASPECT_",
+            core_bits(&enums, "MultiviewerAspectRatio"),
+            &[],
+            3,
+        ),
+        ("MXR_MV_BOOL_", core_bits(&enums, "MultiviewerBool"), &[], 3),
+        (
+            "MXR_MV_SOURCE_",
+            core_bits(&enums, "MultiviewerSource"),
+            &[],
+            5,
+        ),
     ];
 
     for (prefix, core, not, minimum) in lists {

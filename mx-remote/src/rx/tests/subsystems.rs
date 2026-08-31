@@ -44,14 +44,22 @@ fn multiviewer_status_parses() {
         DeviceFeature::V2IP_SINK | DeviceFeature::MULTIVIEWER,
     );
 
-    let mut p = poisoned(190);
+    // The 192 bytes a multiviewer sends: the 24-byte envelope and a settings
+    // block of 168.
+    let mut p = poisoned(192);
     // 0..16 target, 16 the STATUS sub-opcode, 17..24 padding.
     p[16] = 0;
+    p[168] = 5; // the hardware layout: four windows
     p[169] = MultiviewerViewMode::PIP.to_wire();
     p[171] = MultiviewerPipSize::LARGE.to_wire();
     p[180] = 42; // audio volume
-    p[182] = MultiviewerSource::INPUT_1.to_wire(); // screen 0 video source
-    p[179] = 0; // audio source, zero-based: input 1
+                 // The three index fields are written as the wire numbers them, from zero,
+                 // rather than through this library's own enum: a fixture built from the
+                 // enum would agree with a decoder that had the numbering wrong.
+    p[182] = 0; // window 0 shows input 1
+    p[183] = 3; // window 1 shows input 4, which one-based numbering cannot reach
+    p[179] = 0; // audio source: input 1
+    p[186] = 1; // remote control follows input 2
     p[24..40].copy_from_slice(uid_n(4).as_bytes());
     h.feed(op::V2IP_MULTIVIEWER, &p);
 
@@ -65,7 +73,50 @@ fn multiviewer_status_parses() {
     assert_eq!(mv.pip_size, MultiviewerPipSize::LARGE);
     assert_eq!(mv.audio_volume, Some(42));
     assert_eq!(mv.video_sources[0], MultiviewerSource::INPUT_1);
+    assert_eq!(mv.video_sources[1], MultiviewerSource::INPUT_4);
     assert_eq!(mv.audio_source, MultiviewerSource::INPUT_1);
+    assert_eq!(mv.remote_control, MultiviewerSource::INPUT_2);
+    assert_eq!(mv.window_count(), Some(4));
+}
+
+/// A status report too short to carry a settings block leaves the cached one
+/// alone.
+///
+/// Every field is read with a fallback, so a short report decodes rather than
+/// fails - and would replace a good status with one saying the device reported
+/// nothing.
+#[test]
+fn a_truncated_multiviewer_status_does_not_replace_the_one_cached() {
+    let mut h = Harness::new(4);
+    h.hello(
+        0x27,
+        "ONEIP-MV",
+        "MV0001",
+        DeviceFeature::V2IP_SINK | DeviceFeature::MULTIVIEWER,
+    );
+
+    let mut whole = poisoned(192);
+    whole[16] = 0;
+    whole[169] = MultiviewerViewMode::PIP.to_wire();
+    whole[24..40].copy_from_slice(uid_n(4).as_bytes());
+    h.feed(op::V2IP_MULTIVIEWER, &whole);
+
+    let mut short = poisoned(191);
+    short[16] = 0;
+    short[169] = MultiviewerViewMode::SINGLE.to_wire();
+    short[24..40].copy_from_slice(uid_n(4).as_bytes());
+    h.feed(op::V2IP_MULTIVIEWER, &short);
+
+    let mv = h
+        .device()
+        .multiviewer
+        .clone()
+        .expect("no multiviewer status");
+    assert_eq!(
+        mv.view_mode,
+        MultiviewerViewMode::PIP,
+        "a short report was decoded over the cached one"
+    );
 }
 
 #[test]
