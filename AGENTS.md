@@ -37,6 +37,24 @@ implementations rather than bindings over a shared core.
 
 `[0x50, 0x38, protocol(u16 LE), uid(16), opcode(u16 LE), length(u16 LE), payload]`
 
+**Little-endian throughout, with two exceptions that sit next to each other.**
+Both firmware targets are little-endian and nothing on either side swaps bytes,
+so the wire is host-endian and every scalar is written as it is held.
+
+An IPv4 address is not: it is stored in network byte order, so `239.1.2.3`
+goes out as `ef 01 02 03`. Every stream slot therefore puts a big-endian
+address immediately in front of a little-endian port, two adjacent fields with
+opposite byte order. A slot built by treating the address as a `u32` looks
+right for as long as the test addresses are symmetric - `239.1.1.1` survives
+being reversed and `234.108.230.221` does not - so pin it with an address whose
+four bytes differ.
+
+A uid is four 32-bit words, and its printed form reverses each one: the text
+`05027025.…` is the word `25 70 02 05` on the wire. The 16 bytes are otherwise
+opaque, so parsing that text as bytes rather than as four words yields a uid
+that fails the receiver's "is this me" test, and the frame is dropped in
+silence like everything else on these paths.
+
 The stamped protocol is the per-opcode version from `stamp_for`, not the version
 this library speaks. A receiver drops any frame stamped above its own version,
 so stamping our own would make every device with a lower cap ignore us.

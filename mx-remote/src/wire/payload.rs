@@ -55,6 +55,12 @@ pub(crate) struct V2ipStreams {
 }
 
 /// Appends a `v2ip_stream_addr`: an IPv4 address, a `u16` port and two pad bytes.
+///
+/// The two carry opposite byte orders. An address is held in network order, so
+/// its octets go out as they are written down, while the port beside it is
+/// little-endian like every other scalar here. Writing the address as a `u32`
+/// reverses it, and stays invisible for as long as the addresses under test
+/// read the same backwards.
 pub(crate) fn append_stream_addr(dst: &mut Vec<u8>, addr: StreamAddr) {
     dst.extend_from_slice(&addr.ip.octets());
     dst.extend_from_slice(&addr.port.to_le_bytes());
