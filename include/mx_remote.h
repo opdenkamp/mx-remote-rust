@@ -2057,6 +2057,13 @@ typedef struct {
   mxr_uid_t target;
   /**
    * The control method, as the wire value.
+   *
+   * Zero is infrared, a method a bay really uses, so it is not a stand-in
+   * for "not reported". Check that `mxr_rc_settings()` returned `MXR_OK`
+   * before reading this: a device that has not sent its settings yet
+   * leaves the struct as the caller allocated it, and a zeroed one then
+   * reads as a bay set to infrared. `mxr_bay_info_t` answers the same
+   * question with a `has_rc_type` flag beside its `rc_type`.
    */
   uint8_t rc_target;
   /**
