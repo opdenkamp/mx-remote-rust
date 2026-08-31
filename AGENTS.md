@@ -105,12 +105,29 @@ cache; never replace a cached list from one frame.
 because a sender zeroes the payload and fills in only what it is writing. Fold a
 frame onto the cached config field by field.
 
+**A module-owned opcode may reach a device that has no handler for it, and
+nothing says so.** `0x42` V2IP_MULTIVIEWER, `0x43` V2IP_AUDIO and `0x49`
+V2IP_VIDEO_WALL are served by loadable modules rather than by MatrixOS. A model
+may not load modules at all, may not ship that one, or may not support it, so
+"no handler" is a live state on current firmware rather than a legacy concern.
+None of the three replies even where it is handled: the handlers return
+nothing, there is no ack and no error frame. So a send that succeeds means a
+frame left the socket and nothing more, and "worked", "the module is absent",
+"this model cannot do it", "the target uid was not the receiver's" and "the
+payload was short" are one observation from outside. Read the state back to
+learn which - over HTTP for the video wall, which reports nothing on the wire.
+
 `0x49` V2IP_VIDEO_WALL is owned by a loadable module rather than MatrixOS, and
 unlike `0x3C` it **replaces** rather than merges: no field carries a validity
 marker, and a zero width or height means "clear the wall", not "unset". A revert
 carries no window at all. `0x40` V2IP_TILING is not a substitute — on a sink
 running that module a `0x40` write is transient, because the module's reconciler
 pushes its own window back within about a second.
+
+`0x07` DEV_EDID is answered only by V2IP hardware. A matrix or an amplifier
+registers no handler for it, so a request reaches them, is accepted and is
+never answered, at any stamp. Silence from one of those is the end of the
+exchange rather than a reply still in flight.
 
 `0x08` MX_ROUTE is decoded but no MatrixOS build transmits it: the firmware's
 route-broadcast helper is defined and never called. The decoder still has to be

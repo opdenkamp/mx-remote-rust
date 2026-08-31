@@ -12,6 +12,14 @@
 //! Nothing here reaches the wire on its own: a payload is bytes until the
 //! single transmit path stamps and writes it, which is where the addressee's
 //! protocol version is checked.
+//!
+//! The multiviewer and audio-endpoint methods are served by loadable modules
+//! rather than by the device firmware, and a model may not load modules at
+//! all, may not ship that one, or may not support it. Those modules answer
+//! nothing either way, so an `Ok` from one of those methods says a frame left
+//! the socket and no more: "the device did it" and "nothing on the device
+//! handles this" are the same observation from here. Read the state back to
+//! tell them apart.
 
 use std::fmt;
 use std::net::Ipv4Addr;
@@ -645,6 +653,13 @@ impl Remote {
     /// The device answers with a frame the receive path decodes, so the bytes
     /// arrive at [`crate::EventHandler::on_edid_received`] and stay readable
     /// through [`Remote::edid`].
+    ///
+    /// Only V2IP hardware handles this opcode. A matrix or an amplifier
+    /// accepts the frame and answers nothing, at any protocol version, so the
+    /// silence that follows is permanent rather than a reply still to come.
+    /// This call cannot tell the two apart and does not try: it reports what
+    /// was sent, and a caller polling for an EDID should ask a device that can
+    /// answer rather than wait on one that cannot.
     pub fn request_edid(&self, device: DeviceUid, output: bool) -> Result<(), ControlError> {
         self.shared.command(move |state| {
             let device = device_of(state, device)?;

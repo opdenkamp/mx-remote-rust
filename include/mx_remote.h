@@ -3349,6 +3349,10 @@ mxr_result_t mxr_set_amp_zone_settings(const mxr_remote_t *remote,
 /**
  * Mutes or unmutes one of a device's audio endpoints.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3361,6 +3365,10 @@ mxr_result_t mxr_set_audio_endpoint_muted(const mxr_remote_t *remote,
 /**
  * Activates or clears an audio endpoint's trigger.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3372,6 +3380,10 @@ mxr_result_t mxr_set_audio_endpoint_trigger(const mxr_remote_t *remote,
 
 /**
  * Sets an audio endpoint's volume.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3387,6 +3399,10 @@ mxr_result_t mxr_set_audio_endpoint_volume(const mxr_remote_t *remote,
  *
  * `sink` is the end doing the listening and `source` the end being
  * listened to.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3404,6 +3420,12 @@ mxr_result_t mxr_select_audio_endpoint_input(const mxr_remote_t *remote,
  *
  * The device answers a moment later. The bytes reach `on_edid_received` and
  * stay readable through `mxr_device_edid()`.
+ *
+ * Only V2IP hardware handles this opcode. A matrix or an amplifier accepts
+ * the frame and answers nothing, at any protocol version, so the silence that
+ * follows is permanent rather than a reply still to come. `MXR_OK` here means
+ * the frame was sent, and nothing more; a caller polling for an EDID should
+ * ask a device that can answer rather than wait on one that cannot.
  *
  * # Safety
  *
@@ -3455,6 +3477,10 @@ mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
 /**
  * Switches a multiviewer's window layout.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3465,6 +3491,10 @@ mxr_result_t mxr_set_multiviewer_view_mode(const mxr_remote_t *remote,
 
 /**
  * Puts a source in one of a multiviewer's windows.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3478,6 +3508,10 @@ mxr_result_t mxr_set_multiviewer_video_source(const mxr_remote_t *remote,
 /**
  * Chooses which window a multiviewer takes its audio from.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3488,6 +3522,10 @@ mxr_result_t mxr_set_multiviewer_audio_source(const mxr_remote_t *remote,
 
 /**
  * Sets a multiviewer's output volume and mute state.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3501,6 +3539,10 @@ mxr_result_t mxr_set_multiviewer_audio_volume(const mxr_remote_t *remote,
 /**
  * Switches the EDID a multiviewer presents to its sources.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3511,6 +3553,10 @@ mxr_result_t mxr_set_multiviewer_edid_template(const mxr_remote_t *remote,
 
 /**
  * Chooses which window a multiviewer forwards remote control to.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3523,6 +3569,10 @@ mxr_result_t mxr_set_multiviewer_remote_control(const mxr_remote_t *remote,
 /**
  * Sets the size of a multiviewer's picture-in-picture window.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3533,6 +3583,10 @@ mxr_result_t mxr_set_multiviewer_pip_size(const mxr_remote_t *remote,
 
 /**
  * Sets which corner a multiviewer's picture-in-picture window sits in.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3545,6 +3599,10 @@ mxr_result_t mxr_set_multiviewer_pip_position(const mxr_remote_t *remote,
 /**
  * Sets how a multiviewer fits a source into its window.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3555,6 +3613,10 @@ mxr_result_t mxr_set_multiviewer_aspect_ratio(const mxr_remote_t *remote,
 
 /**
  * Turns a multiviewer's automatic source switching on or off.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3567,6 +3629,10 @@ mxr_result_t mxr_set_multiviewer_auto_switch(const mxr_remote_t *remote,
 /**
  * Switches a multiviewer's output resolution.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3577,6 +3643,10 @@ mxr_result_t mxr_set_multiviewer_output_mode(const mxr_remote_t *remote,
 
 /**
  * Sets a multiviewer's IT content flag.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3589,6 +3659,10 @@ mxr_result_t mxr_set_multiviewer_output_itc(const mxr_remote_t *remote,
 /**
  * Switches a multiviewer's HDCP mode.
  *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -3599,6 +3673,10 @@ mxr_result_t mxr_set_multiviewer_hdcp_mode(const mxr_remote_t *remote,
 
 /**
  * Maps one of a multiviewer's inputs to a source device.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *
@@ -3611,6 +3689,10 @@ mxr_result_t mxr_set_multiviewer_input_source(const mxr_remote_t *remote,
 
 /**
  * Asks a multiviewer to map its inputs to the sources it can see.
+ *
+ * A loadable module serves this, not the device firmware, and a model may
+ * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * sent and not that anything acted on it.
  *
  * # Safety
  *

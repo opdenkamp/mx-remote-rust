@@ -555,6 +555,10 @@ pub unsafe extern "C" fn mxr_set_amp_zone_settings(
 
 /// Mutes or unmutes one of a device's audio endpoints.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -577,6 +581,10 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_muted(
 
 /// Activates or clears an audio endpoint's trigger.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -598,6 +606,10 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_trigger(
 }
 
 /// Sets an audio endpoint's volume.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -623,6 +635,10 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_volume(
 ///
 /// `sink` is the end doing the listening and `source` the end being
 /// listened to.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -654,6 +670,12 @@ pub unsafe extern "C" fn mxr_select_audio_endpoint_input(
 ///
 /// The device answers a moment later. The bytes reach `on_edid_received` and
 /// stay readable through `mxr_device_edid()`.
+///
+/// Only V2IP hardware handles this opcode. A matrix or an amplifier accepts
+/// the frame and answers nothing, at any protocol version, so the silence that
+/// follows is permanent rather than a reply still to come. `MXR_OK` here means
+/// the frame was sent, and nothing more; a caller polling for an EDID should
+/// ask a device that can answer rather than wait on one that cannot.
 ///
 /// # Safety
 ///
@@ -744,6 +766,10 @@ pub unsafe extern "C" fn mxr_send_monitoring_pulse(remote: *const mxr_remote_t) 
 
 /// Switches a multiviewer's window layout.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -764,6 +790,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_view_mode(
 }
 
 /// Puts a source in one of a multiviewer's windows.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -788,6 +818,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_video_source(
 
 /// Chooses which window a multiviewer takes its audio from.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -808,6 +842,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_audio_source(
 }
 
 /// Sets a multiviewer's output volume and mute state.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -831,6 +869,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_audio_volume(
 
 /// Switches the EDID a multiviewer presents to its sources.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -851,6 +893,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_edid_template(
 }
 
 /// Chooses which window a multiviewer forwards remote control to.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -875,6 +921,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_remote_control(
 
 /// Sets the size of a multiviewer's picture-in-picture window.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -896,6 +946,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_pip_size(
 
 /// Sets which corner a multiviewer's picture-in-picture window sits in.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -916,6 +970,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_pip_position(
 }
 
 /// Sets how a multiviewer fits a source into its window.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -940,6 +998,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_aspect_ratio(
 
 /// Turns a multiviewer's automatic source switching on or off.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -957,6 +1019,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_auto_switch(
 }
 
 /// Switches a multiviewer's output resolution.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -979,6 +1045,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_output_mode(
 
 /// Sets a multiviewer's IT content flag.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -999,6 +1069,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_output_itc(
 }
 
 /// Switches a multiviewer's HDCP mode.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
@@ -1021,6 +1095,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_hdcp_mode(
 
 /// Maps one of a multiviewer's inputs to a source device.
 ///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -1042,6 +1120,10 @@ pub unsafe extern "C" fn mxr_set_multiviewer_input_source(
 }
 
 /// Asks a multiviewer to map its inputs to the sources it can see.
+///
+/// A loadable module serves this, not the device firmware, and a model may
+/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// sent and not that anything acted on it.
 ///
 /// # Safety
 ///
