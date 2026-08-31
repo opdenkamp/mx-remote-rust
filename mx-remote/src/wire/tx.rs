@@ -29,6 +29,17 @@ pub enum SendError {
         /// The version the opcode requires.
         need: u16,
     },
+    /// The opcode has no entry in the protocol table, so there is no version
+    /// to stamp it with.
+    ///
+    /// Nothing this library sends can reach this: every opcode it declares has
+    /// an entry, and a test holds that true. It exists so that adding one
+    /// without an entry fails at the send rather than going out stamped with a
+    /// guess.
+    UnknownOpcode {
+        /// The opcode that has no entry.
+        opcode: u16,
+    },
     /// The client is not connected, because it was never started or has been
     /// closed.
     NotConnected,
@@ -48,6 +59,9 @@ impl fmt::Display for SendError {
                 f,
                 "{serial} reports protocol {have:#04x}, opcode {opcode:#04x} needs {need:#04x}"
             ),
+            Self::UnknownOpcode { opcode } => {
+                write!(f, "opcode {opcode:#04x} has no protocol table entry")
+            }
             Self::NotConnected => write!(f, "not connected"),
             Self::Io(e) => write!(f, "{e}"),
         }
@@ -169,7 +183,7 @@ impl Tx {
         opcode: Opcode,
         payload: &[u8],
     ) -> Result<usize, SendError> {
-        let need = stamp_for(opcode);
+        let need = stamp_for(opcode).ok_or(SendError::UnknownOpcode { opcode: opcode.0 })?;
         if let Addressee::Device { serial, protocol } = to {
             // A device that has not reported a version is let through: not
             // knowing is not the same as knowing it is too old.

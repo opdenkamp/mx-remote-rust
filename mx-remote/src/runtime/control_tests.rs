@@ -853,8 +853,16 @@ fn frames_from_peers_are_counted_and_this_clients_own_are_not() {
     );
 }
 
+/// A multiviewer frame is stamped at its own opcode's version, and reaches a
+/// device reporting exactly that.
+///
+/// The module that receives this opcode dispatches on payload length and never
+/// reads the stamp, so a stamp above the table entry enables nothing and costs
+/// every receiver capped between 0x16 and 0x1F. Both halves are asserted: the
+/// number on the wire, and the device that number decides the fate of. A test
+/// on the stamp alone would pass just as well for a value that reaches nobody.
 #[test]
-fn a_multiviewer_frame_is_stamped_above_its_opcodes_floor() {
+fn a_multiviewer_frame_is_stamped_at_its_opcodes_own_version() {
     let f = Fixture::new();
     let uid = uid_n(196);
     f.everything(uid, 0x28, "MV0001");
@@ -865,13 +873,29 @@ fn a_multiviewer_frame_is_stamped_above_its_opcodes_floor() {
         .set_multiviewer_view_mode(uid, MultiviewerViewMode::PIP);
     let frame = f.tap.frames().pop().expect("nothing reached the gate");
 
-    // This opcode is stamped at 0x20 rather than the 0x16 its own table
-    // declares, and the gate has to check against what is stamped: a receiver
-    // drops whatever is above its version, whichever number the table holds.
     let stamped = u16::from_le_bytes([frame[2], frame[3]]);
-    assert_eq!(stamped, 0x20);
-    assert!(stamped > protocol_for(op::V2IP_MULTIVIEWER));
+    assert_eq!(stamped, protocol_for(op::V2IP_MULTIVIEWER));
+    assert_eq!(stamped, 0x16);
     assert_eq!(frame.len(), HEADER_LEN + 25);
+
+    // A device reporting exactly the opcode's version is the one a raised
+    // stamp would have shut out, so it is the input that makes this mean
+    // something.
+    let on_the_floor = uid_n(197);
+    f.everything(on_the_floor, 0x16, "MV0002");
+    assert!(!refused(&f.remote.set_multiviewer_view_mode(
+        on_the_floor,
+        MultiviewerViewMode::PIP
+    )));
+
+    // And the paired direction, so the allowance above is not one the gate
+    // would give anything.
+    let below = uid_n(198);
+    f.everything(below, 0x15, "MV0003");
+    assert!(refused(
+        &f.remote
+            .set_multiviewer_view_mode(below, MultiviewerViewMode::PIP)
+    ));
 }
 
 /// A command's local write-back must wait until its frame is away.

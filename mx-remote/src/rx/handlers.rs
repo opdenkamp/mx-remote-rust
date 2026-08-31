@@ -14,15 +14,37 @@ use crate::types::{
     SCALING_FLAGS_DEFINED,
 };
 use crate::wire::{
-    parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, MxrSignalType,
-    RcAction, RcKey, BAY_CONFIG_SIZE, FW_VERSION_LEN,
+    parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
+    MxrSignalType, RcAction, RcKey, BAY_CONFIG_SIZE, FW_VERSION_LEN,
 };
 
 use super::Rx;
 
-/// The protocol version from which a bay port is two bytes wide rather than
-/// one, in the remote-control frames that carry one.
-const WIDE_PORT_PROTOCOL: u16 = 6;
+/// Payload length of a remote-control key or action frame with a one-byte bay
+/// id, and of the one from protocol 6 that widened it to two.
+///
+/// The length is what tells the two apart, not the frame's stamp. These
+/// opcodes' table entries were seeded after the widening had already happened
+/// and were never raised for it, so both forms go out stamped 0x01 and the
+/// stamp says nothing about which one arrived. A table entry is what a frame
+/// is stamped with; it is not a record of when a layout changed.
+const RC_NARROW_SIZE: usize = 3;
+const RC_WIDE_SIZE: usize = 4;
+
+/// Payload length of the superseded `AUDIO_SET_VOLUME` layout, which addresses
+/// its target by serial and carries a one-byte bay, and of the current one,
+/// which addresses it by uid and carries two.
+const SET_VOLUME_LEGACY_SIZE: usize = 20;
+const SET_VOLUME_SIZE: usize = 24;
+
+/// The bay and the value a remote-control key or action frame carries.
+fn rc_bay_and_value(f: &Frame) -> Option<(u16, u16)> {
+    match f.payload().len() {
+        RC_NARROW_SIZE => Some((u16::from(f.u8(0)?), f.u16(1)?)),
+        n if n >= RC_WIDE_SIZE => Some((f.u16(0)?, f.u16(2)?)),
+        _ => None,
+    }
+}
 
 pub(super) fn hello(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
@@ -124,44 +146,23 @@ pub(super) fn rc_action(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = state.device(rx.sender()) else {
         return;
     };
-    let port = if device.hello.supported_protocol >= WIDE_PORT_PROTOCOL {
-        rx.frame.u16(0)
-    } else {
-        rx.frame.u8(0).map(u16::from)
-    };
-    let (Some(port), Some(action)) = (port, rx.frame.u8(2)) else {
+    let Some((port, action)) = rc_bay_and_value(&rx.frame) else {
         return;
     };
     if device.bay(port).is_some() {
         ev.push(Event::ActionReceived {
             bay: BayUid::new(rx.sender(), port),
-            action: RcAction::from_wire(u16::from(action)),
+            action: RcAction::from_wire(action),
         });
     }
 }
 
 /// Reports a remote-control key press.
-///
-/// The port width follows the frame's own protocol stamp while the key offset
-/// follows the version the device advertised. The two are read from different
-/// places on purpose: the Python and Go clients both read them this way, and a
-/// device that stamps a frame below its own version is what separates them.
 pub(super) fn rc_key(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    let f = &rx.frame;
     let Some(device) = state.device(rx.sender()) else {
         return;
     };
-    let port = if f.protocol() >= WIDE_PORT_PROTOCOL {
-        f.u16(0)
-    } else {
-        f.u8(0).map(u16::from)
-    };
-    let key = if device.hello.supported_protocol >= WIDE_PORT_PROTOCOL {
-        f.u16(2)
-    } else {
-        f.u16(1)
-    };
-    let (Some(port), Some(key)) = (port, key) else {
+    let Some((port, key)) = rc_bay_and_value(&rx.frame) else {
         return;
     };
     if device.bay(port).is_some() {
@@ -172,18 +173,35 @@ pub(super) fn rc_key(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     }
 }
 
-/// Applies an `AUDIO_SET_VOLUME` request, which names its target device and
-/// carries a volume per channel plus a mute bitmask.
+/// Applies an `AUDIO_SET_VOLUME` request: a volume per channel and a mute
+/// bitmask, for one bay of the device that sent it.
+///
+/// Two layouts, told apart by length. The superseded form names its target by
+/// serial and carries a one-byte bay; the current one names it by uid and
+/// carries two. The stamp does separate them here - it was raised in the same
+/// change, making this the one opcode whose stamp selects a layout - but the
+/// length says the same thing without trusting the sender to stamp correctly,
+/// and the two cannot be confused for each other: the first sixteen bytes are
+/// a printable serial in one and a binary identifier in the other.
+///
+/// Either way the volume is filed under the sender rather than under the
+/// target the payload names.
 pub(super) fn volume_set(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
-    let Some(port) = f.u16(16) else {
+    let (port, at) = match f.payload().len() {
+        SET_VOLUME_LEGACY_SIZE => (f.u8(16).map(u16::from), 17),
+        n if n >= SET_VOLUME_SIZE => (f.u16(16), 18),
+        _ => return,
+    };
+    let Some(port) = port else {
         return;
     };
+    let muted = f.u8(at + 2);
     let volume = VolumeMuteStatus {
-        volume_left: f.u8(18).filter(|v| *v <= 100),
-        volume_right: f.u8(19).filter(|v| *v <= 100),
-        muted_left: f.u8(20).map(|m| MuteStatus::from_wire(m).left()),
-        muted_right: f.u8(20).map(|m| MuteStatus::from_wire(m).right()),
+        volume_left: f.u8(at).filter(|v| *v <= 100),
+        volume_right: f.u8(at + 1).filter(|v| *v <= 100),
+        muted_left: muted.map(|m| MuteStatus::from_wire(m).left()),
+        muted_right: muted.map(|m| MuteStatus::from_wire(m).right()),
     };
     if let Some(device) = state.device_mut(rx.sender()) {
         device.apply_bay_volume(port, volume, ev);

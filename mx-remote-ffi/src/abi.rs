@@ -211,6 +211,7 @@ fn send_code(error: &SendError) -> mxr_result_t {
         SendError::ProtocolTooOld { .. } => mxr_result_t::MXR_ERR_PROTOCOL_TOO_OLD,
         SendError::NotConnected => mxr_result_t::MXR_ERR_NOT_CONNECTED,
         SendError::Io(_) => mxr_result_t::MXR_ERR_IO,
+        SendError::UnknownOpcode { .. } => mxr_result_t::MXR_ERR_UNSUPPORTED,
         _ => mxr_result_t::MXR_ERR_IO,
     }
 }

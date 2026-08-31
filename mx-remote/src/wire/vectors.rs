@@ -22,7 +22,7 @@ use super::enums::{
     BayFeatures, BayStatus, DeviceFeature, EdidProfile, MultiviewerViewMode, RcAction,
 };
 use super::frame::build_frame;
-use super::opcode::{audio_sub, op, protocol_for, MULTIVIEWER_PROTOCOL};
+use super::opcode::{audio_sub, op, protocol_for};
 use super::payload::*;
 use super::uid::DeviceUid;
 
@@ -208,10 +208,16 @@ fn rc_action_frame() {
 
 #[test]
 fn multiviewer_frames() {
+    // The one vector here whose stamped version differs from the reference
+    // Python library, which sends this opcode at 0x20. The receiving module
+    // dispatches this frame on its payload length and never reads the stamp,
+    // so 0x20 enables nothing and is refused by every receiver capped between
+    // this opcode's own 0x16 and 0x1F. The payload bytes still come from the
+    // reference; only the header version is ours.
     let view = build_frame(
         TEST_UID,
         op::V2IP_MULTIVIEWER,
-        MULTIVIEWER_PROTOCOL,
+        protocol_for(op::V2IP_MULTIVIEWER),
         &mv_cmd_payload(
             TEST_UID,
             MV_OP_VIEW_MODE,
@@ -220,18 +226,18 @@ fn multiviewer_frames() {
     );
     assert_eq!(
         hex_of(&view),
-        "50382000000102030405060708090a0b0c0d0e0f42001900000102030405060708090a0b0c0d0e0f010000000000000002"
+        "50381600000102030405060708090a0b0c0d0e0f42001900000102030405060708090a0b0c0d0e0f010000000000000002"
     );
 
     let volume = build_frame(
         TEST_UID,
         op::V2IP_MULTIVIEWER,
-        MULTIVIEWER_PROTOCOL,
+        protocol_for(op::V2IP_MULTIVIEWER),
         &mv_cmd_payload(TEST_UID, MV_OP_AUDIO_VOLUME, &[42, 1]),
     );
     assert_eq!(
         hex_of(&volume),
-        "50382000000102030405060708090a0b0c0d0e0f42001a00000102030405060708090a0b0c0d0e0f04000000000000002a01"
+        "50381600000102030405060708090a0b0c0d0e0f42001a00000102030405060708090a0b0c0d0e0f04000000000000002a01"
     );
 }
 

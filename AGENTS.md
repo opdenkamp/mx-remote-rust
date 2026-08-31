@@ -37,11 +37,58 @@ implementations rather than bindings over a shared core.
 
 `[0x50, 0x38, protocol(u16 LE), uid(16), opcode(u16 LE), length(u16 LE), payload]`
 
-The stamped protocol is the per-opcode minimum from `stamp_for`, not the version
+The stamped protocol is the per-opcode version from `stamp_for`, not the version
 this library speaks. A receiver drops any frame stamped above its own version,
-so stamping our own would make every device with a lower cap ignore us. These
-minimums stay deliberately low: an opcode whose payload only ever grew trailing
-fields keeps its original version.
+so stamping our own would make every device with a lower cap ignore us.
+
+An opcode's table entry is the version its feature arrived at, and the few
+receive-side decisions that read the stamp test that same number. Stamping the
+table entry therefore clears every gate by construction, and stamping anything
+higher only narrows the set of receivers that accept the frame. There is no
+opcode whose table entry sits below its own gate, which is what makes the table
+safe to stamp from; a raised stamp is a mistake rather than an option.
+
+Only these receive decisions read the stamp at all. Everything else takes it
+and discards it, dispatching on payload length.
+
+- Accept or drop: above the receiver's own version, silently, with no NAK.
+- `0x14` AUDIO_SET_VOLUME below 0x11 selects the superseded volume layout. It
+  is the only layout the stamp selects anywhere.
+- `0x0A` RC_IR below 0x19, `0x3D` AMP_ZONE_SETTINGS and `0x3E` AMP_DOLBY_STATE
+  below 0x1C, `0x29` NET_LINK_STATUS below 0x22, `0x3B` MESH_OPERATION below
+  0x1A: ignored outright.
+- `0x3B` MESH_OPERATION at 0x1D and above carries a second parameter byte on
+  its report-controller operation, and zero below. This is why its table entry
+  is 0x1D rather than the 0x1A of its own accept gate.
+
+A trailing field added to an existing opcode is read from the payload length,
+not from the stamp - the `0x3B` parameter above is the only exception in the
+protocol. So `0x24` V2IP_MANUAL_SRC_SWITCH carries its audio format because the
+payload is 48 bytes rather than 40, at any stamp, and a 40-byte payload leaves
+the receiver storing a zero sample rate and channel count.
+
+**A table entry is what to stamp, and not a record of when a layout changed.**
+The table was created after some layouts had already changed, and the entries
+seeded then were never backfilled. `0x0B` RC_KEY and `0x0D` RC_ACTION widened
+their bay id from one byte to two at protocol 6 and both still carry 0x01, so
+neither form can be told from the other by its stamp. `0x14` AUDIO_SET_VOLUME
+changed layout after the table existed and had its entry raised in the same
+change, which is why it is the one opcode whose stamp does select a layout.
+Where a handler reads the stamp the entry is right; where the entry is wrong,
+no handler reads it. Decide a layout by payload length, never by the stamp -
+the lengths differ in every case, which is what makes that always available.
+
+A hello carries a second, different version, and it is the one that matters
+about the sender. The header stamp is 0x01 like any other opcode's entry; the
+payload's own protocol field is the sender's true supported version, and that
+is what a peer stores, reports and reasons about. It decides how long silence
+takes to mean offline, so a client that understates it there is held online for
+minutes after it stops talking. Send the real version in the payload.
+
+A frame from a sender with no device record is dropped before its handler.
+Only hello and discover are processed from a device the receiver has not heard
+from, so this client's own hello has to land, and keep landing, before anything
+else it sends is acted on.
 
 Check the target's reported version before sending, not just the stamp. A
 receiver drops a frame it cannot decode silently, with no NAK at any layer, so
@@ -143,12 +190,29 @@ target would leave that difference to a test that reads the source; the type
 answers it, and so does the choke point above. Their absence from the suite is
 not a hole.
 
-**The gate checks what is stamped, not what the opcode table says.** A
-receiver drops any frame stamped above its own version, so `stamp_for` decides
-both the header field and the floor the addressee is measured against. They
-differ for `V2IP_MULTIVIEWER`, stamped at 0x20 rather than its table's 0x16;
-checking the table value there would let through exactly the frame the device
-discards.
+**An opcode with no table entry is refused, not given a default.** There is no
+safe number to invent for one. Too high and every receiver below it drops the
+frame, which is what a blanket "the version we speak" does; too low and a
+receiver accepts a frame it will read at the wrong layout. Not knowing an
+opcode's version means not knowing its payload contract either, so the stamp is
+the smaller of the two things a default would be guessing at. A test requires
+every declared opcode to have an entry and every entry to name a declared
+opcode, so the refusal stays unreachable.
+
+**The gate checks what is stamped.** A receiver drops any frame stamped above
+its own version, so `stamp_for` decides both the header field and the floor the
+addressee is measured against, and one value has to serve both. It returns the
+opcode table entry for every opcode today. The indirection stays because the
+two questions differ even while the answers agree, so an opcode that ever needs
+its own stamp changes one function and the gate follows.
+
+`V2IP_MULTIVIEWER` was stamped at 0x20 rather than its table's 0x16, matching
+the reference Python library. That was a pure loss: the module receiving it
+dispatches on payload length and never reads the stamp, so the raised stamp
+enabled nothing and was refused by every receiver capped between 0x16 and 0x1F.
+Where the reference clients and the firmware disagree, the firmware wins, and
+this is the one vector in `wire/vectors.rs` whose header deliberately differs
+from the Python client's.
 
 **Core is `#![forbid(unsafe_code)]`.** All `unsafe` lives in the FFI crate.
 

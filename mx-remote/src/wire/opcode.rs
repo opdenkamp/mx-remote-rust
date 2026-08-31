@@ -3,8 +3,6 @@
 
 //! Frame opcodes and the protocol version each one requires.
 
-use super::constants::PROTOCOL_VERSION;
-
 /// The opcode field of a frame header.
 ///
 /// A newtype so that it cannot be confused with the protocol version beside it
@@ -86,19 +84,25 @@ pub(crate) mod op {
     pub(crate) const V2IP_VIDEO_WALL: Opcode = Opcode(0x49);
 }
 
-/// Returns the header protocol version to stamp on a frame carrying `opcode`.
+/// The protocol version this library stamps on a frame carrying `opcode`, and
+/// `None` for an opcode the table does not name.
 ///
-/// This is the minimum version a receiver needs to decode the opcode, as the
-/// firmware's opcode table declares it, not the version this library speaks. A
-/// receiver drops any frame whose header protocol exceeds its own cap, so
-/// stamping [`PROTOCOL_VERSION`] on everything would make a device with a lower
-/// cap - a ProAmp8 caps at 0x22 - silently drop every frame we send.
+/// A receiver drops any frame stamped above its own version, so this is also
+/// the version the addressee has to report before [`Tx::send`] will let the
+/// frame out. Raising an entry above the table is a mistake rather than an
+/// option: the receive-side decisions that read the stamp at all test the
+/// entry's own number, so stamping it clears every gate by construction and
+/// anything higher only narrows the set of receivers that accept the frame.
 ///
-/// These stay deliberately low. An opcode whose payload only ever grew trailing
-/// fields keeps its original version, and a receiver tells the formats apart by
-/// payload length instead.
-pub(crate) fn protocol_for(opcode: Opcode) -> u16 {
-    match opcode {
+/// An opcode with no entry is refused rather than given a default. There is no
+/// safe number to invent: too high and every older receiver drops the frame,
+/// too low and one accepts a frame it will read at the wrong layout. Not
+/// knowing an opcode's version means not knowing its payload contract either,
+/// so the stamp is the smaller of the two things a default would be guessing.
+///
+/// [`Tx::send`]: super::tx::Tx::send
+pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
+    Some(match opcode {
         op::SYS_HELLO => 0x01,
         op::SYS_DISCOVER => 0x01,
         op::SYS_BAY_CONFIG => 0x01,
@@ -162,34 +166,18 @@ pub(crate) fn protocol_for(opcode: Opcode) -> u16 {
         op::DEBUG => 0x1F,
         op::RC_IR_TX => 0x23,
         op::V2IP_VIDEO_WALL => 0x28,
-        _ => PROTOCOL_VERSION,
-    }
+        Opcode(_) => return None,
+    })
 }
 
-/// The protocol version this library stamps on a frame carrying `opcode`.
+/// The stamp for an opcode the table names.
 ///
-/// A receiver drops any frame stamped above its own version, so this is also
-/// the version the addressee has to report before [`Tx::send`] will let the
-/// frame out.
-///
-/// It is [`protocol_for`] everywhere but `V2IP_MULTIVIEWER`, which is stamped
-/// at [`MULTIVIEWER_PROTOCOL`] - above the 0x16 its opcode table declares -
-/// matching the reference Python library. MatrixOS has no handler for that
-/// opcode, since the multiviewer module owns it, so what a 0x16..0x1F receiver
-/// expects is unverified and matching the reference is the only evidence there
-/// is.
-///
-/// [`Tx::send`]: super::tx::Tx::send
-pub(crate) fn stamp_for(opcode: Opcode) -> u16 {
-    match opcode {
-        op::V2IP_MULTIVIEWER => MULTIVIEWER_PROTOCOL,
-        _ => protocol_for(opcode),
-    }
+/// Test-only, and it panics for an opcode the table does not name - which
+/// `every_declared_opcode_has_a_stamp` is what makes impossible.
+#[cfg(test)]
+pub(crate) fn protocol_for(opcode: Opcode) -> u16 {
+    stamp_for(opcode).expect("opcode has no protocol table entry")
 }
-
-/// Protocol version stamped on a `V2IP_MULTIVIEWER` (0x42) frame. See
-/// [`stamp_for`].
-pub(crate) const MULTIVIEWER_PROTOCOL: u16 = 0x20;
 
 /// Sub-opcodes of `V2IP_AUDIO` (0x43), multiplexed on the `u16` at payload
 /// offset 0.
@@ -223,4 +211,69 @@ pub(crate) mod mv_sub {
     pub(crate) const HDCP_MODE: u8 = 13;
     pub(crate) const CONFIG_SOURCE: u8 = 14;
     pub(crate) const AUTO_ROUTE: u8 = 15;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every opcode this library declares has a version to stamp it with, and
+    /// every entry in the table names one it declares.
+    ///
+    /// The table has no default, so an opcode added without an entry is
+    /// refused at the send rather than going out with a guessed version. That
+    /// refusal is the safety net; this is what keeps it from ever being what
+    /// happens.
+    ///
+    /// Both sides are counted and required to match, which is what makes the
+    /// check survive its own maintenance: a declaration the pattern can no
+    /// longer read drops one side's count and fails here, where a "found at
+    /// least n" threshold would absorb it and go on reporting every opcode
+    /// covered. Adding an opcode adds one to each side and needs no edit here.
+    #[test]
+    fn every_declared_opcode_has_a_stamp() {
+        let source = include_str!("opcode.rs");
+        let mut declared = 0;
+        for line in source.lines().map(str::trim) {
+            let Some(rest) = line.strip_prefix("pub(crate) const ") else {
+                continue;
+            };
+            let Some((name, tail)) = rest.split_once(": Opcode = Opcode(") else {
+                continue;
+            };
+            let text = tail.trim_end_matches(");").trim_start_matches("0x");
+            let value = u16::from_str_radix(text, 16)
+                .unwrap_or_else(|_| panic!("{name} declares an opcode this test cannot read"));
+            assert!(
+                stamp_for(Opcode(value)).is_some(),
+                "{name} ({value:#04x}) has no protocol table entry"
+            );
+            declared += 1;
+        }
+        let entries = source
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("op::") && line.contains(" => "))
+            .count();
+        assert_eq!(
+            declared, entries,
+            "{declared} opcodes are declared and {entries} have a table entry"
+        );
+        // And neither pattern matching nothing at all, which would make the
+        // two agree on zero.
+        assert!(
+            declared >= 60,
+            "found {declared} opcode declarations; the pattern that reads them has stopped matching"
+        );
+    }
+
+    /// An opcode the table does not name has no stamp, so a send of one is
+    /// refused rather than given a default.
+    #[test]
+    fn an_opcode_outside_the_table_has_no_stamp() {
+        assert_eq!(stamp_for(Opcode(0xFFFF)), None);
+        // And the paired direction, so the assertion above is not one that
+        // would hold for a table returning None for everything.
+        assert_eq!(stamp_for(op::SYS_HELLO), Some(0x01));
+    }
 }

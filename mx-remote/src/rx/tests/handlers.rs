@@ -53,6 +53,97 @@ fn bay_state(n: u8) -> Harness {
     h
 }
 
+/// A remote-control key or action frame is read at the width its length says.
+///
+/// The bay id widened from one byte to two at protocol 6, but these opcodes'
+/// table entries predate that and were never raised, so both forms go out
+/// stamped 0x01 and the stamp cannot tell them apart. Every case below is fed
+/// at that stamp, which is what a real device sends: a decoder selecting on
+/// the stamp reads every one of them as the narrow form.
+#[test]
+fn a_key_or_action_frame_is_read_at_the_width_its_length_says() {
+    let mut h = bay_state(126);
+
+    // Four bytes: a u16 bay and a u16 value. The value is above 255 so that a
+    // one-byte read of it cannot pass, and the bay is 1 so that the narrow
+    // and wide reads of the bay agree - this case is about the value.
+    h.feed_proto(op::RC_KEY, 0x01, &[1, 0, 0x00, 0x05]);
+    assert!(
+        h.saw(|e| matches!(e, Event::KeyPressed { key, .. } if *key == RcKey::from_wire(0x0500))),
+        "a wide key was truncated to its low byte"
+    );
+    h.feed_proto(op::RC_ACTION, 0x01, &[1, 0, 0x00, 0x05]);
+    assert!(
+        h.saw(
+            |e| matches!(e, Event::ActionReceived { action, .. } if *action
+                == RcAction::from_wire(0x0500))
+        ),
+        "a wide action was truncated to its low byte"
+    );
+
+    // Three bytes: a u8 bay, and the value one byte earlier.
+    h.feed_proto(op::RC_KEY, 0x01, &[3, 0x42, 0x00]);
+    assert!(
+        h.saw(|e| matches!(e, Event::KeyPressed { bay, key }
+            if bay.port == 3 && *key == RcKey::from_wire(0x42))),
+        "the superseded three-byte form did not decode"
+    );
+    h.feed_proto(op::RC_ACTION, 0x01, &[3, 0x42, 0x00]);
+    assert!(
+        h.saw(|e| matches!(e, Event::ActionReceived { bay, action }
+            if bay.port == 3 && *action == RcAction::from_wire(0x42))),
+        "the superseded three-byte form did not decode"
+    );
+
+    // The bay field carries sentinels above 255. Read one byte wide they
+    // become 0xFF and 0xFE, which land inside the range of real output ports
+    // and name a bay that exists - worse than truncating, because nothing
+    // downstream can tell it was invented.
+    for sentinel in [0xFFFFu16, 0xFFFE] {
+        let mut p = sentinel.to_le_bytes().to_vec();
+        p.extend_from_slice(&[0x41, 0x00]);
+        h.feed_proto(op::RC_KEY, 0x01, &p);
+    }
+    assert!(
+        !h.saw(|e| matches!(e, Event::KeyPressed { .. })
+            && !matches!(e, Event::KeyPressed { bay, .. } if bay.port == 1 || bay.port == 3)),
+        "a sentinel bay id decoded as a real port"
+    );
+}
+
+/// The volume request has two layouts, and the length is what separates them.
+#[test]
+fn a_volume_request_is_read_at_the_layout_its_length_says() {
+    let mut h = bay_state(127);
+    let sender = h.sender;
+
+    // The superseded 20-byte form: a serial rather than a uid, and a one-byte
+    // bay. Nothing but the length says so - it is fed at the stamp the
+    // current form uses, so a decoder selecting on the stamp reads it as the
+    // current layout and takes the volume from the wrong offsets entirely.
+    let mut legacy = vec![0u8; 20];
+    field(&mut legacy, 0, 16, "HD0001");
+    legacy[16..].copy_from_slice(&[2, 33, 44, 1]);
+    h.feed_proto(op::AUDIO_SET_VOLUME, 0x11, &legacy);
+    let v = h.bay(2).audio_volume.expect("the old form did not decode");
+    assert_eq!((v.volume_left, v.volume_right), (Some(33), Some(44)));
+    assert_eq!((v.muted_left, v.muted_right), (Some(true), Some(false)));
+
+    // The current 24-byte form, for the paired direction: the two layouts put
+    // the volume at different offsets, so a test on one alone would pass for a
+    // decoder that had them the wrong way round.
+    let mut current = sender.as_bytes().to_vec();
+    current.extend_from_slice(&[2, 0, 55, 66, 2, 0, 0, 0]);
+    assert_eq!(current.len(), 24);
+    h.feed(op::AUDIO_SET_VOLUME, &current);
+    let v = h
+        .bay(2)
+        .audio_volume
+        .expect("the current form did not decode");
+    assert_eq!((v.volume_left, v.volume_right), (Some(55), Some(66)));
+    assert_eq!((v.muted_left, v.muted_right), (Some(false), Some(true)));
+}
+
 #[test]
 fn bay_targeted_handlers_reach_the_bay_they_name() {
     let mut h = bay_state(110);
@@ -107,7 +198,7 @@ fn bay_targeted_handlers_reach_the_bay_they_name() {
         (Some(55), Some(60))
     );
 
-    // 0x0B RC_KEY and 0x0D RC_ACTION, both a u16 port from protocol 6
+    // 0x0B RC_KEY and 0x0D RC_ACTION in their four-byte form
     h.feed(op::RC_KEY, &[1, 0, 0x41, 0x00]);
     assert!(h.saw(|e| matches!(e, Event::KeyPressed { key, .. } if *key == RcKey::from_wire(0x41))));
     h.feed(
