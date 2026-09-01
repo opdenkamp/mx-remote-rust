@@ -14,6 +14,10 @@ use super::Rx;
 /// `sizeof(mxr_amp_zone_settings)` on the wire.
 const AMP_ZONE_SETTINGS_SIZE: usize = 56;
 
+/// `sizeof(mxr_amp_dolby_settings)` on the wire: a uid, the mode and the flag
+/// byte, rounded out from 18 to the struct's 8-byte alignment.
+const AMP_DOLBY_SETTINGS_SIZE: usize = 24;
+
 /// The device an amp-settings frame concerns: the payload target, or the
 /// sender when that target is zero.
 ///
@@ -86,6 +90,13 @@ pub(super) fn zone_settings(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
 
 pub(super) fn dolby_settings(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let target = amp_target(rx);
+    // The amp measures the whole struct before it reads a field, so a shorter
+    // frame changed nothing on the device. Without this the flag byte falls
+    // back to zero and a truncated frame reports every flag clear, which is a
+    // state a caller cannot tell from an amp that really has them clear.
+    if rx.frame.payload().len() < AMP_DOLBY_SETTINGS_SIZE {
+        return;
+    }
     let Some(mode) = rx.frame.u8(16) else {
         return;
     };

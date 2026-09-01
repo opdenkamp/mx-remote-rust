@@ -180,11 +180,7 @@ impl Cfg {
     }
 }
 
-/// Assembles a datagram the way a device does.
-///
-/// The header is written out here rather than taken from this library's own
-/// frame builder, so that a decoder and a builder cannot agree with each other
-/// while both disagreeing with the wire.
+/// Assembles a datagram the way a device does, header bytes included.
 pub(crate) fn datagram(sender: DeviceUid, op: Opcode, protocol: u16, payload: &[u8]) -> Vec<u8> {
     let mut data = Vec::with_capacity(24 + payload.len());
     data.extend_from_slice(b"P8");

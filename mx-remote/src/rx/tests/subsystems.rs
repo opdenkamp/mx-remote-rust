@@ -280,7 +280,8 @@ fn amp_stats_and_network() {
     assert_eq!((s.gain_left, s.gain_right, s.power_timeout), (10, 11, 300));
     assert!(h.saw(|e| matches!(e, Event::AmpZoneSettingsChanged { .. })));
 
-    let mut dolby = poisoned(18);
+    // 24 rather than 18: the struct is 8-aligned and the amp measures all of it.
+    let mut dolby = poisoned(24);
     dolby[0..16].copy_from_slice(sender.as_bytes());
     dolby[16] = 2;
     dolby[17] = 0x1 | 0x2;

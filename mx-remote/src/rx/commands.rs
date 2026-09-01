@@ -116,6 +116,16 @@ fn route_request(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>, audio_only
 /// Size of `mxr_ir_data` up to the timings it is followed by.
 const IR_DATA_SIZE: usize = 24;
 
+/// Width of one timing, which is also the shortest tail either infrared frame
+/// can carry.
+///
+/// A receiver measures the struct plus one of these before it reads a field, so
+/// a frame that stops at the struct is one nothing on the network acted on.
+/// Blasting needs more than that again: the first timing is the gap ahead of
+/// the burst rather than part of it, so a receiver replays nothing until a
+/// second one arrives.
+const IR_TIMING_SIZE: usize = 2;
+
 /// The protocol version from which infrared captures are reported.
 const IR_CAPTURE_PROTOCOL: u16 = 0x19;
 
@@ -128,7 +138,7 @@ pub(super) fn ir_capture(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         return;
     }
     let p = rx.frame.payload();
-    if p.len() < IR_DATA_SIZE || rx.frame.protocol() < IR_CAPTURE_PROTOCOL {
+    if p.len() < IR_DATA_SIZE + IR_TIMING_SIZE || rx.frame.protocol() < IR_CAPTURE_PROTOCOL {
         return;
     }
     let capture = IrCapture {
@@ -167,7 +177,7 @@ pub(super) fn ir_transmit(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         return;
     };
     let p = rx.frame.payload();
-    if p.len() < TX_IR_HEADER {
+    if p.len() < TX_IR_HEADER + IR_TIMING_SIZE {
         return;
     }
     ev.push(Event::IrTransmitRequested {

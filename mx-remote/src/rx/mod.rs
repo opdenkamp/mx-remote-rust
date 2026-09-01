@@ -74,6 +74,20 @@ pub(crate) fn process_frame(
     // the host whichever interface was selected, so counting that would answer
     // "did anything reach this interface" with yes on every interface.
     state.frames_received = state.frames_received.saturating_add(1);
+    // A device drops every frame from a uid it has no record of, so acting on
+    // one would put this client ahead of the mesh: it would hold a route, a
+    // name or a setting that the frame's own addressee never applied. The
+    // window is a device's announcement interval at worst, and this client
+    // shortens it by soliciting on connect.
+    //
+    // Hello and discover are exempt because they are what closes the window: a
+    // hello is how a sender stops being unknown, and a discover is how a
+    // stranger asks everyone to say so.
+    let known = state.device(sender).is_some();
+    let opcode = frame.opcode();
+    if !known && opcode != op::SYS_HELLO && opcode != op::SYS_DISCOVER {
+        return Vec::new();
+    }
     let rx = Rx {
         frame,
         address,

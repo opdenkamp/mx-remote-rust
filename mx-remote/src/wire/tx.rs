@@ -124,6 +124,10 @@ impl Addressee {
     }
 }
 
+/// A tap on the transmit path.
+#[cfg(test)]
+pub(crate) type TxTap = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
+
 /// The transmit side of a client: the socket, and this client's own identifier.
 ///
 /// [`Tx::send`] is the only path from an opcode to the wire. It is the gate
@@ -131,11 +135,6 @@ impl Addressee {
 /// because the two things it sits between - the frame constructor and the
 /// socket write - are both private to this module and unreachable from
 /// anywhere else in the crate.
-/// A tap on the transmit path, for a test reading back what would go on the
-/// wire.
-#[cfg(test)]
-pub(crate) type TxTap = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
-
 #[derive(Default)]
 pub(crate) struct Tx {
     conn: Option<std::sync::Arc<Conn>>,

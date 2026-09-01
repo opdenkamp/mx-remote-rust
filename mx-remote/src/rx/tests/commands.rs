@@ -172,6 +172,54 @@ fn an_ir_capture_aligns_its_timestamp() {
     assert_eq!(capture.timings.len(), 8);
 }
 
+/// A burst with no timings is not a capture.
+///
+/// The struct ends at 24 and a receiver measures one timing past it before it
+/// reads a field, so a frame that stops at the struct is one nothing acted on
+/// - and it carries no burst to hand a caller either.
+#[test]
+fn an_ir_frame_with_no_timings_is_not_a_capture() {
+    let mut h = command_device(43);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            3,
+            0,
+            0,
+            "Input 1",
+            "Sky",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
+    );
+
+    let mut p = poisoned(24);
+    p[0..2].copy_from_slice(&3u16.to_le_bytes());
+    h.feed_proto(op::RC_IR, 0x19, &p);
+    assert!(
+        !h.saw(|e| matches!(e, Event::IrCaptured { .. })),
+        "a frame that stops at the struct was reported as a burst"
+    );
+}
+
+/// A blast request with no timings is not a request.
+///
+/// The addressed device measures the struct plus one timing before it looks at
+/// anything else, so a request that stops at the struct asks it for nothing.
+#[test]
+fn an_ir_request_with_no_timings_is_not_a_request() {
+    let mut h = command_device(44);
+    let target = uid_n(45);
+
+    let mut p = poisoned(36);
+    p[0..16].copy_from_slice(target.as_bytes());
+    h.feed(op::RC_IR_TX, &p);
+    assert!(
+        !h.saw(|e| matches!(e, Event::IrTransmitRequested { .. })),
+        "a request that stops at the struct reached the caller"
+    );
+}
+
 #[test]
 fn ir_transmit_timings_start_at_the_struct_size() {
     let mut h = command_device(70);
@@ -828,9 +876,9 @@ fn an_options_write_caches_no_noise_bits() {
     let mut h = command_device(96);
     let sender = h.sender;
 
-    // Firmware predating the fix builds this frame from an uninitialised stack
-    // local and ORs its scaling flags onto whatever was there, so bits 2..6
-    // arrive as noise on any receiver-capable unit. Only bit 7 carries meaning.
+    // Firmware without DeviceFeature::CONFIG_INITIALISED builds this frame from
+    // an uninitialised stack local and ORs its scaling flags onto whatever was
+    // there, so bits 2..6 arrive as noise. Only bit 7 carries meaning.
     let mut base = Cfg::addresses(sender, "239.1.2.3");
     base.mode = 16;
     base.refresh = 60;
@@ -915,8 +963,8 @@ fn a_captured_device_config_decodes_field_for_field() {
     assert_eq!(details.scaling.mode.svd(), 19);
     assert_eq!(details.scaling.mode.bpp(), Some(8));
     assert_eq!(details.scaling.refresh, 50);
-    // Flags 0xdf carries bits 2, 3, 4 and 6 as well: this unit predates the fix
-    // for the uninitialised mxr_scaling_config, so only bits 0, 1 and 7 mean
+    // Flags 0xdf carries bits 2, 3, 4 and 6 as well: this unit does not
+    // initialise the configuration it broadcasts, so only bits 0, 1 and 7 mean
     // anything.
     assert_ne!(details.scaling.flags & SCALING_FLAG_AUTO_SCALING, 0);
     assert_eq!(

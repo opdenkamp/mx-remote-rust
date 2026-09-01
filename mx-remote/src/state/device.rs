@@ -18,12 +18,17 @@ use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType};
 
 use super::bay::Bay;
 
-/// How long a device may stay silent before it counts as offline.
-///
-/// Protocol 0x20 brought a device announcement every few seconds, so silence
-/// becomes meaningful far sooner than it does on the older cadence.
+/// How long a device below [`MODERN_PROTOCOL`] may stay silent before it
+/// counts as offline.
 const SILENCE_LIMIT: Duration = Duration::from_secs(120);
+
+/// How long a device at [`MODERN_PROTOCOL`] or above may stay silent.
+///
+/// That version announces every few seconds, so silence becomes meaningful
+/// long before two minutes of it have passed.
 const SILENCE_LIMIT_MODERN: Duration = Duration::from_secs(15);
+
+/// The version from which the shorter limit applies.
 const MODERN_PROTOCOL: u16 = 0x20;
 
 /// What a device advertises about itself in its hello frame.

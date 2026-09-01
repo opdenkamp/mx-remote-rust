@@ -317,3 +317,38 @@ fn a_handler_may_read_the_state_its_event_describes() {
         "no event reached the handler"
     );
 }
+
+/// Starting introduces this client before the caller can command anything.
+///
+/// A device drops every frame from a uid it has no record of, hello and
+/// discover excepted, so a command sent before the hello is discarded by each
+/// peer that has not met us - silently, since nothing answers a frame it
+/// dropped and the send reports the bytes it wrote. Leaving this to the probe
+/// loop would put the hello a tick late, which is invisible to a caller that
+/// holds the client open for days and fatal to a script that starts and
+/// immediately commands.
+///
+/// The discover matters as much: it is the other opcode a stranger may send,
+/// and it makes every unit answer at once rather than at its own announcement
+/// interval.
+#[test]
+fn starting_announces_and_solicits_before_it_returns() {
+    let (remote, tap) = client(205);
+    if remote.start().is_err() {
+        // No usable multicast interface here; the ordering is untested rather
+        // than shown to hold.
+        return;
+    }
+    let opcodes = tap.opcodes();
+    remote.close();
+
+    assert_eq!(
+        opcodes.first().copied(),
+        Some(op::SYS_HELLO.0),
+        "start returned without introducing this client"
+    );
+    assert!(
+        opcodes.contains(&op::SYS_DISCOVER.0),
+        "start returned without asking the network to describe itself"
+    );
+}

@@ -48,13 +48,42 @@ fn mac_at(d: &[u8], idx: usize) -> Option<MacAddress> {
         .map(MacAddress)
 }
 
+/// The stamp from which the report carries the two addresses, and the one from
+/// which it carries the MAC.
+const ADDRESSES_FROM: u16 = 0x12;
+const MAC_FROM: u16 = 0x21;
+
+/// Size of each form of the report sent before protocol 0x22.
+///
+/// Every field the three share sits at the same offset, so the size is what
+/// separates them: the struct grew by appending an address pair and then a MAC,
+/// each rounding back out to the 8-byte alignment. A frame is measured against
+/// its own form, because a floor set at the largest rejects every older report
+/// and one set at the smallest reads absent fields out of whatever follows.
+const LEGACY_SIZE: usize = 136;
+const LEGACY_SIZE_WITH_ADDRESSES: usize = 144;
+const LEGACY_SIZE_WITH_MAC: usize = 152;
+
+/// The size the report has at `protocol`.
+fn legacy_size(protocol: u16) -> usize {
+    if protocol >= MAC_FROM {
+        LEGACY_SIZE_WITH_MAC
+    } else if protocol >= ADDRESSES_FROM {
+        LEGACY_SIZE_WITH_ADDRESSES
+    } else {
+        LEGACY_SIZE
+    }
+}
+
 /// Decodes the report as sent before protocol 0x22.
 ///
-/// The legacy struct grew by appending, so each field exists only from the
-/// version that added it: the addresses at 0x12 and the MAC at 0x21. Below
-/// those the bytes belong to whatever follows the struct.
+/// The struct grew by appending, so a field exists only from the version that
+/// added it: the addresses from 0x12 and the MAC from 0x21, at offsets 132 and
+/// 140. Everything ahead of them is common to all three forms - the status word
+/// sits at 1 rather than 4 because it is a packed union and carries no
+/// alignment of its own.
 pub(super) fn parse_legacy(d: &[u8], protocol: u16) -> Option<NetworkPortStatus> {
-    if d.len() < 146 {
+    if d.len() < legacy_size(protocol) {
         return None;
     }
     let mut status = NetworkPortStatus {
@@ -69,54 +98,35 @@ pub(super) fn parse_legacy(d: &[u8], protocol: u16) -> Option<NetworkPortStatus>
         vct_status: Some(vct_status(d[2])),
         cable_status: cable_pairs(d, &[8, 20, 32, 44]),
     };
-    if protocol >= 0x12 {
+    if protocol >= ADDRESSES_FROM {
         status.ip = Some(ipv4_at(d, 132));
         status.querier = Some(ipv4_at(d, 136));
     }
-    if protocol >= 0x21 {
+    if protocol >= MAC_FROM {
         status.mac_address = mac_at(d, 140);
     }
     Some(status)
 }
 
-/// Reports whether a 0x22-stamped payload uses the later of the two layouts
-/// that share the stamp.
-///
-/// The port and the feature word were widened from `u8` to `u16` without
-/// bumping any version. Only the fields ahead of the addresses move - the MAC
-/// ends at 24 or 26, and the address type aligns to 4, so the address, the
-/// querier and the status block sit at 28, 32 and 36 either way. The ambiguity
-/// is confined to bytes 0..27, and both layouts are 144 bytes, so neither the
-/// length nor the version can separate them and the payload has to.
-///
-/// Testing whether the name looks like text does not work: an early-form name
-/// of three characters or more puts a printable byte at 4 and reads as late.
-/// What separates them is where the zero bytes fall. The later layout widened
-/// two small fields, so byte 1 is the high byte of the port and byte 3 the
-/// high byte of the feature word; the earlier layout has the features at 1 and
-/// a name character at 3.
-///
-/// That rests on the feature word staying under 0x100. Only bits 0..6 are
-/// defined today, leaving nine free. If the field ever grows past a byte, byte
-/// 3 stops being zero and every late frame decodes as early - which would
-/// present as a decode bug rather than as a widened field, so check this first.
-///
-/// A single-character early name also leaves byte 3 zero and is genuinely
-/// ambiguous; the later layout is the tie-break, being what every device on a
-/// live mesh was observed to emit, including units on much older firmware.
-fn is_late_layout(d: &[u8]) -> bool {
-    d.len() < 4 || (d[1] == 0 && d[3] == 0)
-}
-
 /// Decodes the report as sent from protocol 0x22.
+///
+/// This layout reorders the struct rather than extending it: the name moves
+/// ahead of the counters, so nothing here shares an offset with the forms
+/// [`parse_legacy`] reads.
+///
+/// The port and the feature word are `u16`. A build exists in which both are
+/// `u8`, putting the name at 2 and the MAC at 19, and it is not decoded here:
+/// it was superseded five hours after it was written and no release carries
+/// it. Separating the two from the payload would cost more than it buys, since
+/// the only thing distinguishing them is a zero high byte on the feature word,
+/// and that word was widened precisely so it could grow past a byte - so the
+/// test would start failing on the firmware it was written to survive.
 pub(super) fn parse_modern(d: &[u8]) -> Option<NetworkPortStatus> {
     if d.len() < 39 {
         return None;
     }
-    let late = is_late_layout(d);
-    // The feature word is a u16 at 2 in the later layout and a u8 at 1 in the
-    // earlier one; the flag bits live in its low byte either way.
-    let features = if late { d[2] } else { d[1] };
+    // The flag bits live in the low byte of the feature word.
+    let features = d[2];
     let support_status = features & (1 << 0) != 0;
     let support_cable = features & (1 << 1) != 0;
     let support_igmp = features & (1 << 3) != 0;
@@ -125,17 +135,15 @@ pub(super) fn parse_modern(d: &[u8]) -> Option<NetworkPortStatus> {
     // The name is `mxr_device_name`, one byte longer than the field it names,
     // so unlike the bare 16-byte name fields elsewhere it always has room for
     // a terminator.
-    let (name_off, mac_off, port) = if late {
-        (4, 21, u16::from_le_bytes([d[0], d[1]]))
-    } else {
-        (2, 19, u16::from(d[0]))
-    };
+    const NAME_OFF: usize = 4;
+    const MAC_OFF: usize = 21;
     const IP_OFF: usize = 28;
     const QUERIER_OFF: usize = 32;
+    let port = u16::from_le_bytes([d[0], d[1]]);
 
     let mut status = NetworkPortStatus {
         port,
-        name: cstr(d.get(name_off..name_off + 17).unwrap_or_default()),
+        name: cstr(d.get(NAME_OFF..NAME_OFF + 17).unwrap_or_default()),
         link_speed: UtpLinkSpeed::from_wire(d[38] & 0x7),
         link_full_duplex: d[38] & (1 << 3) != 0,
         ip: None,
@@ -146,7 +154,7 @@ pub(super) fn parse_modern(d: &[u8]) -> Option<NetworkPortStatus> {
         cable_status: Vec::new(),
     };
     if port_uplink && d.len() >= QUERIER_OFF {
-        status.mac_address = mac_at(d, mac_off);
+        status.mac_address = mac_at(d, MAC_OFF);
         status.ip = Some(ipv4_at(d, IP_OFF));
         if support_igmp && d.len() >= QUERIER_OFF + 4 {
             status.querier = Some(ipv4_at(d, QUERIER_OFF));

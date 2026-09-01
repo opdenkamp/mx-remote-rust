@@ -79,6 +79,24 @@ and discards it, dispatching on payload length.
   its report-controller operation, and zero below. This is why its table entry
   is 0x1D rather than the 0x1A of its own accept gate.
 
+`0x29` NET_LINK_STATUS is the one opcode this library deliberately reads below
+the version its own receiver accepts. Firmware drops anything under 0x22; three
+older forms exist and are decoded here, because serving a device the current
+firmware has stopped serving is a client's job rather than a device's. They
+extend each other - 136 bytes, 144 with an address pair, 152 with a MAC added -
+and share every offset, so the size is what separates them.
+
+There is a fourth, older still, and it must not be decoded: the same fields
+packed rather than 8-aligned. Firmware rejects it by name as protocol 2, so a
+frame in that layout is one no device will act on, and its offsets differ enough
+that reading a current frame at them yields a plausible port name and a
+plausible everything else.
+
+Firmware states that only two products ever transmit this opcode, and that the
+oldest form therefore means a V2IP on 4.0.1, 4.0.2 or 4.1.1 rather than any
+older model. That is worth knowing before deciding the path is dead weight;
+two of those releases are still published.
+
 A trailing field added to an existing opcode is read from the payload length,
 not from the stamp - the `0x3B` parameter above is the only exception in the
 protocol. So `0x24` V2IP_MANUAL_SRC_SWITCH carries its audio format because the
@@ -96,6 +114,22 @@ Where a handler reads the stamp the entry is right; where the entry is wrong,
 no handler reads it. Decide a layout by payload length, never by the stamp -
 the lengths differ in every case, which is what makes that always available.
 
+**A version outlives the layouts sent under it, so date a layout from the
+releases that carried it.** The struct as it stood at the commit that named a
+version is not necessarily what any device sent under that version: a layout can
+be revised without the stamp moving, before the version ships or after. `0x22`
+carries two layouts for that reason, one of which left the tree the same
+afternoon it arrived. Reading a struct out of the commit that introduced a
+version therefore answers a different question from "what is on the wire",
+and only the tag and release history separate the two - which is firmware's to
+answer and not something to attempt from the source alone.
+
+Compile the component types as they stood at the version being decoded, not
+today's. A reconstruction that happens to be right cannot be told from one that
+is wrong until something disagrees with it, and a rename is the trap: the types
+behind the network report were moved and renamed without a field changing, so a
+type name that no longer exists is no evidence that a layout moved.
+
 A hello carries a second, different version, and it is the one that matters
 about the sender. The header stamp is 0x01 like any other opcode's entry; the
 payload's own protocol field is the sender's true supported version, and that
@@ -107,6 +141,18 @@ A frame from a sender with no device record is dropped before its handler.
 Only hello and discover are processed from a device the receiver has not heard
 from, so this client's own hello has to land, and keep landing, before anything
 else it sends is acted on.
+
+**This library does the same, and that is deliberate rather than over-strict.**
+Acting on a frame from a device nobody on the mesh has met would put this client
+ahead of every device that saw the same frame: it would hold a route, a name or
+a setting that the frame's own addressee dropped without reading. The exemptions
+are what keep it from being a deadlock - a hello is how a sender stops being
+unknown, and a discover is how a stranger asks everyone to introduce themselves.
+The window a device stays unknown is its announcement interval at worst, and
+[`Remote::start`] shortens it by announcing and then soliciting before it
+returns. That order matters: the discover exemption is newer than the gate, so
+against a device old enough to lack it the hello is what makes the discover
+acceptable.
 
 Check the target's reported version before sending, not just the stamp. A
 receiver drops a frame it cannot decode silently, with no NAK at any layer, so
@@ -223,12 +269,12 @@ through, so a bad frame is rejected before anything is stored, and a unit
 already holding an out-of-spec window drops it at boot and falls back to the
 full frame. Fielded units run both, so a sender still owns the constraints.
 
-Released firmware does not implement the opcode at all: `0x49` is the
-opcode-count sentinel there, so a frame is dropped on the bound before any
-handler sees it, and that build caps at 0x27 while this opcode stamps 0x28, so
-the protocol gate here refuses the send before it reaches the wire. Both of
-those are visible outcomes rather than silent ones, and they bound the hazard
-above to builds that know the opcode.
+A build predating the opcode drops the frame on the opcode bound: a receiver
+rejects anything at or above its own build's opcode count, and a build without
+this opcode counts `0x49` of them. That build also caps at 0x27 while this
+opcode stamps 0x28, so the protocol gate here refuses the send before it
+reaches the wire. Both are visible outcomes rather than silent ones, and they
+bound the hazard above to builds that know the opcode.
 
 The boundary is not something to branch on, and the version above is the
 module's rather than the firmware's. The guard lives in a loadable module that
@@ -288,7 +334,13 @@ that will not be updated to suit us.
 **Never decode by overlaying a `#[repr(C)]` struct.** Packed structs are the
 exception in this protocol, not the rule: the firmware declares its protocol
 structs packed, 8-byte-aligned and plain by turns, and only the packed ones can
-be decoded by summing field widths. Elsewhere the compiler inserts padding. Read
+be decoded by summing field widths - and only where every member is a scalar, a
+byte array, or itself packed. Packing an outer struct sets where its members are
+placed, at alignment 1; it does not repack a nested aggregate or remove that
+aggregate's own internal padding, so a member built of padded members keeps its
+full size while sitting at an unaligned offset. Every packed struct on this wire
+happens to satisfy that today, which is exactly why the assumption survives
+untested. Elsewhere the compiler inserts padding. Read
 each field explicitly at an offset derived from the declaration. Two recurring
 traps:
 
@@ -297,6 +349,16 @@ traps:
 - Where a variable-length tail follows a struct, the tail starts after the
   struct's *own* trailing padding, not at the end of its last field (`0x48`
   RC_IR_TX: timings at 36, not 34).
+
+**A payload is the size of its struct, not the sum of its fields.** A receiver
+tests the payload length against that whole size before it reads anything, and
+an 8-byte-aligned struct's trailing padding counts toward it. A frame that is
+short is dropped before its handler, and nothing here is acknowledged, so a
+command that never arrived is indistinguishable from one accepted and ignored.
+Five of the payloads this library builds are longer than their fields: `0x22`
+CHANGE_BAY_NAME is 40 for 34, `0x3D` AMP_ZONE_SETTINGS 56 for 54, `0x14`
+AUDIO_SET_VOLUME 24 for 21, `0x27` BAY_HIDE 24 for 19, `0x34` BAY_EDID_PROFILE
+24 for 18. Size a new builder with the compiler rather than by counting fields.
 
 **Never widen a field to swallow its padding, and never assume a padding or
 reserved byte is zero.** Cortex-M builds with `-fshort-enums`, so a plain enum on
@@ -453,6 +515,20 @@ guard that always fires. In each case the test is green because it never arrives
 at the code it names, and simplicity is exactly what makes such a fixture look
 trustworthy. Build the fixture that reaches the thing, then check it still fails
 when the thing is broken.
+
+**A fixture must not supply the precondition the code is meant to establish.**
+This is the harder sibling of the rule above: the fixture is not too simple, it
+is too helpful, and it quietly removes the case the test exists to cover. Two
+that shipped here. The legacy network-report fixture built one buffer long
+enough for every version and fed it at each of them - a length no device sends,
+and the only length at which a single wrong floor works, so the floor could not
+be caught being wrong. A send exercised only against a device that had already
+received this client's hello proves nothing about the send, because a device
+drops frames from a uid it has no record of, and the harness had already done
+the introducing that the code under test is responsible for.
+
+Ask what the setup does for the code, and whether a caller gets it for free.
+Where it does not, the fixture has to arrive the same way a caller would.
 
 **A scan has five separate questions, and fixing one does not answer the
 others.** Each of these was a real hole in the client this was ported from,

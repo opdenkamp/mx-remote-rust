@@ -64,7 +64,8 @@ pub struct DeviceInfo {
     pub mesh_master: DeviceUid,
     /// How many HDBaseT outputs this model has.
     pub hdbt_outputs: u8,
-    /// Whether installation was marked complete, before the device has said.
+    /// Whether installation was marked complete, `None` before the device
+    /// has said.
     pub setup_done: Option<bool>,
     /// The installer identifier the device carries, if it has reported one.
     pub installer_id: Option<u16>,

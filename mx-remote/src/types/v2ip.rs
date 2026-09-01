@@ -247,8 +247,9 @@ pub const SCALING_FLAG_AUTO_SCALING: u8 = 1 << 7;
 /// The flag bits that carry meaning.
 ///
 /// Bits 2..6 are undefined and are not reliably zero on the wire: firmware
-/// predating the fix builds this frame from an uninitialised stack local and
-/// ORs its flags onto whatever was there.
+/// that does not initialise the configuration it broadcasts builds this frame
+/// from an uninitialised stack local and ORs its flags onto whatever was
+/// there.
 pub const SCALING_FLAGS_DEFINED: u8 =
     SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
 

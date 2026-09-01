@@ -506,7 +506,24 @@ pub(super) fn mirror_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
 /// The mesh sub-opcode that reports which device is the mesh master.
 const MESH_REPORT_MEMBERSHIP: u8 = 0xFF;
 
+/// Size of `mxr_mesh_operation`, which is 8-aligned: the operation byte is
+/// followed by three bytes of padding before the two uids.
+const MESH_OPERATION_SIZE: usize = 40;
+
+/// The protocol version from which a mesh operation is acted on at all.
+///
+/// Below this the opcode's own receiver ignores the frame, so a client that
+/// read one anyway would take a mesh master from a frame no device acted on.
+/// It is not this opcode's table entry: that is 0x1D, the version its
+/// report-controller operation grew a second parameter at.
+const MESH_OPERATION_PROTOCOL: u16 = 0x1A;
+
 pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
+    if rx.frame.payload().len() < MESH_OPERATION_SIZE
+        || rx.frame.protocol() < MESH_OPERATION_PROTOCOL
+    {
+        return;
+    }
     if rx.frame.u8(0) != Some(MESH_REPORT_MEMBERSHIP) {
         return;
     }

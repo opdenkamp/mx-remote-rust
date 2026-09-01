@@ -591,6 +591,19 @@ fn amp_dolby_decode() {
     let d = h.device().dolby_settings.expect("no dolby settings");
     assert_eq!(d.mode, 2);
     assert!(d.pcm_upmix && !d.dolby_detected && d.pcm_upmix_active);
+
+    // A frame short of the struct changed nothing on the amp, and its flag
+    // byte would otherwise fall back to zero and report every flag clear.
+    let mut short = poisoned(18);
+    short[0..16].copy_from_slice(sender.as_bytes());
+    short[16] = 1;
+    short[17] = 0x2;
+    h.feed(op::AMP_DOLBY_STATE, &short);
+    let d = h.device().dolby_settings.expect("no dolby settings");
+    assert_eq!(
+        d.mode, 2,
+        "a frame short of the struct replaced the settings"
+    );
 }
 
 /// The amp allocates the whole struct and writes through a struct pointer, so
@@ -655,9 +668,8 @@ fn amp_tone_outside_the_http_bounds_is_not_clamped() {
     );
 }
 
-/// 0x29 has four layouts across three version gates, plus two that share the
-/// 0x22 stamp because the port and the feature word were widened without a
-/// bump.
+/// The 0x22 layout reorders the struct and is the only form this decodes: the
+/// three older ones are extensions of each other and are read elsewhere.
 #[test]
 fn network_status_layouts() {
     use crate::rx::network::parse_modern;
@@ -682,45 +694,52 @@ fn network_status_layouts() {
     assert_eq!(s.ip, Some(Ipv4Addr::new(10, 8, 83, 228)));
     assert_eq!(s.querier, Some(Ipv4Addr::new(10, 8, 8, 254)));
 
-    // The earlier 0x22 form: everything ahead of the addresses shifts down
-    // two, but the addresses do not move, because the address type aligns to 4.
-    let mut early = poisoned(144);
-    early[0] = 4;
-    early[1] = (1 << 3) | (1 << 6);
-    field(&mut early, 2, 17, "eth0");
-    early[19..25].copy_from_slice(&[0x00, 0x15, 0x82, 0x13, 0x89, 0xae]);
-    early[28..32].copy_from_slice(&[10, 8, 83, 229]);
-    early[32..36].copy_from_slice(&[10, 8, 8, 254]);
-
-    let s = parse_modern(&early).expect("early form did not parse");
-    assert_eq!((s.port, s.name.as_str()), (4, "eth0"));
+    // A payload whose feature word runs past a byte is still this layout:
+    // the field was widened so it could, and nothing about a set high byte
+    // makes a report older.
+    let mut wide_features = late.clone();
+    wide_features[3] = 0x01;
+    let s = parse_modern(&wide_features).expect("a wide feature word did not parse");
     assert_eq!(
-        s.mac_address,
-        Some(MacAddress([0x00, 0x15, 0x82, 0x13, 0x89, 0xae]))
+        (s.port, s.name.as_str()),
+        (4, "UTP PoE+"),
+        "a set high byte on the feature word moved the fields"
     );
-    assert_eq!(s.ip, Some(Ipv4Addr::new(10, 8, 83, 229)));
 }
 
-/// The legacy struct grew by appending, so a field only exists from the
-/// version that added it: the addresses at 0x12 and the MAC at 0x21.
+/// The legacy struct grew by appending, so a field only exists from the version
+/// that added it, and each form is measured at its own size.
+///
+/// The sizes are what this pins: a device stamping 0x12 sends 144 bytes and one
+/// stamping 0x06 sends 136, so a single floor set at the largest form drops
+/// every report older than the newest. Each frame here is the length its own
+/// stamp produces rather than a buffer long enough for all three.
 #[test]
 fn network_status_legacy_gating() {
     use crate::rx::network::parse_legacy;
     use std::net::Ipv4Addr;
 
-    let mut d = poisoned(146);
-    field(&mut d, 112, 16, "UTP PoE+");
-    d[132..136].copy_from_slice(&[10, 8, 83, 228]);
-    d[136..140].copy_from_slice(&[10, 8, 8, 254]);
-    d[140..146].copy_from_slice(&[0x00, 0x15, 0x82, 0x13, 0x89, 0xae]);
+    let fill = |len: usize| {
+        let mut d = poisoned(len);
+        field(&mut d, 112, 16, "UTP PoE+");
+        if len >= 140 {
+            d[132..136].copy_from_slice(&[10, 8, 83, 228]);
+            d[136..140].copy_from_slice(&[10, 8, 8, 254]);
+        }
+        if len >= 152 {
+            d[140..146].copy_from_slice(&[0x00, 0x15, 0x82, 0x13, 0x89, 0xae]);
+        }
+        d
+    };
 
-    let s = parse_legacy(&d, 0x21).expect("0x21 form did not parse");
+    let s = parse_legacy(&fill(152), 0x21).expect("0x21 form did not parse");
     assert_eq!(s.name, "UTP PoE+");
     assert_eq!(s.ip, Some(Ipv4Addr::new(10, 8, 83, 228)));
     assert!(s.mac_address.is_some());
 
-    // At 0x12 there is no MAC: offset 140 is whatever follows the struct.
-    let s = parse_legacy(&d, 0x12).expect("0x12 form did not parse");
+    // At 0x12 the struct ends before the MAC, so the frame is eight bytes
+    // shorter and offset 140 is not part of it.
+    let s = parse_legacy(&fill(144), 0x12).expect("0x12 form did not parse");
     assert_eq!(
         s.ip,
         Some(Ipv4Addr::new(10, 8, 83, 228)),
@@ -728,8 +747,14 @@ fn network_status_legacy_gating() {
     );
     assert_eq!(s.mac_address, None, "0x12 predates the MAC");
 
-    // At 0x06 there are no addresses either.
-    let s = parse_legacy(&d, 0x06).expect("0x06 form did not parse");
+    // At 0x06 there are no addresses either, and the frame is shorter again.
+    let s = parse_legacy(&fill(136), 0x06).expect("0x06 form did not parse");
     assert_eq!((s.ip, s.querier, s.mac_address), (None, None, None));
     assert_eq!(s.name, "UTP PoE+");
+
+    // A form measured against the next one up is refused outright.
+    assert!(
+        parse_legacy(&fill(144), 0x21).is_none(),
+        "a 0x12-length frame passed the 0x21 floor"
+    );
 }

@@ -174,10 +174,12 @@ pub(crate) fn build_hello(
 
 /// Builds the `CHANGE_BAY_NAME` (0x22) payload.
 pub(crate) fn build_set_bay_name(target: DeviceUid, port: u16, name: &str) -> Vec<u8> {
-    let mut p = Vec::with_capacity(34);
+    let mut p = Vec::with_capacity(40);
     p.extend_from_slice(target.as_bytes());
     p.extend_from_slice(&port.to_le_bytes());
     append_fixed_str(&mut p, name, 16);
+    // mxr_bay_name_data is ALIGN(8), rounding 34 bytes up to 40.
+    p.extend_from_slice(&[0; 6]);
     p
 }
 

@@ -172,8 +172,8 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
 
 /// The stamp for an opcode the table names.
 ///
-/// Test-only, and it panics for an opcode the table does not name - which
-/// `every_declared_opcode_has_a_stamp` is what makes impossible.
+/// Test-only, and it panics for an opcode the table does not name, which
+/// `every_declared_opcode_has_a_stamp` rules out.
 #[cfg(test)]
 pub(crate) fn protocol_for(opcode: Opcode) -> u16 {
     stamp_for(opcode).expect("opcode has no protocol table entry")

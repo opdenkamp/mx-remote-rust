@@ -711,6 +711,37 @@ fn a_video_wall_frame_carries_its_trailing_padding() {
     assert_eq!(frame[HEADER_LEN + 28], VideoWallOp::STORE.to_wire());
 }
 
+/// A rename is 40 bytes, which is six more than its fields.
+///
+/// `mxr_bay_name_data` is `ALIGN(8)`, so the 16-byte name at 18 is followed by
+/// six bytes of padding, and the addressed device measures the payload against
+/// the whole struct before it reads a field. A payload built by summing field
+/// widths is 34 bytes and is discarded on the length check, which looks
+/// exactly like a rename that was accepted and ignored.
+#[test]
+fn a_rename_carries_its_trailing_padding() {
+    let f = Fixture::new();
+    let device = uid_n(211);
+    f.everything(device, 0x28, "BN0001");
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_bay_name(BayUid::new(device, 2), "Kitchen")
+        .expect("the socket is open and the device is above the floor");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        frame.len() - HEADER_LEN,
+        40,
+        "the payload is not the size the device measures against"
+    );
+    assert_eq!(u16::from_le_bytes([frame[22], frame[23]]), 40);
+    // The padding is behind the name, not in front of it: a frame the right
+    // length with the name in the wrong place passes the check and renames
+    // nothing recognisable.
+    assert_eq!(&frame[HEADER_LEN + 18..HEADER_LEN + 25], b"Kitchen");
+}
+
 /// Each of the three operations decodes back to what it asked for.
 #[test]
 fn a_video_wall_command_decodes_back_to_what_was_asked() {
@@ -1613,7 +1644,7 @@ fn dolby_amplifier(mode: u8) -> (Fixture, DeviceUid) {
     ));
     f.feed(amp, op::SYS_BAY_CONFIG, &bays);
 
-    let mut dolby = vec![0u8; 18];
+    let mut dolby = vec![0u8; 24];
     dolby[..16].copy_from_slice(amp.as_bytes());
     dolby[16] = mode;
     f.feed(amp, op::AMP_DOLBY_STATE, &dolby);

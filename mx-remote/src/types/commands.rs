@@ -171,13 +171,24 @@ pub struct RcSettings {
 /// The raw-IR metadata shared by the IR capture and transmit frames.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IrMeta {
-    /// Tick length of the timing values.
+    /// Tick length the sender says its timing values are in.
+    ///
+    /// Reported and then ignored: a device replaying a burst applies its own
+    /// tick length rather than this one, and the two differ between products.
+    /// So it describes the sender, not the timings as the receiver will read
+    /// them, and converting with it does not make a burst portable.
     pub timer_resolution: u16,
     /// Carrier frequency in Hz.
     pub frequency: u16,
-    /// Number of timing values that follow.
+    /// How many timing values the sender says it appended.
+    ///
+    /// A declaration, not a measurement: nothing on the wire ties it to the
+    /// bytes that arrived, and a device replaying the burst indexes this many
+    /// rather than counting. Bound any read by the timing list itself, which is
+    /// the only part of a frame that cannot claim more than it carries.
     pub nb_timings: u16,
-    /// Index at which the repeat section starts.
+    /// Index at which the repeat section starts, declared on the same terms as
+    /// `nb_timings` and equally unbounded by the list.
     pub repeat_offset: u16,
     /// Capture status.
     pub status: u8,
@@ -195,6 +206,12 @@ pub struct IrCapture {
     /// Metadata for the timings.
     pub meta: IrMeta,
     /// The raw on/off timing blob following the header.
+    ///
+    /// Index 0 is never replayed. A device blasting this list starts at the
+    /// second timing, so the first holds the gap captured ahead of the burst
+    /// and goes nowhere. A capture of a single timing therefore carries no
+    /// burst at all, and a caller counting pulses is counting one fewer than
+    /// this holds.
     pub timings: Vec<u8>,
 }
 
@@ -212,6 +229,15 @@ pub struct IrTransmitRequest {
     /// Metadata for the timings.
     pub meta: IrMeta,
     /// The raw on/off timing blob following the header.
+    ///
+    /// Laid out as a capture is, and index 0 is discarded the same way, so a
+    /// capture is replayed by passing its timings through unchanged. A request
+    /// carrying one timing asks for nothing.
+    ///
+    /// Rebuild the rest of the request rather than forwarding a capture's
+    /// header: `timestamp` must be the sending client's own clock at send
+    /// time, because the addressed device measures the gap ahead of the burst
+    /// from it rather than from anything in this list.
     pub timings: Vec<u8>,
 }
 
@@ -247,6 +273,11 @@ pub struct AudioClip {
 }
 
 /// The electrical state a PDU reports.
+///
+/// Only a power-distribution unit sends this; every other product is built
+/// without the code that transmits it, so a mesh with no PDU on it never
+/// produces one. The opcode is current rather than retired, and the power
+/// factor it carries is decoded by nothing here.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PduState {
     /// Current in amperes.
@@ -446,11 +477,8 @@ pub struct VideoWallCommand {
     pub width: u16,
     /// Window height.
     pub height: u16,
-    /// Active picture width the window was authored against.
-    ///
-    /// The raster travels with the window because only the sender knows what
-    /// the installer drew against; a sink deriving it from what it happens to
-    /// be showing would store the window against the wrong picture.
+    /// Active picture width the window was authored against, as on
+    /// [`VideoWallWindow`].
     pub raster_w: u16,
     /// Active picture height the window was authored against.
     pub raster_h: u16,

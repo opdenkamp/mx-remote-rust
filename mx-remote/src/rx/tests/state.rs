@@ -143,11 +143,102 @@ fn mirror_and_mesh_reports() {
     assert_eq!(mirror.target.map(|b| b.device), Some(master));
     assert!(h.saw(|e| matches!(e, Event::MirrorStatusChanged { .. })));
 
-    // Mesh membership: the sub-opcode at 0, the master uid at 4.
-    let mut mesh = poisoned(36);
+    // Mesh membership: the sub-opcode at 0, the master uid at 4. The struct is
+    // 8-aligned, so it is 40 bytes rather than the 36 its fields occupy.
+    let mut mesh = poisoned(40);
     mesh[0] = 0xFF;
     mesh[4..20].copy_from_slice(master.as_bytes());
     h.feed(op::MESH_OPERATION, &mesh);
     assert_eq!(h.device().mesh_master, master);
     assert!(h.saw(|e| matches!(e, Event::MeshMasterChanged { .. })));
+}
+
+/// A mesh operation is read only where the mesh itself acts on one.
+///
+/// The opcode's receiver drops a frame short of the 8-aligned struct, and drops
+/// one stamped below 0x1A whatever its length. Reading either anyway would take
+/// a mesh master from a frame no device on the network acted on - and 0x1A is
+/// not this opcode's table entry, which is 0x1D for a parameter its
+/// report-controller operation grew later.
+#[test]
+fn a_mesh_report_below_its_own_gate_is_not_a_master() {
+    let mut h = Harness::new(3);
+    let master = uid_n(77);
+    h.hello(
+        0x28,
+        "ONEIP",
+        "MG0001",
+        DeviceFeature::V2IP_SINK | DeviceFeature::MESH,
+    );
+
+    let mut mesh = poisoned(40);
+    mesh[0] = 0xFF;
+    mesh[4..20].copy_from_slice(master.as_bytes());
+
+    // Short of the struct: the fields end at 36 and the struct does not.
+    h.feed(op::MESH_OPERATION, &mesh[..36]);
+    assert_eq!(
+        h.device().mesh_master,
+        crate::wire::DeviceUid::ZERO,
+        "a frame short of the struct named a master"
+    );
+
+    // Long enough, but stamped a version below the receiver's accept gate.
+    h.feed_proto(op::MESH_OPERATION, 0x19, &mesh);
+    assert_eq!(
+        h.device().mesh_master,
+        crate::wire::DeviceUid::ZERO,
+        "a frame stamped below the accept gate named a master"
+    );
+
+    // The gate's own version is enough; nothing here needs the table entry.
+    h.feed_proto(op::MESH_OPERATION, 0x1A, &mesh);
+    assert_eq!(h.device().mesh_master, master);
+}
+
+/// A frame from a device this client has never heard of is not acted on.
+///
+/// The addressee drops it too - a device processes nothing from a uid it has no
+/// record of - so applying it would leave this client holding a route the
+/// device it names never took. Hello and discover are exempt, because they are
+/// what ends the condition: a hello is how a sender stops being unknown, and
+/// without that exemption nothing could ever become known.
+#[test]
+fn a_frame_from_an_unknown_sender_is_not_acted_on() {
+    use crate::testing::hello_payload;
+
+    let mut h = Harness::new(12);
+    let sink = h.sender;
+    let stranger = uid_n(99);
+    h.hello(
+        0x28,
+        "ONEIP",
+        "SG0001",
+        DeviceFeature::V2IP_SINK | DeviceFeature::MESH,
+    );
+
+    // 0x24 addressed at the known sink, sent by a device that has not
+    // announced itself. Every device on the mesh applies an observed switch to
+    // its record of the addressee - but only when it knows the sender.
+    let mut switch = poisoned(40);
+    switch[0..16].copy_from_slice(sink.as_bytes());
+    switch[16..20].copy_from_slice(&[239, 1, 1, 1]);
+    switch[24..28].copy_from_slice(&[239, 1, 1, 2]);
+    h.feed_as(stranger, op::V2IP_MANUAL_SRC_SWITCH, &switch);
+    assert!(
+        h.device().v2ip_sink.is_none(),
+        "a stranger's route request was applied to the sink"
+    );
+
+    // The same frame once its sender has introduced itself.
+    h.feed_as(
+        stranger,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "ONEIP", "SG0002", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+    h.feed_as(stranger, op::V2IP_MANUAL_SRC_SWITCH, &switch);
+    assert!(
+        h.device().v2ip_sink.is_some(),
+        "the hello exemption did not register the sender"
+    );
 }

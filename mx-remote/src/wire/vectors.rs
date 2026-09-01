@@ -92,6 +92,11 @@ fn discover_frame() {
 
 #[test]
 fn set_bay_name_frame() {
+    // Six bytes longer than the reference Python library sends, which stops at
+    // the last name byte. `mxr_bay_name_data` is ALIGN(8) and the addressed
+    // device measures the payload against the whole struct, so the shorter form
+    // is dropped on the length check. The bytes up to the padding are the
+    // reference's.
     let payload = build_set_bay_name(TEST_UID, 5, "Living Room");
     let got = build_frame(
         TEST_UID,
@@ -101,7 +106,7 @@ fn set_bay_name_frame() {
     );
     assert_eq!(
         hex_of(&got),
-        "50380600000102030405060708090a0b0c0d0e0f22002200000102030405060708090a0b0c0d0e0f05004c6976696e6720526f6f6d0000000000"
+        "50380600000102030405060708090a0b0c0d0e0f22002800000102030405060708090a0b0c0d0e0f05004c6976696e6720526f6f6d0000000000000000000000"
     );
 }
 
