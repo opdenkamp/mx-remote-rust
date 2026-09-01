@@ -152,7 +152,8 @@ events! {
         V2ipSourcesChanged => on_v2ip_sources_changed(sources: Vec<V2ipStreamSources>);
         /// The device's V2IP encoder configuration changed.
         V2ipDetailsChanged => on_v2ip_details_changed(details: DeviceV2ipDetails);
-        /// The streams the device's sink is subscribed to changed.
+        /// The streams the device's sink is subscribed to changed. A request
+        /// addressed to it fires this too - see [`DeviceV2ipSink`].
         V2ipSinkChanged => on_v2ip_sink_changed(sink: DeviceV2ipSink);
         /// A multiviewer reported its state.
         MultiviewerStatusChanged => on_multiviewer_status_changed(status: MultiviewerStatus);

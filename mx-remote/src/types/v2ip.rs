@@ -385,7 +385,13 @@ impl DeviceV2ipDetails {
     }
 }
 
-/// The sink-side route a V2IP device is currently subscribed to.
+/// The sink-side route a V2IP device is subscribed to, as the mesh believes it.
+///
+/// A route request addressed to the device sets this the moment it is seen,
+/// which is what every device on the mesh does with one. So a request the
+/// device refused, or that reached it while it was offline, reads back here as
+/// though it had taken effect. Only the device's own configuration report
+/// confirms a route, and it sends that on its own schedule rather than in reply.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DeviceV2ipSink {
     /// The streams the sink subscribes to.

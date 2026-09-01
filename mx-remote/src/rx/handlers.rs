@@ -267,6 +267,13 @@ pub(super) fn v2ip_source_switch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Ev
 
 /// Applies a manual source switch, which carries the full stream triple and
 /// optionally the audio format the sink should expect.
+///
+/// The frame is a route request addressed to the sink, and is applied to the
+/// sink here rather than only announced as a request: every device on the mesh
+/// writes an observed switch into its own record of the addressee, so leaving
+/// the registry alone would make this client the only participant that does not
+/// know where a sink was pointed. What the sink did about it is not
+/// acknowledged - see `DeviceV2ipSink`.
 pub(super) fn v2ip_manual_source_switch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let target = rx.uid_or_zero(0);
     let payload = rx.frame.payload();

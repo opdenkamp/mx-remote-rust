@@ -2502,6 +2502,11 @@ typedef struct {
   /**
    * The streams the device's sink is subscribed to changed; read them with
    * `mxr_v2ip_sink()`.
+   *
+   * A route request addressed to the device fires this as soon as it is
+   * seen, so this reports what the mesh now believes rather than what the
+   * device confirmed - it acknowledges nothing, and only its own
+   * configuration report, sent on its own schedule, settles a route.
    */
   mxr_device_cb on_v2ip_sink_changed;
   /**

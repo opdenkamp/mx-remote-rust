@@ -1,11 +1,14 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! Handlers for the frames that carry a request rather than state.
+//! Handlers for the frames that carry a request rather than a report.
 //!
-//! Nothing here acts on a request. A peer's command reaches the caller as an
-//! event, and what the addressed device does about it comes back as its own
-//! state report.
+//! A request reaches the caller as an event naming who asked. Whether it also
+//! writes to the registry is decided by what the rest of the mesh does with the
+//! frame, not by the frame being a request: where every device applies an
+//! observed request to its record of the addressee, this library applies it
+//! too, so that its view agrees with theirs. Where only the addressee acts, the
+//! registry waits for that device's own report.
 
 use std::net::Ipv4Addr;
 

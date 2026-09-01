@@ -321,6 +321,15 @@ break over a firmware update. Auditing this by searching for masks does not work
 extracting a bit field and folding a range look identical. The mask is almost
 always right — look at what the extracted value is then converted into.
 
+**A request addressed to one device is state to every other device.** The
+firmware's own receiver writes an observed `0x24` V2IP_MANUAL_SRC_SWITCH into
+its record of the addressee, so decoding it as a request alone would leave this
+library the only participant on the mesh that does not know where a sink was
+pointed. What a handler writes to the registry follows what the mesh does with
+the frame, not whether the frame is a request. The addressee acknowledges
+nothing, so a route it refused reads back the same as one it took until its next
+configuration report, which it sends on its own schedule.
+
 **Do not mirror a firmware receiver without asking whether its handling is
 defensible.** Firmware predating the fix builds `0x3C` from an uninitialised
 scaling-config struct and ORs flags onto stack garbage, so on a receiver-capable
