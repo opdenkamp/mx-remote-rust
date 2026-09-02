@@ -41,6 +41,11 @@ pub(crate) mod op {
     pub(crate) const AUDIO_SET_ROUTE: Opcode = Opcode(0x13);
     pub(crate) const AUDIO_SET_VOLUME: Opcode = Opcode(0x14);
     pub(crate) const SYS_TEMPERATURE: Opcode = Opcode(0x15);
+    /// Declared and never dispatched: the firmware header still lists the
+    /// opcode, but no shipping build transmits it, so a decoder for it could
+    /// not be tested against a device. The number is not free either - a unit
+    /// old enough to have sent one reads anything reissued under it as a PDU
+    /// state rather than ignoring it.
     pub(crate) const PDU_STATE: Opcode = Opcode(0x16);
     pub(crate) const V2IP_SOURCE_SWITCH: Opcode = Opcode(0x1F);
     pub(crate) const V2IP_LINK_REMOTE: Opcode = Opcode(0x20);

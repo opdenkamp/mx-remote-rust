@@ -532,7 +532,7 @@ fn rc_settings_padding_is_not_part_of_the_field() {
 // ---- device state ----
 
 #[test]
-fn setup_status_installer_and_pdu() {
+fn setup_status_and_installer() {
     let mut h = command_device(48);
 
     h.feed(op::SETUP_STATUS, &[1]);
@@ -540,21 +540,6 @@ fn setup_status_installer_and_pdu() {
 
     h.feed(op::SET_INSTALLER, &[0x34, 0x12]);
     assert_eq!(h.device().installer_id, Some(0x1234));
-
-    let mut p = vec![0u8; 32];
-    p[0..4].copy_from_slice(&0x4000_0000u32.to_le_bytes()); // 2.0 A
-    p[4..8].copy_from_slice(&0x42F0_0000u32.to_le_bytes()); // 120.0 V
-    p[20..24].copy_from_slice(&0x4248_0000u32.to_le_bytes()); // 50.0 Hz
-    p[24] = 1;
-    p[25] = 0;
-    h.feed(op::PDU_STATE, &p);
-
-    let state = h.device().pdu_state.expect("no pdu state");
-    assert_eq!(state.current, 2.0);
-    assert_eq!(state.voltage, 120.0);
-    assert_eq!(state.frequency, 50.0);
-    assert_eq!(state.outlets[0], 1);
-    assert_eq!(state.outlets[1], 0);
 }
 
 #[test]

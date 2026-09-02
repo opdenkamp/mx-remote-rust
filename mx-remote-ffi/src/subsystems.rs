@@ -18,9 +18,9 @@ use std::net::Ipv4Addr;
 
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    MultiviewerStatus, NetworkPortStatus, PduState, RcSettings, StreamKind, TopologyEntry,
-    UtpCableStatus, V2ipDeviceStats, V2ipRxStats, V2ipStreamSource, V2ipStreamSources,
-    V2ipTilingConfig, V2ipTxStats, VctStatus, MULTIVIEWER_INPUTS,
+    MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UtpCableStatus,
+    V2ipDeviceStats, V2ipRxStats, V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig,
+    V2ipTxStats, VctStatus, MULTIVIEWER_INPUTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -38,9 +38,6 @@ const _: () = assert!(MXR_MULTIVIEWER_INPUTS == MULTIVIEWER_INPUTS);
 
 /// How many pairs a UTP cable diagnostic covers.
 pub const MXR_UTP_PAIRS: usize = 4;
-
-/// How many outlets a PDU reports.
-pub const MXR_PDU_OUTLETS: usize = 8;
 
 /// Which of a V2IP device's streams an address describes.
 #[repr(i32)]
@@ -519,37 +516,6 @@ impl From<AmpDolbySettings> for mxr_dolby_settings_t {
     }
 }
 
-/// The electrical state a PDU reports.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct mxr_pdu_state_t {
-    /// Current in amperes.
-    pub current: f64,
-    /// Voltage in volts.
-    pub voltage: f64,
-    /// Real power in watts.
-    pub power: f64,
-    /// Dissipation in watts.
-    pub dissipation: f64,
-    /// Mains frequency in Hz.
-    pub frequency: f64,
-    /// Per-outlet state.
-    pub outlets: [u8; MXR_PDU_OUTLETS],
-}
-
-impl From<PduState> for mxr_pdu_state_t {
-    fn from(s: PduState) -> Self {
-        Self {
-            current: s.current,
-            voltage: s.voltage,
-            power: s.power,
-            dissipation: s.dissipation,
-            frequency: s.frequency,
-            outlets: s.outlets,
-        }
-    }
-}
-
 /// The remote-control configuration of a source bay.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -841,27 +807,6 @@ pub unsafe extern "C" fn mxr_dolby_settings(
             .map(mxr_dolby_settings_t::from);
         // SAFETY: the caller guarantees a writable mxr_dolby_settings_t or null.
         unsafe { fill(r, uid, out, "Dolby settings", value) }
-    })
-}
-
-/// Fills `out` with the electrical state a PDU reports.
-///
-/// # Safety
-///
-/// `remote` is null or a live handle, and `out` points at a writable
-/// [`mxr_pdu_state_t`].
-#[no_mangle]
-pub unsafe extern "C" fn mxr_pdu_state(
-    remote: *const mxr_remote_t,
-    uid: mxr_uid_t,
-    out: *mut mxr_pdu_state_t,
-) -> mxr_result_t {
-    // SAFETY: the caller guarantees a live handle or null.
-    let handle = unsafe { remote.as_ref() };
-    with(handle, |r| {
-        let value = r.remote.pdu_state(uid.into()).map(mxr_pdu_state_t::from);
-        // SAFETY: the caller guarantees a writable mxr_pdu_state_t or null.
-        unsafe { fill(r, uid, out, "PDU state", value) }
     })
 }
 

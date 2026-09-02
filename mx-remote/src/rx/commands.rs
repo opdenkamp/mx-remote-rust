@@ -17,8 +17,8 @@ use crate::state::State;
 use crate::types::{
     ActionTransmitRequest, AudioClip, BayNameChange, EdidProfileChange, EdidRecord, EdidRequest,
     FactoryResetRequest, IrCapture, IrMeta, IrTransmitRequest, KeyTransmitRequest, MuteStatus,
-    PduState, RcSettings, RebootRequest, SetRouteRequest, V2ipBlacklistChange,
-    V2ipPowerSaveRequest, V2ipTilingConfig, VideoWallCommand, VideoWallOp, VolumeMuteStatus,
+    RcSettings, RebootRequest, SetRouteRequest, V2ipBlacklistChange, V2ipPowerSaveRequest,
+    V2ipTilingConfig, VideoWallCommand, VideoWallOp, VolumeMuteStatus,
 };
 use crate::wire::{cstr, BayUid, DeviceUid, EdidProfile, RcAction, RcKey, DEVICE_NAME_LEN};
 
@@ -248,30 +248,6 @@ pub(super) fn audio_clip(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                 clip: p[1],
             },
         });
-    }
-}
-
-pub(super) fn pdu_state(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    let p = rx.frame.payload();
-    if p.len() < 32 {
-        return;
-    }
-    let float = |off: usize| {
-        let value = f64::from(f32::from_bits(u32_at(p, off)));
-        (value * 100.0).round() / 100.0
-    };
-    let mut outlets = [0u8; 8];
-    outlets.copy_from_slice(&p[24..32]);
-    let st = PduState {
-        current: float(0),
-        voltage: float(4),
-        power: float(8),
-        dissipation: float(12),
-        frequency: float(20),
-        outlets,
-    };
-    if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_pdu_state(st, ev);
     }
 }
 

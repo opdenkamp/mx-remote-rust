@@ -19,7 +19,7 @@ pub use audio::{AudioEndpoint, AudioEndpoints, AudioFeatures, AudioLink};
 pub use commands::{
     ActionTransmitRequest, AudioChangeSource, AudioClip, BayNameChange, EdidProfileChange,
     EdidRecord, EdidRequest, FactoryResetRequest, IrCapture, IrMeta, IrTransmitRequest,
-    KeyTransmitRequest, MultiviewerCommand, PduState, RcSettings, RebootRequest, SetRouteRequest,
+    KeyTransmitRequest, MultiviewerCommand, RcSettings, RebootRequest, SetRouteRequest,
     V2ipBlacklistChange, V2ipPowerSaveRequest, V2ipTilingConfig, VideoWallCommand, VideoWallOp,
     VideoWallWindow, VIDEO_WALL_CLEARED, VIDEO_WALL_MIN_SIZE, VIDEO_WALL_POS_ALIGN,
     VIDEO_WALL_WIDTH_ALIGN,

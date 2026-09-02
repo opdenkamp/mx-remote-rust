@@ -128,7 +128,6 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::AUDIO_SET_ROUTE => commands::audio_set_route(state, rx, ev),
         op::AUDIO_SET_VOLUME => handlers::volume_set(state, rx, ev),
         op::SYS_TEMPERATURE => handlers::temperature(state, rx, ev),
-        op::PDU_STATE => commands::pdu_state(state, rx, ev),
         op::V2IP_SOURCE_SWITCH => handlers::v2ip_source_switch(state, rx, ev),
         op::V2IP_LINK_REMOTE => commands::v2ip_link_remote(state, rx, ev),
         op::V2IP_DETECT_BAYS => commands::detect_bays(state, rx, ev),

@@ -165,8 +165,6 @@ events! {
         TopologyChanged => on_topology_changed(topology: Vec<TopologyEntry>);
         /// A ProAmp8 reported its Dolby settings.
         AmpDolbySettingsChanged => on_amp_dolby_settings_changed(settings: AmpDolbySettings);
-        /// A PDU reported its electrical state.
-        PduStateChanged => on_pdu_state_changed(state: PduState);
         /// Installer setup was completed or cleared.
         SetupStatusChanged => on_setup_status_changed(completed: bool);
         /// The installer id changed.

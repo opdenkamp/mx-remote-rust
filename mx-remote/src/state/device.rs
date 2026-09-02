@@ -11,7 +11,7 @@ use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    PduState, RcSettings, TopologyEntry, V2ipDeviceStats, V2ipStreamSources, V2ipTilingConfig,
+    RcSettings, TopologyEntry, V2ipDeviceStats, V2ipStreamSources, V2ipTilingConfig,
     VolumeMuteStatus,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType};
@@ -72,7 +72,6 @@ pub(crate) struct Device {
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
     pub(crate) v2ip_sink: Option<DeviceV2ipSink>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
-    pub(crate) pdu_state: Option<PduState>,
     pub(crate) setup_done: Option<bool>,
     pub(crate) installer_id: Option<u16>,
     pub(crate) tiling: Option<V2ipTilingConfig>,
@@ -109,7 +108,6 @@ impl Device {
             v2ip_details: None,
             v2ip_sink: None,
             v2ip_stats: None,
-            pdu_state: None,
             setup_done: None,
             installer_id: None,
             tiling: None,
@@ -608,17 +606,6 @@ impl Device {
         ev.push(Event::AmpDolbySettingsChanged {
             device: self.uid,
             settings,
-        });
-    }
-
-    pub(crate) fn set_pdu_state(&mut self, state: PduState, ev: &mut Vec<Event>) {
-        if self.pdu_state == Some(state) {
-            return;
-        }
-        self.pdu_state = Some(state);
-        ev.push(Event::PduStateChanged {
-            device: self.uid,
-            state,
         });
     }
 

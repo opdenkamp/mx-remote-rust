@@ -130,7 +130,6 @@ inline std::string last_error() { return std::string(mxr_last_error()); }
     X(on_audio_endpoints_changed) \
     X(on_topology_changed) \
     X(on_amp_dolby_settings_changed) \
-    X(on_pdu_state_changed) \
     X(on_tiling_changed) \
     X(on_rc_settings_changed) \
     X(on_discover_request) \
@@ -832,9 +831,6 @@ public:
     }
     mxr_result_t dolby_settings(Uid device, mxr_dolby_settings_t &out) const {
         return mxr_dolby_settings(h_, device, &out);
-    }
-    mxr_result_t pdu_state(Uid device, mxr_pdu_state_t &out) const {
-        return mxr_pdu_state(h_, device, &out);
     }
     mxr_result_t rc_settings(Uid device, mxr_rc_settings_t &out) const {
         return mxr_rc_settings(h_, device, &out);

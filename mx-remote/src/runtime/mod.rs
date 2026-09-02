@@ -364,11 +364,6 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.dolby_settings)
     }
 
-    /// A device's power-distribution state.
-    pub fn pdu_state(&self, uid: DeviceUid) -> Option<PduState> {
-        self.shared.read(|state| state.device(uid)?.pdu_state)
-    }
-
     /// A device's remote-control settings.
     pub fn rc_settings(&self, uid: DeviceUid) -> Option<RcSettings> {
         self.shared

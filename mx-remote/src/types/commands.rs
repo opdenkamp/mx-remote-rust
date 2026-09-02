@@ -272,38 +272,6 @@ pub struct AudioClip {
     pub clip: u8,
 }
 
-/// The electrical state a PDU reports.
-///
-/// Only a power-distribution unit sends this; every other product is built
-/// without the code that transmits it, so a mesh with no PDU on it never
-/// produces one. The opcode is current rather than retired, and the power
-/// factor it carries is decoded by nothing here.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct PduState {
-    /// Current in amperes.
-    pub current: f64,
-    /// Voltage in volts.
-    pub voltage: f64,
-    /// Real power in watts.
-    pub power: f64,
-    /// Dissipation in watts.
-    pub dissipation: f64,
-    /// Mains frequency in Hz.
-    pub frequency: f64,
-    /// Per-outlet state.
-    pub outlets: [u8; 8],
-}
-
-impl fmt::Display for PduState {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:.2}A {:.2}V {:.2}W",
-            self.current, self.voltage, self.power
-        )
-    }
-}
-
 /// Registers or unregisters a device on the source blacklist.
 ///
 /// The firmware guards this opcode behind `V2IP_SUPPORT_BLACKLIST`, which is 0

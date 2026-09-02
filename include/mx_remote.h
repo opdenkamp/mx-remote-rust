@@ -1090,11 +1090,6 @@
 #define MXR_UTP_PAIRS 4
 
 /**
- * How many outlets a PDU reports.
- */
-#define MXR_PDU_OUTLETS 8
-
-/**
  * Set when the frame carries a scaling mode and refresh rate.
  */
 #define MXR_SCALING_FLAG_MODE_VALID (1 << 0)
@@ -2534,11 +2529,6 @@ typedef struct {
    */
   mxr_device_cb on_amp_dolby_settings_changed;
   /**
-   * A PDU reported its electrical state; read it with
-   * `mxr_pdu_state()`.
-   */
-  mxr_device_cb on_pdu_state_changed;
-  /**
    * Installer setup was completed or cleared.
    */
   mxr_device_bool_cb on_setup_status_changed;
@@ -3143,36 +3133,6 @@ typedef struct {
    */
   bool pcm_upmix_active;
 } mxr_dolby_settings_t;
-
-/**
- * The electrical state a PDU reports.
- */
-typedef struct {
-  /**
-   * Current in amperes.
-   */
-  double current;
-  /**
-   * Voltage in volts.
-   */
-  double voltage;
-  /**
-   * Real power in watts.
-   */
-  double power;
-  /**
-   * Dissipation in watts.
-   */
-  double dissipation;
-  /**
-   * Mains frequency in Hz.
-   */
-  double frequency;
-  /**
-   * Per-outlet state.
-   */
-  uint8_t outlets[MXR_PDU_OUTLETS];
-} mxr_pdu_state_t;
 
 /**
  * The remote-control configuration of a source bay.
@@ -4559,16 +4519,6 @@ mxr_result_t mxr_multiviewer_status(const mxr_remote_t *remote,
 mxr_result_t mxr_dolby_settings(const mxr_remote_t *remote,
                                 mxr_uid_t uid,
                                 mxr_dolby_settings_t *out);
-
-/**
- * Fills `out` with the electrical state a PDU reports.
- *
- * # Safety
- *
- * `remote` is null or a live handle, and `out` points at a writable
- * [`mxr_pdu_state_t`].
- */
-mxr_result_t mxr_pdu_state(const mxr_remote_t *remote, mxr_uid_t uid, mxr_pdu_state_t *out);
 
 /**
  * Fills `out` with a source bay's remote-control configuration.

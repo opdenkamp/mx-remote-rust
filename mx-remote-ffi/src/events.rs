@@ -507,9 +507,6 @@ pub struct mxr_callbacks_t {
     /// A ProAmp8 reported its Dolby settings; read them with
     /// `mxr_dolby_settings()`.
     pub on_amp_dolby_settings_changed: mxr_device_cb,
-    /// A PDU reported its electrical state; read it with
-    /// `mxr_pdu_state()`.
-    pub on_pdu_state_changed: mxr_device_cb,
     /// Installer setup was completed or cleared.
     pub on_setup_status_changed: mxr_device_bool_cb,
     /// The installer identifier changed.
@@ -788,10 +785,6 @@ impl EventHandler for Bridge {
         _settings: mx_remote::AmpDolbySettings,
     ) {
         forward!(self.on_amp_dolby_settings_changed(device.into()));
-    }
-
-    fn on_pdu_state_changed(&self, device: DeviceUid, _state: mx_remote::PduState) {
-        forward!(self.on_pdu_state_changed(device.into()));
     }
 
     fn on_setup_status_changed(&self, device: DeviceUid, completed: bool) {
