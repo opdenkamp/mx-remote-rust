@@ -13,6 +13,10 @@ passthrough, HDMI-over-IP streaming and multiviewer control.
 If you want to drive Pulse-Eight **neo**, **OneIP** or **ProAmp8** hardware from
 your own software or from a home automation system, this is the library for it.
 
+**Documentation:** [docs.rs/mx-remote](https://docs.rs/mx-remote), the API
+reference generated from the source, with the C ABI at
+[docs.rs/mx-remote-ffi](https://docs.rs/mx-remote-ffi).
+
 ```bash
 cargo add mx-remote
 ```
@@ -20,8 +24,7 @@ cargo add mx-remote
 Both crates are on crates.io, so there is nothing here to clone or vendor:
 [`mx-remote`](https://crates.io/crates/mx-remote) for Rust, and
 [`mx-remote-ffi`](https://crates.io/crates/mx-remote-ffi) for the C ABI, which
-carries `mx_remote.h` and `mx_remote.hpp` in the package. The API reference is
-on [docs.rs](https://docs.rs/mx-remote).
+carries `mx_remote.h` and `mx_remote.hpp` in the package.
 
 ## What is MX Remote?
 
