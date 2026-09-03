@@ -156,6 +156,22 @@ pub(crate) fn build_amp_zone_settings(
 }
 
 /// Builds the `SYS_HELLO` (0x00) payload announcing this client.
+///
+/// **Never append a field here.** Receivers check this payload's length
+/// exactly, alone among the opcodes, so a longer hello is discarded rather
+/// than read up to the part the receiver knows. What that costs is not a
+/// feature: a hello is how this client stops being unknown, so a device that
+/// drops it never registers the sender and ignores everything sent afterwards
+/// as coming from a stranger. Announce anything new on an opcode that tolerates
+/// growth.
+///
+/// This holds however many receivers are later fixed to accept a longer hello:
+/// the ones already deployed are the ones that decide, and a client that cannot
+/// be seen by them is worth less than any field it might have announced.
+///
+/// The asymmetry is deliberate and only on this side: [`super::Frame`] reads a
+/// received hello field by field with no length gate at all, so a peer that
+/// grows its own hello stays readable here.
 pub(crate) fn build_hello(
     protocol: u16,
     app_name: &str,
