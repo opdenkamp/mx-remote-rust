@@ -33,12 +33,16 @@ fn entry_at(index: usize) -> usize {
 }
 
 /// Decodes a `SELECT_INPUT` body, which follows the 20-byte audio command
-/// header: sink uid, source uid, then the two endpoint ids.
+/// header: sink uid, source uid, then the sink and source endpoint ids.
 ///
-/// The sink is named twice - once as the command header's target and again at
-/// the head of the body - and the body's second uid is the source. The header
-/// convention every other audio sub-command follows is what settles the
-/// orientation.
+/// Read from the body alone. The header names whichever device is addressed for
+/// the hop that carried this frame, which is the sink only when the route has
+/// one hop, so taking the sink from there would mislabel every longer route.
+///
+/// The receiving struct calls the first uid `source` and the second `target`,
+/// the reverse of what they hold, and the module reads them accordingly. The
+/// field names are the trap here: nothing on the wire tells a swapped reading
+/// from a correct one.
 fn change_source(rx: &Rx<'_>) -> Option<AudioChangeSource> {
     let f = &rx.frame;
     Some(AudioChangeSource {

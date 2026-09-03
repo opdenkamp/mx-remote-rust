@@ -39,6 +39,15 @@ use super::uid::DeviceUid;
 const TEST_UID: DeviceUid =
     DeviceUid::from_array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
+/// A sink and a source whose bytes differ from `TEST_UID` and from each other,
+/// so a frame that names the wrong one of the three is visible as wrong.
+const SINK_UID: DeviceUid = DeviceUid::from_array([
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+]);
+const SOURCE_UID: DeviceUid = DeviceUid::from_array([
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+]);
+
 fn hex_of(b: &[u8]) -> String {
     use core::fmt::Write as _;
     b.iter()
@@ -215,6 +224,34 @@ fn reboot_frame() {
 /// port of the device sending it. Both call the field the same thing and encode
 /// it identically, so only the direction distinguishes them and nothing on the
 /// wire catches a swap.
+/// Adjudicated against `mxr_v2ip_audio_change_source`: a 20-byte command header
+/// then a 36-byte body, 56 in all.
+///
+/// Three distinct uids, because two of the three regions carry the sink and a
+/// vector that used one uid for sender and sink would pass for a builder that
+/// confused them. The body holds the route end to end - sink at 20, source at
+/// 36, their endpoint ids at 52 and 54 - while the header names the device
+/// addressed for this hop, which a single-hop command makes the sink again.
+///
+/// The receiving struct's own field names are the reverse of what they carry,
+/// and its receiver has no length check at all on this sub-command: a payload
+/// short of 56 is read past its end rather than refused, so the size is as much
+/// the assertion here as the offsets are.
+#[test]
+fn audio_select_input_frame() {
+    let payload = build_audio_select_input(SINK_UID, 0x0203, SOURCE_UID, 0x0405);
+    let got = build_frame(
+        TEST_UID,
+        op::V2IP_AUDIO,
+        protocol_for(op::V2IP_AUDIO),
+        &payload,
+    );
+    assert_eq!(
+        hex_of(&got),
+        "50381a00000102030405060708090a0b0c0d0e0f4300380003000000202122232425262728292a2b2c2d2e2f202122232425262728292a2b2c2d2e2f101112131415161718191a1b1c1d1e1f03020504"
+    );
+}
+
 #[test]
 fn rc_tx_key_frame() {
     let payload = build_rc_key(TEST_UID, 0x0203, RcKey::from_wire(0x0405));

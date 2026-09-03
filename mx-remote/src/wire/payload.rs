@@ -324,9 +324,17 @@ pub(crate) fn build_bay_hide(target: DeviceUid, port: u16, hidden: bool) -> Vec<
 
 /// Builds the `V2IP_AUDIO` (0x43) `SELECT_INPUT` body.
 ///
-/// The sink is named twice - once as the command header's target and again at
-/// the head of the body - so a decoder reading the body's second uid as the
-/// sink would make one device both source and target of a single frame.
+/// The body names the route end to end - its first uid is the sink and its
+/// second is the source - while the header names the device being addressed for
+/// this hop. A controller sending a single-hop command puts the sink in both,
+/// as this does, but they are separate fields and a receiver resolves the body
+/// on its own: do not read one from the other.
+///
+/// The receiving struct calls its first field `source` and its second `target`,
+/// which is the reverse of what they carry. Nothing on the wire distinguishes a
+/// client that swapped them from one that did not, and the naming invites the
+/// swap, so the orientation here rests on how the module reads the fields
+/// rather than on what they are called.
 pub(crate) fn build_audio_select_input(
     sink: DeviceUid,
     sink_endpoint: u16,

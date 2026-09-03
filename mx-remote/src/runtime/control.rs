@@ -639,6 +639,17 @@ impl Remote {
     }
 
     /// Sets an audio endpoint's volume.
+    ///
+    /// **The audio module has no receiver for this command and ignores it.**
+    /// It builds and sends the same shape as
+    /// [`Self::set_audio_endpoint_muted`], and the send succeeds, because
+    /// nothing on these paths is acknowledged - so a caller sees success and no
+    /// change. The module dispatches this sub-command to the branch it uses for
+    /// one it does not recognise.
+    ///
+    /// It is kept because the command is defined and the module transmits it
+    /// itself, so a receiver may appear; read the endpoint back rather than
+    /// assuming either way.
     pub fn set_audio_endpoint_volume(
         &self,
         device: DeviceUid,
