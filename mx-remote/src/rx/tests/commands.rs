@@ -619,6 +619,132 @@ fn a_factory_reset_arrives_in_three_forms() {
     let got = latest(&h);
     assert!(!got.all);
     assert_eq!(got.target, None);
+
+    // A payload that reaches no form is not the empty one. Reading it as the
+    // sender resetting itself would report a destructive request built from a
+    // frame nothing understood, so it is dropped and the last request stands.
+    let before = h.events.len();
+    h.feed(op::SYS_FACTORY_RESET, &[0x01, 0x02, 0x03]);
+    assert!(
+        !h.events[before..]
+            .iter()
+            .any(|e| matches!(e, Event::FactoryResetRequested { .. })),
+        "a payload matching no form was read as a reset of the sender"
+    );
+}
+
+#[test]
+fn a_payload_that_grew_at_the_back_is_still_read() {
+    // A protocol update appends to an opcode's payload and leaves the fields
+    // ahead of the addition where they were, which is the only way a newer
+    // device stays readable by an older client. A handler that requires an
+    // exact length reads such a frame as neither of the forms it knows, and
+    // drops or misfiles the whole thing - fields it does understand included.
+    // The symptom appears only once a device is upgraded, so it is asserted
+    // here rather than left to the first field that gets added.
+    let mut h = command_device(52);
+    let target = uid_n(64);
+    let grown = |base: &[u8]| {
+        let mut p = base.to_vec();
+        p.extend_from_slice(&[0x5A, 0x5B, 0x5C]);
+        p
+    };
+
+    let mut record = vec![0u8; 257];
+    record[0] = 1; // output
+    record[1] = 0xAB;
+    h.feed(op::DEV_EDID, &grown(&record));
+    assert!(
+        h.saw(|e| matches!(e, Event::EdidReceived { edid, .. }
+        if edid.output && edid.data.len() == 256 && edid.data[0] == 0xAB)),
+        "an EDID record with bytes appended was not read as a record"
+    );
+
+    let mut request = target.as_bytes().to_vec();
+    request.push(1);
+    h.feed(op::DEV_EDID, &grown(&request));
+    assert!(
+        h.saw(|e| matches!(e, Event::EdidRequested { request, .. }
+        if request.target == target && request.output)),
+        "an EDID request with bytes appended was not read as a request"
+    );
+
+    let mut power = target.as_bytes().to_vec();
+    power.push(1);
+    h.feed(op::V2IP_POWER_SAVE, &grown(&power));
+    assert!(
+        h.saw(|e| matches!(e, Event::PowerSaveRequested { request, .. }
+        if request.target == Some(target) && request.enabled)),
+        "an addressed power-save request with bytes appended lost its target"
+    );
+
+    h.feed(op::SYS_FACTORY_RESET, &grown(target.as_bytes()));
+    assert!(
+        h.saw(|e| matches!(e, Event::FactoryResetRequested { request, .. }
+        if request.target == Some(target) && !request.all)),
+        "a factory reset with bytes appended lost the device it names"
+    );
+}
+
+#[test]
+fn a_reply_holds_as_many_edid_records_as_it_is_long() {
+    // The count is not enumerated: the output flag leads every record, so a
+    // reply carrying a third is three records rather than an unknown length.
+    let mut h = command_device(53);
+    let mut p = vec![0u8; 3 * 257];
+    for (i, mark) in [0xA1u8, 0xA2, 0xA3].iter().enumerate() {
+        p[i * 257] = u8::from(i == 1); // only the middle record is an output
+        p[i * 257 + 1] = *mark;
+    }
+    h.feed(op::DEV_EDID, &p);
+
+    let records: Vec<_> = h
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::EdidReceived { edid, .. } => Some(edid.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(records.len(), 3, "a three-record reply was not read");
+    assert_eq!(
+        records.iter().map(|r| r.data[0]).collect::<Vec<_>>(),
+        [0xA1, 0xA2, 0xA3]
+    );
+    assert_eq!(
+        records.iter().map(|r| r.output).collect::<Vec<_>>(),
+        [false, true, false],
+        "the flag leading each record was not read per record"
+    );
+}
+
+#[test]
+fn a_filter_list_is_read_to_its_last_whole_uid() {
+    let mut h = command_device(54);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            2,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+
+    let filtered = uid_n(65);
+    let mut p = h.sender.as_bytes().to_vec();
+    p.extend_from_slice(filtered.as_bytes());
+    p.extend_from_slice(&[0x5A, 0x5B, 0x5C]);
+    h.feed(op::BAY_FILTER_STATUS, &p);
+
+    assert_eq!(
+        h.bay(2).filtered,
+        [filtered],
+        "a trailing partial uid was read as a malformed frame rather than ignored"
+    );
 }
 
 #[test]
@@ -785,6 +911,32 @@ fn the_stats_blocks_are_twenty_and_forty_four() {
     assert_eq!(stats.rx_per_minute.video_total, 55);
     assert_eq!(stats.rx.decoder_state, V2ipDecoderState::STARTING);
     assert_eq!(stats.rx_per_minute.decoder_state, V2ipDecoderState::BAD);
+}
+
+#[test]
+fn a_stats_request_is_not_a_report() {
+    // The opcode carries a request as well as a report, and the request is far
+    // short of the counters. The length test that separates them also guards
+    // the slicing that reads the counter blocks, so failing it is not a missed
+    // reading but a panic on a frame a device legitimately sends - and this
+    // client would take itself down decoding traffic it asked for.
+    let mut h = command_device(89);
+    let mut request = uid_n(70).as_bytes().to_vec();
+    request.push(1); // enable
+
+    h.feed(op::V2IP_STATS, &request);
+    assert!(
+        h.device().v2ip_stats.is_none(),
+        "a request was read as a report"
+    );
+
+    // A payload one byte short of the counters is the other side of the same
+    // gate: nothing about it says request, and it must still not be sliced.
+    h.feed(op::V2IP_STATS, &[0u8; 127]);
+    assert!(
+        h.device().v2ip_stats.is_none(),
+        "a truncated report was read as a whole one"
+    );
 }
 
 #[test]
@@ -1038,6 +1190,108 @@ fn the_flags_word_names_every_cause_but_never_the_first() {
     assert!(
         !d.has_cause(V2ipDecoderReason::from_wire(200)),
         "a cause past the word's width is not in it"
+    );
+}
+
+#[test]
+fn an_idle_sink_reports_whatever_geometry_it_still_detects() {
+    // Geometry is read before any cause is decided, so it answers what the
+    // decoder currently detects and never whether the sink is on. A parser
+    // that zeroed geometry under idle - or that inferred idle from a zero one
+    // - would be reading a rank order into a field that has none, and both
+    // directions are wrong. A doc comment saying so has no failing state,
+    // which is why this is a test: the claim it defends was itself a
+    // correction, and nothing else in the suite contradicts a parser that
+    // reintroduces it.
+    let mut h = command_device(91);
+    let mut p = stats_with_decoder(1);
+    p[129] = V2ipDecoderReason::IDLE.to_wire();
+    p[140..144].copy_from_slice(&(1u32 << V2ipDecoderReason::IDLE.to_wire()).to_le_bytes());
+    h.feed(op::V2IP_STATS, &p);
+
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("no decoder reading");
+    assert_eq!(d.reason, V2ipDecoderReason::IDLE);
+    assert_eq!(
+        (d.width, d.height),
+        (3840, 2160),
+        "a switched-off sink had the geometry it still detects taken away"
+    );
+    assert!(
+        d.has_geometry(),
+        "idle was read as an answer about signal rather than about the sink"
+    );
+
+    // And the other direction: no geometry does not make a sink idle.
+    let mut dark = stats_with_decoder(1);
+    dark[129] = V2ipDecoderReason::NO_PACKETS.to_wire();
+    dark[132..136].copy_from_slice(&[0, 0, 0, 0]);
+    h.feed(op::V2IP_STATS, &dark);
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("no decoder reading");
+    assert!(!d.has_geometry());
+    assert_eq!(
+        d.reason,
+        V2ipDecoderReason::NO_PACKETS,
+        "a dark decoder was reported as a switched-off sink"
+    );
+}
+
+#[test]
+fn a_video_wall_command_needs_the_version_that_introduced_it() {
+    // The opcode did not exist below this version, so nothing stamps lower and
+    // the floor costs no sender anything. That is what makes a floor usable
+    // here and not on most opcodes, where the row was fixed long before the
+    // layout settled and a floor would drop every frame.
+    let mut h = command_device(92);
+    let mut p = poisoned(32);
+    p[0..16].copy_from_slice(uid_n(92).as_bytes());
+
+    h.feed_proto(op::V2IP_VIDEO_WALL, 0x27, &p);
+    assert!(
+        !h.saw(|e| matches!(e, Event::VideoWallCommand { .. })),
+        "a command stamped below the version the opcode was introduced at was read"
+    );
+
+    h.feed_proto(op::V2IP_VIDEO_WALL, 0x28, &p);
+    assert!(
+        h.saw(|e| matches!(e, Event::VideoWallCommand { .. })),
+        "a command at the introducing version was refused"
+    );
+}
+
+#[test]
+fn a_block_sized_tail_is_not_a_decoder_block_at_an_older_stamp() {
+    // Length alone says a payload is long enough to hold the block. It cannot
+    // say those bytes are that block: a sender stamping a version from before
+    // it existed did not append one, so 24 bytes past the counters are some
+    // other growth, and reading them as a decoder report invents a reading with
+    // a reason, a geometry and a fault word in it. The counters ahead of the
+    // tail are unaffected and still read, which is the half a stamp ceiling
+    // would have thrown away.
+    let mut h = command_device(90);
+    let p = stats_with_decoder(1);
+    h.feed_proto(op::V2IP_STATS, 0x28, &p);
+
+    let stats = h
+        .device()
+        .v2ip_stats
+        .expect("the counters were lost with it");
+    assert_eq!(stats.tx.video, u32::from_le_bytes([0xA5, 0xA4, 0xA7, 0xA6]));
+    assert_eq!(
+        stats.decoder,
+        V2ipDecoderDetail::Absent,
+        "a tail from before the block existed was read as one"
     );
 }
 

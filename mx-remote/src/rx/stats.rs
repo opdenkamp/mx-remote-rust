@@ -30,9 +30,14 @@ const STATS_SIZE: usize = 2 * TX_STATS_SIZE + 2 * RX_STATS_SIZE;
 /// is what appending the block bought.
 const DECODER_SIZE: usize = 24;
 
-/// The payload length of an enable/disable request, which carries no
-/// statistics of its own.
-const STATS_REQUEST_SIZE: usize = 17;
+/// The protocol version the decoder block appeared at.
+///
+/// Read with the length rather than instead of it: the length says a payload is
+/// long enough to hold the block, and the version says those bytes are that
+/// block rather than some later growth this client has no name for. A sender
+/// below this stamps a report of the same shape it always did, so its counters
+/// are read and its tail, if any, is not.
+const DECODER_PROTOCOL: u16 = 0x29;
 
 fn tx_stats(p: &[u8]) -> V2ipTxStats {
     V2ipTxStats {
@@ -60,14 +65,14 @@ fn rx_stats(p: &[u8]) -> V2ipRxStats {
     }
 }
 
-/// Reads the decoder block, which a sender omits and this reads by length
-/// rather than by the frame's stamp.
+/// Reads the decoder block, which a sender omits and which is recognised by the
+/// frame's stamp and its length together.
 ///
 /// `valid` follows the sink IP being configured rather than the sink being
 /// enabled, so a sink that is switched off still reports, carrying an idle
 /// reason with no geometry.
-fn decoder_detail(p: &[u8]) -> V2ipDecoderDetail {
-    if p.len() < DECODER_SIZE {
+fn decoder_detail(protocol: u16, p: &[u8]) -> V2ipDecoderDetail {
+    if protocol < DECODER_PROTOCOL || p.len() < DECODER_SIZE {
         return V2ipDecoderDetail::Absent;
     }
     if byte(p, 0) == 0 {
@@ -87,9 +92,13 @@ fn decoder_detail(p: &[u8]) -> V2ipDecoderDetail {
     })
 }
 
+/// Decodes a statistics report, and ignores the enable/disable request that
+/// shares the opcode: the request is a uid and a flag, far short of the
+/// counters, so the one length test separates the two forms and rejects a
+/// truncated report at once.
 pub(super) fn v2ip_stats(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
-    if p.len() == STATS_REQUEST_SIZE || p.len() < STATS_SIZE {
+    if p.len() < STATS_SIZE {
         return;
     }
     let rx_base = 2 * TX_STATS_SIZE;
@@ -98,7 +107,7 @@ pub(super) fn v2ip_stats(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         tx_per_minute: tx_stats(&p[TX_STATS_SIZE..rx_base]),
         rx: rx_stats(&p[rx_base..rx_base + RX_STATS_SIZE]),
         rx_per_minute: rx_stats(&p[rx_base + RX_STATS_SIZE..rx_base + 2 * RX_STATS_SIZE]),
-        decoder: decoder_detail(&p[STATS_SIZE..]),
+        decoder: decoder_detail(rx.frame.protocol(), &p[STATS_SIZE..]),
     };
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_v2ip_stats(stats, ev);

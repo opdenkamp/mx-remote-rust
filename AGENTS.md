@@ -68,10 +68,37 @@ this library speaks. A receiver drops any frame stamped above its own version.
 
 ## Working on the wire
 
-**Decide a layout by payload length, never by the stamp.** A trailing field added
-to an existing opcode is read from the length; the stamp is a version ceiling
-rather than a layout selector. Where a handler does read the stamp, its opcode's
-table entry is the number it tests.
+**Gate a layout on the frame's protocol version and its length together:
+`protocol >= X && len >= min_X`,** where X is the version that layout appeared
+at. The length says a payload is long enough to hold the fields; the version
+says those bytes are that layout rather than later growth this client has no
+name for.
+
+**Read the length as a minimum, never as an exact match.** An update that
+appends leaves earlier offsets alone, so an exact length drops a newer device's
+frame whole - silently, and only once a device is upgraded. An exact length is
+for a superseded layout only: a widened field shifts every offset after it, and
+that is the case the version is raised to announce. Where several forms share an
+opcode, test them longest first, or a short form matched by minimum swallows a
+long one.
+
+**X is the version senders stamp on that opcode - its table row - and not the
+version its layout changed at.** The two coincide only where the row was raised
+in the same change as the layout, which is the exception. Rows that predate the
+versioning were seeded low and never corrected, so a layout can be far newer
+than the number stamped on frames carrying it, and a floor derived from when the
+layout changed then drops every frame on that opcode from every sender, in
+silence. The remote-control family is the worked example: its bay field widened
+long after its row was fixed, and its layouts are told apart by length alone.
+
+**Length-only is the default, not a fallback.** Add a floor only for a layout
+whose row is known to have moved with it; where that is not established, gate on
+length and say so. Too low costs nothing, and too high is unrecoverable from
+this side.
+
+**A trailing variable array is the one shape no gate protects.** Bytes appended
+past its last element are read as another element. Growing one is a wire break
+its sender has to announce.
 
 **Check the addressee's reported version before sending, not just the stamp.** A
 receiver drops a frame it cannot decode silently, with no NAK at any layer, so

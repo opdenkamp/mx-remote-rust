@@ -42,26 +42,27 @@ pub(super) fn discover_request(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Even
 /// Length of one EDID block.
 const EDID_SIZE: usize = 256;
 
+/// One reported EDID: an output flag, then the block.
+const EDID_RECORD_SIZE: usize = EDID_SIZE + 1;
+
+/// A request: the uid it asks about, then the direction.
+const EDID_REQUEST_SIZE: usize = 17;
+
 /// Decodes a `DEV_EDID` frame.
 ///
-/// A 17-byte payload is a request. A 257-byte payload is one record and 514 is
-/// two concatenated, so the output-flag byte leads each record rather than one
-/// flag covering both.
+/// The output flag leads each record rather than one flag covering a whole
+/// reply, so a reply is records concatenated and holds as many as it is long -
+/// counted here rather than enumerated, which is what lets a sender append a
+/// third. The two forms are told apart by which length they reach, longest
+/// first, and a run's trailing bytes past its last whole record are ignored.
 pub(super) fn edid(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
     let p = rx.frame.payload();
     match p.len() {
-        17 => ev.push(Event::EdidRequested {
-            device,
-            request: EdidRequest {
-                target: uid_at(p, 0),
-                output: byte(p, 16) != 0,
-            },
-        }),
-        len if len == EDID_SIZE + 1 || len == 2 * (EDID_SIZE + 1) => {
-            for record in p.chunks_exact(EDID_SIZE + 1) {
+        n if n >= EDID_RECORD_SIZE => {
+            for record in p.chunks_exact(EDID_RECORD_SIZE) {
                 let output = record[0] != 0;
                 let data = record[1..].to_vec();
                 // Kept as well as announced: the event carries the bytes past
@@ -76,6 +77,13 @@ pub(super) fn edid(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                 });
             }
         }
+        n if n >= EDID_REQUEST_SIZE => ev.push(Event::EdidRequested {
+            device,
+            request: EdidRequest {
+                target: uid_at(p, 0),
+                output: byte(p, 16) != 0,
+            },
+        }),
         _ => {}
     }
 }
@@ -347,9 +355,17 @@ pub(super) fn set_installer(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
 
 /// Decodes the list of source devices filtered out of a sink's picker: a
 /// target uid followed by zero or more filtered uids.
+///
+/// The list is read to its last whole uid, so trailing bytes that are not one
+/// are ignored rather than taken as evidence the frame is malformed.
+///
+/// A trailing array is the one shape no length test can protect: bytes appended
+/// past the last uid are read as another uid once there are sixteen of them.
+/// Appending to this payload is a wire break the sender has to announce, not
+/// something a receiver can absorb.
 pub(super) fn filter_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
-    if p.len() < 16 || p.len() % 16 != 0 {
+    if p.len() < 16 {
         return;
     }
     let filtered: Vec<DeviceUid> = p[16..].chunks_exact(16).map(|c| uid_at(c, 0)).collect();
@@ -368,21 +384,33 @@ pub(super) fn filter_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
 /// device rather than one.
 const FACTORY_RESET_ALL: u8 = 0xFF;
 
+/// Decodes a factory-reset request: one addressing a named device, one
+/// addressing every device, and an empty payload that addresses only the
+/// sender.
+///
+/// The forms are told apart longest first, so a sender that appends to one is
+/// still read as that form rather than falling through to the next. A payload
+/// that reaches none of them is dropped: the form that carries nothing is
+/// empty, so anything shorter than a uid and not marked for every device is
+/// unrecognised rather than argument-free, and reading it as the sender
+/// resetting itself would aim a destructive request from a frame that was not
+/// understood.
 pub(super) fn factory_reset(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
     let p = rx.frame.payload();
     let request = match p.len() {
-        1 if p[0] == FACTORY_RESET_ALL => FactoryResetRequest {
-            all: true,
-            target: None,
-        },
-        16 => FactoryResetRequest {
+        n if n >= 16 => FactoryResetRequest {
             all: false,
             target: Some(uid_at(p, 0)),
         },
-        _ => FactoryResetRequest::default(),
+        n if n >= 1 && p[0] == FACTORY_RESET_ALL => FactoryResetRequest {
+            all: true,
+            target: None,
+        },
+        0 => FactoryResetRequest::default(),
+        _ => return,
     };
     ev.push(Event::FactoryResetRequested { device, request });
 }
@@ -411,21 +439,24 @@ pub(super) fn v2ip_tiling(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     ev.push(Event::TilingChanged { device, tiling });
 }
 
-/// Decodes both power-save forms: a bare flag broadcast to every peer, and a
-/// uid-addressed flag for one unit.
+/// Decodes both power-save forms: a uid-addressed flag for one unit, and a bare
+/// flag broadcast to every peer.
+///
+/// Tested longest first, so a sender that appends to either form is still read
+/// as that form: the bare flag would otherwise swallow the addressed one.
 pub(super) fn v2ip_power_save(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
     let p = rx.frame.payload();
     let request = match p.len() {
-        1 => V2ipPowerSaveRequest {
-            target: None,
-            enabled: p[0] == 1,
-        },
-        17 => V2ipPowerSaveRequest {
+        n if n >= 17 => V2ipPowerSaveRequest {
             target: Some(uid_at(p, 0)),
             enabled: p[16] == 1,
+        },
+        n if n >= 1 => V2ipPowerSaveRequest {
+            target: None,
+            enabled: p[0] == 1,
         },
         _ => return,
     };
@@ -534,12 +565,21 @@ pub(super) fn blacklist(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>, reg
 /// clears a wall that should have been restored. Suspect this layout on a wall
 /// that forgets its setting across a reboot, not on one that is visibly
 /// misplaced.
+/// Payload length of a video-wall command, and the version the opcode was
+/// introduced at.
+///
+/// The floor is usable here because the opcode did not exist below it, so no
+/// sender stamps lower - which is what a floor needs, rather than the version
+/// the layout was last changed at. Most opcodes do not have that property.
+const VIDEO_WALL_SIZE: usize = 32;
+const VIDEO_WALL_PROTOCOL: u16 = 0x28;
+
 pub(super) fn video_wall(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
     let p = rx.frame.payload();
-    if p.len() < 32 {
+    if rx.frame.protocol() < VIDEO_WALL_PROTOCOL || p.len() < VIDEO_WALL_SIZE {
         return;
     }
     ev.push(Event::VideoWallCommand {

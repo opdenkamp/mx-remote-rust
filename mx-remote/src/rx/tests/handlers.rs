@@ -13,7 +13,7 @@ use crate::types::{
 };
 use crate::wire::{
     op, parse_bay_config, BayFeatures, BayStatus, DeviceFeature, EdidProfile, MxrSignalType,
-    RcAction, RcKey, RcType, V2IP_PORT_VIDEO,
+    Opcode, RcAction, RcKey, RcType, PROTOCOL_VERSION, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, field, hello_payload, poisoned, stream_rec, uid_n};
@@ -111,6 +111,38 @@ fn a_key_or_action_frame_is_read_at_the_width_its_length_says() {
             && !matches!(e, Event::KeyPressed { bay, .. } if bay.port == 1 || bay.port == 3)),
         "a sentinel bay id decoded as a real port"
     );
+}
+
+/// No payload, at any length or stamp, takes a handler out of bounds.
+///
+/// A frame that does not parse is dropped, which means dropped rather than
+/// panicked on: this runs in the receive thread, and a panic there takes the
+/// client down over a datagram anybody on the segment can send. Every handler
+/// bounds its own reads, but a length gate is easy to write in front of the
+/// wrong thing, and the one on `V2IP_STATS` turned out to bound the slicing of
+/// the counter blocks as well as the choice of layout - a fact no test saw
+/// until it was looked for. This looks for all of them at once.
+///
+/// The sweep covers every opcode value rather than the declared ones, so an
+/// opcode added without a handler is covered on the day it is declared. Three
+/// byte patterns, because a poisoned payload and a zeroed one drive a
+/// count-carrying field to different places, and an all-ones one drives it as
+/// far as it goes.
+#[test]
+fn no_payload_length_takes_a_handler_out_of_bounds() {
+    for opcode in 0u16..=0x60 {
+        for stamp in [0x00, 0x11, PROTOCOL_VERSION] {
+            // Rebuilt per stamp so a payload that registers something does not
+            // change what a later length is read against.
+            let mut h = bay_state(131);
+            for len in 0..=200usize {
+                for fill in [poisoned(len), vec![0u8; len], vec![0xFFu8; len]] {
+                    h.events.clear();
+                    h.feed_proto(Opcode(opcode), stamp, &fill);
+                }
+            }
+        }
+    }
 }
 
 /// The volume request has two layouts, and the length is what separates them.
