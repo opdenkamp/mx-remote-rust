@@ -6,577 +6,180 @@ A Rust client library for Pulse-Eight MatrixOS devices (neo matrices, OneIP/V2IP
 units, ProAmp8 amplifiers) over UDP multicast/broadcast.
 
 It is meant to be *the* public implementation third parties integrate against: a
-pure-Rust core, a C ABI on top of it for C/C++ consumers, and further language
-bindings layered on the same core. Rust was chosen for that reason — it links
-into a C++ program as a plain static archive, with no runtime to initialise, no
-GC pointer rules, and no signal handlers taken from the host process.
-
-It is a port of the Go client. This file carries the protocol knowledge itself
-rather than pointing at that repository for it, so everything needed to work on
-the wire format is here.
+pure-Rust core in `mx-remote`, a C ABI over it in `mx-remote-ffi`, and further
+language bindings layered on the same core. Rust was chosen for that reason — it
+links into a C++ program as a plain static archive, with no runtime to
+initialise, no GC pointer rules, and no signal handlers taken from the host
+process.
 
 ## Sources of truth
 
 The firmware defines the wire format and settles every disagreement with this
-crate. It is closed source and no copy of it ships here, so a layout this file
-does not already pin has to be settled against a captured frame or the two
-public clients below — never guessed from field widths.
+crate. It is closed source and no copy of it ships here, so a layout this
+repository does not already encode has to be settled against a captured frame or
+against the two public clients below — never guessed from field widths.
 
-Two older clients of the same protocol are public. Both are independent
-implementations rather than bindings over a shared core.
+- Python — <https://github.com/opdenkamp/mx-remote>. The oldest and most mature,
+  and where the byte-exact vectors in `wire/vectors.rs` came from.
+- Go — <https://github.com/opdenkamp/mx-remote-golang>. The client this crate was
+  ported from.
 
-- Python — <https://github.com/opdenkamp/mx-remote>. The oldest and most
-  mature, and the one the byte-exact vectors in `wire/vectors.rs` came from.
-  It is the only one still decoding the opcodes current firmware no longer
-  sends; that is a decision rather than an oversight, and an opcode is not
-  ported back just because another client carries it.
-- Go — <https://github.com/opdenkamp/mx-remote-golang>. The client this crate
-  was ported from.
+Both are independent implementations rather than bindings over a shared core.
+Where a reference client and the firmware disagree, the firmware wins.
+
+**Keep firmware internals out of this repository.** Unreleased behaviour,
+internal build numbers and firmware-side implementation detail do not belong in
+source, comments, tests or this file. Describe what is on the wire and what this
+library does with it.
+
+## Where the protocol knowledge lives
+
+In the code, not in prose here:
+
+- `wire/opcode.rs` — every opcode this library names, and the protocol version it
+  stamps on each.
+- `wire/frame.rs`, `wire/payload.rs` — the frame envelope, and every payload this
+  library builds.
+- `rx/` — one handler per opcode, each reading its fields at explicit offsets.
+- `types/` — what a decoded value becomes for a caller.
+- `wire/vectors.rs` — byte-exact frames, generated from the Python client rather
+  than from this one, which is what makes them evidence.
+- `rx/tests/` — what each handler is required to read, at which offset and width.
+
+Read those before adding to this file. A layout restated in prose is a second
+place to be wrong.
 
 ## Wire format
 
 `[0x50, 0x38, protocol(u16 LE), uid(16), opcode(u16 LE), length(u16 LE), payload]`
 
-**Little-endian throughout, with two exceptions that sit next to each other.**
-Both firmware targets are little-endian and nothing on either side swaps bytes,
-so the wire is host-endian and every scalar is written as it is held.
+**Little-endian throughout, with two exceptions that sit next to each other.** An
+IPv4 address is stored in network byte order, so every stream slot puts a
+big-endian address immediately in front of a little-endian port. Pin such a slot
+with an address whose four bytes differ — a symmetric one survives being
+reversed.
 
-An IPv4 address is not: it is stored in network byte order, so `239.1.2.3`
-goes out as `ef 01 02 03`. Every stream slot therefore puts a big-endian
-address immediately in front of a little-endian port, two adjacent fields with
-opposite byte order. A slot built by treating the address as a `u32` looks
-right for as long as the test addresses are symmetric - `239.1.1.1` survives
-being reversed and `234.108.230.221` does not - so pin it with an address whose
-four bytes differ.
-
-A uid is four 32-bit words, and its printed form reverses each one: the text
-`05027025.…` is the word `25 70 02 05` on the wire. The 16 bytes are otherwise
-opaque, so parsing that text as bytes rather than as four words yields a uid
-that fails the receiver's "is this me" test, and the frame is dropped in
-silence like everything else on these paths.
+A uid is four 32-bit words and its printed form reverses each one, so parsing
+that text as bytes yields a uid that fails a receiver's "is this me" test, and
+the frame is dropped in silence like everything else on these paths.
 
 The stamped protocol is the per-opcode version from `stamp_for`, not the version
-this library speaks. A receiver drops any frame stamped above its own version,
-so stamping our own would make every device with a lower cap ignore us.
+this library speaks. A receiver drops any frame stamped above its own version.
 
-An opcode's table entry is the version its feature arrived at, and the few
-receive-side decisions that read the stamp test that same number. Stamping the
-table entry therefore clears every gate by construction, and stamping anything
-higher only narrows the set of receivers that accept the frame. There is no
-opcode whose table entry sits below its own gate, which is what makes the table
-safe to stamp from; a raised stamp is a mistake rather than an option.
+## Working on the wire
 
-Only these receive decisions read the stamp at all. Everything else takes it
-and discards it, dispatching on payload length.
+**Decide a layout by payload length, never by the stamp.** A trailing field added
+to an existing opcode is read from the length; the stamp is a version ceiling
+rather than a layout selector. Where a handler does read the stamp, its opcode's
+table entry is the number it tests.
 
-- Accept or drop: above the receiver's own version, silently, with no NAK.
-- `0x14` AUDIO_SET_VOLUME below 0x11 selects the superseded volume layout. It
-  is the only layout the stamp selects anywhere.
-- `0x0A` RC_IR below 0x19, `0x3D` AMP_ZONE_SETTINGS and `0x3E` AMP_DOLBY_STATE
-  below 0x1C, `0x29` NET_LINK_STATUS below 0x22, `0x3B` MESH_OPERATION below
-  0x1A: ignored outright.
-- `0x3B` MESH_OPERATION at 0x1D and above carries a second parameter byte on
-  its report-controller operation, and zero below. This is why its table entry
-  is 0x1D rather than the 0x1A of its own accept gate.
-
-`0x29` NET_LINK_STATUS is the one opcode this library deliberately reads below
-the version its own receiver accepts. Firmware drops anything under 0x22; three
-older forms exist and are decoded here, because serving a device the current
-firmware has stopped serving is a client's job rather than a device's. They
-extend each other - 136 bytes, 144 with an address pair, 152 with a MAC added -
-and share every offset, so the size is what separates them.
-
-There is a fourth, older still, and it must not be decoded: the same fields
-packed rather than 8-aligned. Firmware rejects it by name as protocol 2, so a
-frame in that layout is one no device will act on, and its offsets differ enough
-that reading a current frame at them yields a plausible port name and a
-plausible everything else.
-
-Firmware states that only two products ever transmit this opcode, and that the
-oldest form therefore means a V2IP on 4.0.1, 4.0.2 or 4.1.1 rather than any
-older model. That is worth knowing before deciding the path is dead weight;
-two of those releases are still published.
-
-A trailing field added to an existing opcode is read from the payload length,
-not from the stamp - the `0x3B` parameter above is the only exception in the
-protocol. So `0x24` V2IP_MANUAL_SRC_SWITCH carries its audio format because the
-payload is 48 bytes rather than 40, at any stamp, and a 40-byte payload leaves
-the receiver storing a zero sample rate and channel count.
-
-**A table entry is what to stamp, and not a record of when a layout changed.**
-The table was created after some layouts had already changed, and the entries
-seeded then were never backfilled. `0x0B` RC_KEY and `0x0D` RC_ACTION widened
-their bay id from one byte to two at protocol 6 and both still carry 0x01, so
-neither form can be told from the other by its stamp. `0x14` AUDIO_SET_VOLUME
-changed layout after the table existed and had its entry raised in the same
-change, which is why it is the one opcode whose stamp does select a layout.
-Where a handler reads the stamp the entry is right; where the entry is wrong,
-no handler reads it. Decide a layout by payload length, never by the stamp -
-the lengths differ in every case, which is what makes that always available.
-
-**A version outlives the layouts sent under it, so date a layout from the
-releases that carried it.** The struct as it stood at the commit that named a
-version is not necessarily what any device sent under that version: a layout can
-be revised without the stamp moving, before the version ships or after. `0x22`
-carries two layouts for that reason, one of which left the tree the same
-afternoon it arrived. Reading a struct out of the commit that introduced a
-version therefore answers a different question from "what is on the wire",
-and only the tag and release history separate the two - which is firmware's to
-answer and not something to attempt from the source alone.
-
-Compile the component types as they stood at the version being decoded, not
-today's. A reconstruction that happens to be right cannot be told from one that
-is wrong until something disagrees with it, and a rename is the trap: the types
-behind the network report were moved and renamed without a field changing, so a
-type name that no longer exists is no evidence that a layout moved.
-
-A hello carries a second, different version, and it is the one that matters
-about the sender. The header stamp is 0x01 like any other opcode's entry; the
-payload's own protocol field is the sender's true supported version, and that
-is what a peer stores, reports and reasons about. It decides how long silence
-takes to mean offline, so a client that understates it there is held online for
-minutes after it stops talking. Send the real version in the payload.
-
-A frame from a sender with no device record is dropped before its handler.
-Only hello and discover are processed from a device the receiver has not heard
-from, so this client's own hello has to land, and keep landing, before anything
-else it sends is acted on.
-
-**This library does the same, and that is deliberate rather than over-strict.**
-Acting on a frame from a device nobody on the mesh has met would put this client
-ahead of every device that saw the same frame: it would hold a route, a name or
-a setting that the frame's own addressee dropped without reading. The exemptions
-are what keep it from being a deadlock - a hello is how a sender stops being
-unknown, and a discover is how a stranger asks everyone to introduce themselves.
-The window a device stays unknown is its announcement interval at worst, and
-[`Remote::start`] shortens it by announcing and then soliciting before it
-returns. That order matters: the discover exemption is newer than the gate, so
-against a device old enough to lack it the hello is what makes the discover
-acceptable.
-
-Check the target's reported version before sending, not just the stamp. A
+**Check the addressee's reported version before sending, not just the stamp.** A
 receiver drops a frame it cannot decode silently, with no NAK at any layer, so
-the call would otherwise succeed while nothing happened. A ProAmp8 caps at
-0x22 and one on 4.1.1 reports 0x11, below the floor of several opcodes here, so
-this is not hypothetical. A device that has reported no version is let through:
-not knowing is not the same as knowing it is too old.
+the call would otherwise succeed while nothing happened. A device that has
+reported no version is let through: not knowing is not knowing it is too old.
 
-`0x02` SYS_BAY_CONFIG, `0x03` SYS_LINKS and `0x23` SYS_BAY_CONFIG_SECONDARY are
-paged across several frames whose record counts vary. Merge records into the
-cache; never replace a cached list from one frame.
+**Nothing on these paths is acknowledged.** A send that succeeds means a frame
+left the socket. "Applied", "refused", "no handler for this opcode" and "wrong
+target uid" are one observation from outside, so read the state back to tell them
+apart, and validate a value before sending rather than expecting a rejection.
 
-`0x3C` V2IP_DEVICE_CFG carries every field behind its own validity marker,
-because a sender zeroes the payload and fills in only what it is writing. Fold a
-frame onto the cached config field by field.
+**Never decode by overlaying a `#[repr(C)]` struct.** The firmware declares its
+protocol structs packed, aligned and plain by turns. Read each field explicitly at
+an offset derived from the declaration, and size a payload with the compiler
+rather than by summing field widths.
 
-**A module-owned opcode may reach a device that has no handler for it, and
-nothing says so.** `0x42` V2IP_MULTIVIEWER, `0x43` V2IP_AUDIO and `0x49`
-V2IP_VIDEO_WALL are served by loadable modules rather than by MatrixOS. A model
-may not load modules at all, may not ship that one, or may not support it, so
-"no handler" is a live state on current firmware rather than a legacy concern.
-None of the three replies even where it is handled: the handlers return
-nothing, there is no ack and no error frame. So a send that succeeds means a
-frame left the socket and nothing more, and "worked", "the module is absent",
-"this model cannot do it", "the target uid was not the receiver's" and "the
-payload was short" are one observation from outside. Read the state back to
-learn which - over HTTP for the video wall, which reports nothing on the wire.
+**Never widen a field to swallow its padding, and never assume a padding or
+reserved byte is zero.** Mask to the field's real width. Padding carries live junk
+on some senders and defined zeros on others, and the two look identical.
 
-`0x42` V2IP_MULTIVIEWER carries sixteen sub-commands behind one envelope: the
-target uid, the sub-opcode at 16, seven pad bytes, and the parameters from 24.
-Sub-opcode 0 is a status report of 192 bytes; the other fifteen are settings,
-and every length check on them is a floor, so no trailing padding is owed.
+**Unknown values are unknown, never clamped.** Enums on the wire are newtypes over
+the wire integer with named constants, not Rust `enum`s with a catch-all, so an
+unrecognised value passes through as it arrived and an unhandled opcode is
+ignored. Zero is usually valid, so a confidently wrong reading is worse than an
+unrecognised one.
 
-**The multiviewer numbers its windows and inputs from zero.** Firmware's first
-input is the byte 0 and its unknown is 0xFF, which is why `MultiviewerSource`
-converts through `from_zero_based` and `to_zero_based` rather than `from_wire`
-and `to_wire`: this library counts inputs from one so that zero can mean "not
-reported", as it does for every other multiviewer setting. Get the direction
-wrong and input 1 reads as unknown, input 4 is unreachable, and a source
-naming nothing switches to input 1. The status report's `audio_source` (179),
-`video_sources` (182-185) and `rc_route` (186) are the zero-based fields; every
-other enumerated byte in it is one-based with zero for "nothing read back yet".
+**Malformed input must not panic.** No direct slice indexing and no `unwrap` on
+received bytes; a frame that does not parse is dropped.
 
-**A multiviewer drops a setting it does not accept without saying so, so check
-the range before sending.** view mode 1-8, pip size 1-3, pip position 1-4,
-aspect 1-2, output mode 1-14, IT-content 1-2, HDCP 1-3 where 3 is off, EDID
-template 1-19, volume 0-100, and any window, input or source index 0-3. Volume
-is the one worth naming, because what a device does with a bad one moved: from
-module version 2026083100 the whole frame is dropped, and before that the
-volume alone was dropped while the mute byte beside it still landed. Unlike
-the video wall, a value that gets past the range check but not past the
-hardware is never persisted - the module applies first and stores only on
-success - so the client-side check is for the caller's sake rather than the
-device's.
+**A request addressed to one device is state to every device that sees it.** What a
+handler writes to the registry follows what the mesh does with the frame, not
+whether the frame is a request.
 
-**Never send a window index equal to the number of windows the layout shows.**
-Firmware before module version 2026083100 validates the index with `<=`, then
-indexes a four-entry array and a twelve-byte table with it, so the frame one
-past the last window corrupts state on the receiving multiviewer. The count
-comes from `hw_view_mode` at status offset 168 - 1 single, 2 pip, 3 two, 4
-three, 5 four, giving 1, 2, 2, 3 and 4 windows. That field is the one to bound
-against rather than `view_mode` at 169, which is derived from it and reads zero
-when the scaler readback that refines it fails. Before any status report has
-arrived the count is unknown and window 0 is the only safe index, which is what
-`Remote::set_multiviewer_video_source` falls back to.
-
-A multiviewer answers no `0x42` command directly, but a successful setting
-schedules a full status broadcast about 100ms later - except for `route_rc` (6)
-and `config_source` (14), which trigger none. So "set, then wait for the
-status" confirms every setting but those two, and there is no way to ask for a
-status: the opcode has no request sub-command. `config_source` never checks
-that a uid names a device on the mesh; an all-zero uid clears the mapping from
-module version 2026083100 and is stored as a mapping on anything older.
-
-**A mapping in a status report is what was last mapped, not what is mapped**,
-on any multiviewer older than module version 2026083100: removing a mapping
-left the previous uid in `mappings[n]` at status offset 40+n*16 rather than
-zeroing it, by any route and not only over the mesh. From 2026083100 a cleared
-input reads all-zero there, which is also the only way to tell a firmware that
-cleared a mapping from one that stored the zero uid as a mapping.
-`config_source` is one of the two sub-commands that schedule no status
-broadcast, so that reading arrives on whatever prompts the next one.
-
-`0x49` V2IP_VIDEO_WALL is owned by a loadable module rather than MatrixOS, and
-unlike `0x3C` it **replaces** rather than merges: no field carries a validity
-marker, and a zero width or height means "clear the wall", not "unset". A revert
-carries no window at all. `0x40` V2IP_TILING is not a substitute — on a sink
-running that module a `0x40` write is transient, because the module's reconciler
-pushes its own window back within about a second.
-
-**Validate a `0x49` window before sending it: nothing on the mesh will tell
-you.** There is no reply on this opcode, so an accepted window and a refused
-one look identical from here and only a state read distinguishes them. A sender
-must check `pos_x` a multiple of 64 and `width` a multiple of 4 - the buffer
-start has to be aligned and the pipeline moves four pixels per clock - `width`
-and `height` at least 64, which is the scaler's minimum, and `pos_x + width`
-and `pos_y + height` within the raster. `pos_y` and `height` have no alignment
-constraint. A zero width or height is a clear rather than a violation, and `op`
-is 0 preview, 1 store or 2 revert, with anything else discarded in silence. A
-live unit reports the alignments back, so they can be read rather than
-hardcoded: they follow the module's hardware design and can move with it.
-`VideoWallWindow::validate` is where this library does it, and it runs on the
-one send behind all three video-wall methods so that an operation added later
-cannot reach the wire without it.
-
-Validating matters more than a rejected frame would, and how much more depends
-on what the sink is running. A module before v2026083100 checked the geometry
-only on its own HTTP path, so a window arriving on the mesh was written to
-persistent configuration before anything tried to apply it; the video
-processor's later refusal did not undo that write, and the bad window then
-survived a reboot and was re-offered on every stream restart until some other
-write replaced it. From v2026083100 the check sits at the point both paths pass
-through, so a bad frame is rejected before anything is stored, and a unit
-already holding an out-of-spec window drops it at boot and falls back to the
-full frame. Fielded units run both, so a sender still owns the constraints.
-
-A build predating the opcode drops the frame on the opcode bound: a receiver
-rejects anything at or above its own build's opcode count, and a build without
-this opcode counts `0x49` of them. That build also caps at 0x27 while this
-opcode stamps 0x28, so the protocol gate here refuses the send before it
-reaches the wire. Both are visible outcomes rather than silent ones, and they
-bound the hazard above to builds that know the opcode.
-
-The boundary is not something to branch on, and the version above is the
-module's rather than the firmware's. The guard lives in a loadable module that
-can be hot-reloaded independently of any firmware upgrade, so a firmware
-version implies nothing about which module is loaded. A unit's HTTP module list
-does report it, in hex: `v2ipwall v0x78c3931c` is the same 2026083100 written
-the other way, which is worth knowing as a pair because meeting one form after
-the other reads as two different builds. Nothing on the mesh reports it at all,
-so from the wire it is invisible.
-
-No version could gate this correctly in any case. A unit may load no video-wall
-module - its model may not include one or may not support it, and a load that
-fails is rejected without a log line - so "guarded", "unguarded" and "no handler
-at all" are three states with one appearance from outside, and the third is
-legitimate rather than a fault. An absent module ignores a window exactly as
-silently as a present one refuses a bad one. Validate unconditionally; the
-version dates the behaviour for a reader and is not an input to code.
-
-Length is checked twice, and only the second check is a floor. The receive path
-requires the header's declared payload length plus the header size to equal the
-datagram that actually arrived, before any handler runs; a frame that fails
-that is dropped outright and in silence, which makes a wrong length field an
-easy mistake with no symptom. What is a floor is each handler's own check
-against its struct: a payload longer than the handler expects is accepted with
-the excess ignored, so that the payload can grow.
-
-So a frame being accepted says only that its envelope was self-consistent and
-its payload met a minimum. It is no evidence that the layout was right.
-`build_frame` declares exactly what it appends, so everything this library
-sends satisfies the first check by construction. On receive it is more
-permissive than the firmware: a frame whose declared length disagrees with what
-arrived is not rejected here, and the payload is clamped to whichever is
-shorter.
-
-`0x14` AUDIO_SET_VOLUME reserves 0xFF in each of its volume and mute fields for
-"leave this one alone", and the right channel also reads it as "no such
-channel". It is not a level and not a mute state: sent as the mute byte it
-means the sender is not touching mute, while zero there means unmute. A
-decoder that reads it as a bitmask reports both channels muted, which is the
-opposite of what arrived.
-
-`0x07` DEV_EDID is answered only by V2IP hardware. A matrix or an amplifier
-registers no handler for it, so a request reaches them, is accepted and is
-never answered, at any stamp. Silence from one of those is the end of the
-exchange rather than a reply still in flight.
-
-`0x08` MX_ROUTE is decoded but no MatrixOS build transmits it: the firmware's
-route-broadcast helper is defined and never called. The decoder still has to be
-right for third-party controllers, but do not expect one on a live mesh, and do
-not treat its absence as a bug.
+**A frame from a sender with no device record is dropped before its handler**,
+hello and discover excepted — they are what closes that window.
 
 ## Invariants
 
-**Byte layouts must match the firmware exactly.** This talks to embedded devices
-that will not be updated to suit us.
+**One frame constructor and one socket write, both private to `wire`.** A send
+that skips the protocol gate cannot be written, because there is nothing outside
+`wire` to call. Do not open a `pub(crate)` escape hatch; that converts a compile
+error into a test's job. Payload builders are `pub(crate)` and reach no socket.
 
-**Never decode by overlaying a `#[repr(C)]` struct.** Packed structs are the
-exception in this protocol, not the rule: the firmware declares its protocol
-structs packed, 8-byte-aligned and plain by turns, and only the packed ones can
-be decoded by summing field widths - and only where every member is a scalar, a
-byte array, or itself packed. Packing an outer struct sets where its members are
-placed, at alignment 1; it does not repack a nested aggregate or remove that
-aggregate's own internal padding, so a member built of padded members keeps its
-full size while sitting at an unaligned offset. Every packed struct on this wire
-happens to satisfy that today, which is exactly why the assumption survives
-untested. Elsewhere the compiler inserts padding. Read
-each field explicitly at an offset derived from the declaration. Two recurring
-traps:
-
-- Tick timestamps are `uint_fast32_t`, so they align to 4 and pad whatever
-  precedes them.
-- Where a variable-length tail follows a struct, the tail starts after the
-  struct's *own* trailing padding, not at the end of its last field (`0x48`
-  RC_IR_TX: timings at 36, not 34).
-
-**A payload is the size of its struct, not the sum of its fields.** A receiver
-tests the payload length against that whole size before it reads anything, and
-an 8-byte-aligned struct's trailing padding counts toward it. A frame that is
-short is dropped before its handler, and nothing here is acknowledged, so a
-command that never arrived is indistinguishable from one accepted and ignored.
-Five of the payloads this library builds are longer than their fields: `0x22`
-CHANGE_BAY_NAME is 40 for 34, `0x3D` AMP_ZONE_SETTINGS 56 for 54, `0x14`
-AUDIO_SET_VOLUME 24 for 21, `0x27` BAY_HIDE 24 for 19, `0x34` BAY_EDID_PROFILE
-24 for 18. Size a new builder with the compiler rather than by counting fields.
-
-**Never widen a field to swallow its padding, and never assume a padding or
-reserved byte is zero.** Cortex-M builds with `-fshort-enums`, so a plain enum on
-the wire is often one byte followed by padding — and the firmware `memcpy`s
-uncleared stack locals over payloads, so that padding carries live junk that
-differs frame to frame. The offsets still line up either way, which is why this
-survives a cross-check between two implementations: only the field itself is
-wrong, and it reads as a value that changes while the setting does not. Mask to
-the field's real width rather than asserting the neighbouring bytes are zero
-(the RC target enum at `0x45`+16 is one byte, not four).
-
-**Malformed input must not panic.** Anything on the wire is attacker- or
-bug-shaped. No direct slice indexing and no `unwrap` on received bytes; a frame
-that does not parse is dropped.
-
-**Unknown values are unknown, never clamped.** Enums are newtypes over the wire
-integer with named constants, not Rust `enum`s with a catch-all — an unrecognised
-value passes through as it arrived, and an unhandled opcode is ignored. Zero is
-usually valid, so a confidently wrong reading is worse than an unrecognised one.
-The protocol is meant to stay compatible in both directions, so a driver must not
-break over a firmware update. Auditing this by searching for masks does not work:
-extracting a bit field and folding a range look identical. The mask is almost
-always right — look at what the extracted value is then converted into.
-
-**A request addressed to one device is state to every other device.** The
-firmware's own receiver writes an observed `0x24` V2IP_MANUAL_SRC_SWITCH into
-its record of the addressee, so decoding it as a request alone would leave this
-library the only participant on the mesh that does not know where a sink was
-pointed. What a handler writes to the registry follows what the mesh does with
-the frame, not whether the frame is a request. The addressee acknowledges
-nothing, so a route it refused reads back the same as one it took until its next
-configuration report, which it sends on its own schedule.
-
-**Do not mirror a firmware receiver without asking whether its handling is
-defensible.** Firmware predating the fix builds `0x3C` from an uninitialised
-scaling-config struct and ORs flags onto stack garbage, so on a receiver-capable
-unit bits 2..6 of the scaling flags are noise and the valid-mode bit can be set
-spuriously, leaving the mode and refresh behind it uninitialised. The firmware's
-own receiver copies the whole top nibble; this library carries bit 7 alone,
-because caching noise as though it meant something is worse than matching the
-reference.
-
-**One frame constructor and one socket write, both private to their module.**
-`wire::frame::build_frame` and `Conn::send` are reachable only from inside
-`wire`, and `Tx::send` is the only thing between them. A send that skips the
-protocol gate cannot be written, because there is nothing outside `wire` to
-call. Do not open a `pub(crate)` escape hatch — that silently converts a
-compile error back into a test's job. The payload builders are `pub(crate)`
-and are not an exception: they assemble bytes and can reach no socket.
-
-Put a check at the choke point rather than at each site. The per-site version of
-this, in the client this was ported from, missed the one method that built its
-own frame while its siblings delegated to a gated one, and shipped. Note what the
-ordering costs: the gate runs after each method's own preconditions, so a call
-that fails both reports the precondition. That is the more useful error, but it
-means a test has to drive a method far enough to actually transmit before it
-proves anything about the gate.
-
-**A send names its recipient, in a word.** `Tx::send` takes an `Addressee`,
-whose `Broadcast` variant is the only way to send without naming a device, so
-"send to everyone" cannot be confused with a target nobody filled in. A nilable
-target would leave that difference to a test that reads the source; the type
-answers it, and so does the choke point above. Their absence from the suite is
-not a hole.
-
-**An opcode with no table entry is refused, not given a default.** There is no
-safe number to invent for one. Too high and every receiver below it drops the
-frame, which is what a blanket "the version we speak" does; too low and a
-receiver accepts a frame it will read at the wrong layout. Not knowing an
-opcode's version means not knowing its payload contract either, so the stamp is
-the smaller of the two things a default would be guessing at. A test requires
-every declared opcode to have an entry and every entry to name a declared
-opcode, so the refusal stays unreachable.
-
-**The gate checks what is stamped.** A receiver drops any frame stamped above
-its own version, so `stamp_for` decides both the header field and the floor the
-addressee is measured against, and one value has to serve both. It returns the
-opcode table entry for every opcode today. The indirection stays because the
-two questions differ even while the answers agree, so an opcode that ever needs
-its own stamp changes one function and the gate follows.
-
-`V2IP_MULTIVIEWER` was stamped at 0x20 rather than its table's 0x16, matching
-the reference Python library. That was a pure loss: the module receiving it
-dispatches on payload length and never reads the stamp, so the raised stamp
-enabled nothing and was refused by every receiver capped between 0x16 and 0x1F.
-Where the reference clients and the firmware disagree, the firmware wins, and
-this is the one vector in `wire/vectors.rs` whose header deliberately differs
-from the Python client's.
+**An opcode with no table entry is refused, not given a default.** Too high and
+every older receiver drops the frame; too low and one accepts a frame it reads at
+the wrong layout. A test requires every declared opcode to have an entry and every
+entry to name a declared opcode.
 
 **Core is `#![forbid(unsafe_code)]`.** All `unsafe` lives in the FFI crate.
 
-**Every `extern "C"` entry point wraps its body in `catch_unwind`.** Unwinding
-into C is undefined behaviour.
+**Every `extern "C"` entry point wraps its body in `catch_unwind`.** Unwinding into
+C is undefined behaviour.
 
-**No `extern "C"` entry point comes out of a macro.** cbindgen parses the source
-and expands nothing, so a macro-generated entry point is in the library and
-absent from the header: callers link against a symbol the header never
-declared. Shared bodies factor into an ordinary function the entry points call.
+**No `extern "C"` entry point comes out of a macro.** cbindgen expands nothing, so
+a macro-generated entry point is in the library and absent from the header. Shared
+bodies factor into an ordinary function the entry points call.
 
-**The generated header is checked in, and CI fails on a diff.** Regenerate it
-with `scripts/gen-header.sh`. Third parties read `include/mx_remote.h`, and one
-that lags the library points them at an API that is not there.
+**The generated header is checked in and CI fails on a diff.** Regenerate it with
+`scripts/gen-header.sh`. `scripts/check-abi.sh` proves every exported symbol
+reached it, which a diff alone cannot.
 
-**Every exported symbol is declared in the header, and CI proves it.**
-`scripts/check-abi.sh` reads the archive with `nm` and compares. A diff against
-the generated header cannot catch the macro case above, because a header
-missing an entry point is exactly what cbindgen produces for one.
-
-**The C++ header's event lists are size-checked against the C table.** A
-`static_assert` in `include/mx_remote.hpp` compares the table's size against
-what its own lists count, because an event the lists miss would be silently
-dropped by every C++ handler and nothing else would notice.
+**The C++ header's event lists are size-checked against the C table**, because an
+event the lists miss would be dropped silently by every C++ handler.
 
 **No async runtime.** A receive thread and a timer thread over `Arc<Mutex<_>>`.
 Staying synchronous is what keeps the C ABI trivial.
 
 **Events are collected under the lock and dispatched after it is dropped.** A
-handler is free to call back into the library — reading the state its event
-describes is the ordinary thing to do with one — and would deadlock against a
-guard still held. Nothing in the type system says so; losing this is a runtime
-hang, not a compile error.
+handler may call back into the library, and would deadlock against a held guard.
 
-**Public API carries `#![deny(missing_docs)]`.** Third parties read the docs, not
-the source.
+**Public API carries `#![deny(missing_docs)]`.** Third parties read the docs.
 
-Every source file starts with the two-line author/copyright header followed by a
-blank line.
+Every source file starts with the two-line author/copyright header, then a blank
+line.
 
-## Working on the protocol
+## Verifying a change
 
-**Ask where a wire value first becomes a typed thing, before asking where it is
-decoded.** Those are rarely the same file, and the narrowing boundary is where
-unknown values get lost — so auditing decoders alone systematically misses it.
-Keep the raw value and convert late, which is what lets an unrecognised value
-survive to the caller.
+**Show the test fail.** Undo the fix, watch the test go red, restore it. A check
+that has never been able to fail is unmeasured, not passing.
 
-**Where the compiler can only get you halfway, assert the rest against the
-source.** A type can force a decision to be made without forcing it to be made
-correctly. A test that reads the crate's own source and checks each site must
-also fail if its own pattern stops matching, since a regex that matches nothing
-reports every file clean.
+**A tool that perturbs code must assert its perturbation landed**, and must abort
+on a site its pattern cannot address rather than print a skip — a skipped site
+reports as covered. Record which named test caught each perturbation: one that
+could fail for reasons of its own credits coverage that is not there.
 
-**A skip is not a pass, and a graceful degradation can hide the failure the test
-exists to catch.** A socket test that skips when nothing arrives cannot fail in
-the direction it is looking: a library that sent nothing produces a skip. Prove
-the host's multicast loopback with a probe first; once the probe lands, silence
-is the library's fault. Where a test tolerates an environment, make the
-environment prove itself rather than inferring it from the absence of a result.
+**Offset and width are separate failure modes.** Distinct values per field catch a
+read at a neighbour's offset; values a narrowed read cannot reproduce catch a
+wrong width. A fixture with distinct-but-small values covers one and looks like it
+covers both.
 
-**Fixtures fail by being too simple to reach the thing under test.** Zero
-padding hides a wrong field width; a bare bay fails a method's preconditions
-before it can reach the send being tested; a one-sided assertion passes for a
-guard that always fires. In each case the test is green because it never arrives
-at the code it names, and simplicity is exactly what makes such a fixture look
-trustworthy. Build the fixture that reaches the thing, then check it still fails
-when the thing is broken.
+**Build payloads with `testing::poisoned`, not zeros.** A zero-filled fixture
+cannot catch a field read at the right offset and the wrong width. Poison is the
+default for padding, not a blanket substitution: a byte a sender defines as zero
+means something, and poisoning it tests something else.
 
-**A fixture must not supply the precondition the code is meant to establish.**
-This is the harder sibling of the rule above: the fixture is not too simple, it
-is too helpful, and it quietly removes the case the test exists to cover. Two
-that shipped here. The legacy network-report fixture built one buffer long
-enough for every version and fed it at each of them - a length no device sends,
-and the only length at which a single wrong floor works, so the floor could not
-be caught being wrong. A send exercised only against a device that had already
-received this client's hello proves nothing about the send, because a device
-drops frames from a uid it has no record of, and the harness had already done
-the introducing that the code under test is responsible for.
+**A fixture must not supply the precondition the code is meant to establish**, and
+one that is too helpful is harder to spot than one that is too simple.
 
-Ask what the setup does for the code, and whether a caller gets it for free.
-Where it does not, the fixture has to arrive the same way a caller would.
+**Ask of a fixture whether it predates the decoding it checks.** The vectors in
+`wire/vectors.rs` do, which is what makes them evidence. One composed while the
+decoder was written rules out a slip, never a shared misreading, and agreement
+with it shows only that two things built from one description match. Say which
+kind a fixture is where a reader meets it.
 
-**A scan has five separate questions, and fixing one does not answer the
-others.** Each of these was a real hole in the client this was ported from,
-found only when someone named it:
-
-1. *Does the pattern still match?* — assert a minimum number of sites, or a
-   rename leaves it matching nothing and reporting every file clean.
-2. *Does every match get read?* — a site the detailed pattern cannot parse must
-   fail with its location, never be skipped.
-3. *Does every site get matched?* — find sites with a loose pattern too, and
-   require each to be readable by the detailed one.
-4. *Does this check still look at anything at all?* — and this one recurses. An
-   assertion phrased as "not too many" passes when the search finds nothing.
-   Phrase every check so that a search returning nothing fails it.
-5. *Is the guarded thing still the only way through?* — a send scan assumes one
-   function builds every frame and one writes every socket. Count them: a second
-   builder or a second write bypasses the gate, and the scan cannot see it,
-   because it only inspects sends it already recognises.
-
-**A tool that perturbs code and reports on the result must assert that its
-perturbation landed.** Such tools lie by silently not applying — a regex that
-matches a type name instead of an offset, a replace that hits the wrong
-occurrence of a repeated literal, a removal whose pattern did not match at all.
-Every one written for this protocol has done it at least once, reporting
-"nothing noticed this change" when the truth was "there was no change". A clean
-sweep from a tool never shown to fail is unmeasured, not clean.
-
-**Every layer that asserts something can encode the same mistake — including the
-one added to catch it.** This has bitten in a decoder, in a fixture written to
-pin that decoder, and in a hand-check written to validate the fixture. Treat a
-red test as evidence that the test and the code disagree, not that the code is
-wrong, and check which one moved.
-
-**A symptom too cheap for the defect means something is compensating.** When a
-decoder disagrees with its struct, that tells you a field is misnamed — not yet
-that behaviour is broken. Check the consumers before moving offsets: two errors
-in the same direction cancel, and there the fix is to move the decoder and every
-consumer together, since correcting the offsets alone introduces the bug. A
-four-field reversal that shows up only as a backwards log line is the tell.
-
-**Assert both directions of a guard, and pick an input that can actually trip
-it.** A test that only checks the refusal passes for a guard hardcoded to
-refuse, and for a call failing for some unrelated reason — the paired "and this
-one is allowed" is what makes the refusal mean what it says. Choosing the input
-matters as much: a protocol-floor test using a device reporting 0x11, which sits
-at or above most opcodes' floors, asserts a refusal that should never have
-happened. An input that cannot trip the thing under test looks exactly like
-coverage.
+**A prose claim about the wire has no failing state.** Nothing in the suite
+contradicts a doc comment that states the wrong thing, it survives every sweep,
+and it is read before the code. Only the firmware, a captured frame, or another
+implementation that asked can catch it.
 
 ## Commands
 
@@ -595,54 +198,17 @@ cargo build -p mx-remote-ffi && ./scripts/check-abi.sh && make -C examples
 # Both crates reach their licences and the C headers through symlinks to the
 # repository root, which only packaging resolves. Packaging them together is
 # what serves mx-remote-ffi's dependency from the sibling packaged beside it,
-# rather than from a crates.io that does not carry it yet. Packaging a
-# workspace this way wants a recent cargo, newer than the MSRV the library
-# itself builds on.
+# rather than from a crates.io that does not carry it yet. Packaging a workspace
+# this way wants a recent cargo, newer than the MSRV the library builds on.
 cargo package --workspace
 ```
+
+Run the gates on the MSRV toolchain as well as the default one, and give it its
+own `CARGO_TARGET_DIR`: sharing one directory between toolchains corrupts crate
+metadata, which surfaces as an unrelated build failure.
 
 ## Publishing
 
 Do not publish to crates.io, push, or open a pull request until a human has
 reviewed and vouched for the changes. A crates.io release cannot be withdrawn,
 and this crate is the public face of the protocol.
-
-## Auditing the decode
-
-Ask what an instrument cannot say before believing what it does. Four of them,
-each blind to something the next one sees:
-
-| check | finds | blind to |
-|---|---|---|
-| offset-mutation sweep | fields no test exercises | wrong width, wrong branch |
-| `poisoned()` fixtures | fields read at the wrong width | fields no test reaches |
-| coverage over the handlers | opcodes nothing runs at all | anything a test runs but never asserts |
-| builder/decoder round trip | fields decoded at the right offset but attributed to the wrong thing | a builder and decoder that are wrong *together* |
-
-A handler with no test reports clean from the first two for the same reason an
-empty file does. The round trip is the only one that tests *meaning* rather than
-position: a source read as a target, or a left delay as a right one, is
-positionally perfect and semantically inverted, and only a disagreement between
-the two halves of the library exposes it. Where both halves are wrong together
-it is clean, and nothing but an external reference closes that — the byte-exact
-vectors in `wire/vectors.rs`, generated from the Python client rather than from
-this one, or a captured frame.
-
-Build test payloads with `testing::poisoned`, not a zero-filled buffer. A
-zero-filled fixture cannot catch a field read at the right offset but the wrong
-width: the padding beside it is zero, so the widened read returns the same answer
-and every assertion still passes. That is the class an offset-mutation sweep
-structurally misses — mutating slice bounds tests whether a *shifted* read is
-caught, and a wrong-width read is not shifted.
-
-Poison is the default for padding, not a blanket substitution. Bytes the sender
-leaves undefined and bytes it defines as zero look identical in a fixture and
-mean opposite things: a video wall revert carries a genuinely zero window on
-purpose, and poisoning it would test something else.
-
-A fixture also hides a shift whenever the neighbouring bytes carry the same
-value: adjacent fields set to the same number, a short NUL-terminated string in a
-wider field, or a port whose high byte is zero. Give every field a distinct
-value, and assert that the bays a frame did *not* address were left alone — two
-decode bugs in the ported client survived because the assertion passed on state
-an earlier frame had set.
