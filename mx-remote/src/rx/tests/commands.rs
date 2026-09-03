@@ -1064,6 +1064,102 @@ fn a_report_stamped_above_this_clients_own_version_is_still_read() {
     );
 }
 
+/// The value this fixture writes at payload offset `off`.
+///
+/// Distinct per offset, so a field read four bytes out returns a wrong number
+/// rather than a neighbour holding the same one. Above `0xFFFF`, so a four-byte
+/// read narrowed to two returns a wrong number as well. Those are separate
+/// failure modes over one fixture, and small distinct values pin only the
+/// first: every counter here fits four bytes, so a narrowed read of a small one
+/// returns the same answer.
+fn at(off: u32) -> u32 {
+    0x0037_0000 + off
+}
+
+#[test]
+fn every_counter_is_read_at_its_own_offset() {
+    let mut h = command_device(88);
+
+    // All four counter blocks at once. Asserting a field against the same
+    // field of another block cannot catch a shift - two reads off one wrong
+    // offset agree with each other - so every counter is checked against the
+    // absolute value its own offset carries.
+    let mut p = poisoned(152);
+    for off in (0..128).step_by(4) {
+        assert!(
+            at(off as u32) > u32::from(u16::MAX),
+            "a counter that fits in two bytes cannot catch a narrowed read"
+        );
+        p[off..off + 4].copy_from_slice(&at(off as u32).to_le_bytes());
+    }
+    p[80] = V2ipDecoderState::HEALTHY.to_wire();
+    p[124] = V2ipDecoderState::BAD.to_wire();
+    p[128] = 0; // the decoder block is not what this test is about
+    h.feed(op::V2IP_STATS, &p);
+    let s = h.device().v2ip_stats.expect("no stats");
+
+    assert_eq!(
+        (
+            s.tx.video,
+            s.tx.audio,
+            s.tx.anc,
+            s.tx.stream_down,
+            s.tx.overflow
+        ),
+        (at(0), at(4), at(8), at(12), at(16))
+    );
+    assert_eq!(
+        (
+            s.tx_per_minute.video,
+            s.tx_per_minute.audio,
+            s.tx_per_minute.anc,
+            s.tx_per_minute.stream_down,
+            s.tx_per_minute.overflow
+        ),
+        (at(20), at(24), at(28), at(32), at(36))
+    );
+    for (block, base, state) in [
+        (s.rx, 40, V2ipDecoderState::HEALTHY),
+        (s.rx_per_minute, 84, V2ipDecoderState::BAD),
+    ] {
+        assert_eq!(
+            (
+                block.video_total,
+                block.video_dropped,
+                block.video_seq_errors,
+                block.wdt_timeout,
+                block.audio_total
+            ),
+            (
+                at(base),
+                at(base + 4),
+                at(base + 8),
+                at(base + 12),
+                at(base + 16)
+            ),
+            "receive block at {base}"
+        );
+        assert_eq!(
+            (
+                block.audio_dropped,
+                block.audio_seq_errors,
+                block.anc_total,
+                block.anc_dropped,
+                block.anc_seq_errors
+            ),
+            (
+                at(base + 20),
+                at(base + 24),
+                at(base + 28),
+                at(base + 32),
+                at(base + 36)
+            ),
+            "receive block at {base}"
+        );
+        assert_eq!(block.decoder_state, state, "receive block at {base}");
+    }
+}
+
 #[test]
 fn half_a_geometry_is_not_a_geometry() {
     let mut h = command_device(89);
