@@ -914,6 +914,40 @@ fn an_out_of_spec_video_wall_window_is_refused_before_it_is_sent() {
         );
     }
 
+    // A window naming no raster is contained in nothing, and the sink skips the
+    // containment check rather than refusing it - so refusing it here would
+    // withhold a window the sink takes. Every other rule still applies to it,
+    // which is what separates this from a cleared window.
+    for window in [
+        VideoWallWindow {
+            raster_w: 0,
+            ..good
+        },
+        VideoWallWindow {
+            raster_h: 0,
+            ..good
+        },
+        VideoWallWindow {
+            raster_w: 0,
+            raster_h: 0,
+            ..good
+        },
+    ] {
+        assert!(
+            f.remote.store_video_wall(sink, window).is_ok(),
+            "a window naming no raster was refused: {window}"
+        );
+    }
+    refused(
+        "an unaligned origin is still refused without a raster",
+        VideoWallWindow {
+            pos_x: 32,
+            raster_w: 0,
+            raster_h: 0,
+            ..good
+        },
+    );
+
     // A revert is not geometry and is never refused for it.
     assert!(f.remote.revert_video_wall(sink).is_ok());
 }

@@ -340,9 +340,11 @@ pub struct VideoWallWindow {
     /// Window height, at least [`VIDEO_WALL_MIN_SIZE`] unless it is zero. No
     /// alignment constraint.
     pub height: u16,
-    /// Active picture width the window was measured against.
+    /// Active picture width the window was measured against. Zero states no
+    /// raster, which is accepted and skips the containment check.
     pub raster_w: u16,
-    /// Active picture height the window was measured against.
+    /// Active picture height the window was measured against. See
+    /// [`Self::raster_w`].
     pub raster_h: u16,
 }
 
@@ -376,16 +378,21 @@ impl VideoWallWindow {
         self.width == 0 || self.height == 0
     }
 
-    /// Checks the geometry the sink is not guaranteed to check itself.
+    /// Checks a window against the rules the sink applies to it.
     ///
-    /// The three alignments follow the sink's hardware and a live unit reports
-    /// them over HTTP, so a caller with access to one can read them rather
-    /// than trust the constants here. The containment rule has no such source:
-    /// it is checked by the sink's own HTTP path and by nothing on the mesh
-    /// path, at any version.
+    /// Every rule here matches one the receiver enforces, and is worth applying
+    /// anyway: a window the sink refuses is refused in silence. It logs
+    /// locally, keeps whatever it had, and answers nothing, so a caller that
+    /// skipped this would see a successful send and no wall.
+    ///
+    /// The three alignments follow the sink's hardware - the horizontal step
+    /// from its framebuffer's burst width, the width step from the pixels its
+    /// pipeline moves per clock, the minimum from its scaler - and a live unit
+    /// reports them over HTTP, so a caller with access to one can read them
+    /// rather than trust the constants here.
     ///
     /// A cleared window passes: zero is the protocol's word for "clear", not a
-    /// window too small to draw.
+    /// window too small to draw. So does a window naming no raster.
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.is_cleared() {
             return Ok(());
@@ -399,8 +406,17 @@ impl VideoWallWindow {
         if self.width < VIDEO_WALL_MIN_SIZE || self.height < VIDEO_WALL_MIN_SIZE {
             return Err("neither side of a video wall window may be smaller than 64");
         }
+        // A window naming no raster is contained in nothing, and the receiver
+        // skips this check rather than refusing it. Refusing it here would stop
+        // a caller sending a window the sink accepts - but such a window cannot
+        // be moved onto a later source, since nothing records what it was drawn
+        // against.
+        if self.raster_w == 0 || self.raster_h == 0 {
+            return Ok(());
+        }
         // Widened, because a window running off the raster is exactly the case
-        // where a u16 sum would wrap and read as containment.
+        // where a u16 sum would wrap and read as containment. The comparison is
+        // strict, so a window filling its raster exactly is contained.
         if u32::from(self.pos_x) + u32::from(self.width) > u32::from(self.raster_w)
             || u32::from(self.pos_y) + u32::from(self.height) > u32::from(self.raster_h)
         {

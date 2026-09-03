@@ -847,7 +847,16 @@ impl Remote {
     /// The one send behind the three video-wall methods.
     ///
     /// Validation sits here rather than in each of them, so an operation added
-    /// later cannot reach the wire without it.
+    /// later cannot reach the wire without it, and is skipped for a revert
+    /// because the sink ignores the window on that operation rather than
+    /// checking it.
+    ///
+    /// Passing it is not proof a wall appeared. Two things the sink refuses
+    /// afterwards are equally silent: a window it will not draw, which it logs
+    /// and drops, and a sink whose image has no tiling support at all, which
+    /// takes the window into its own state and then fails to push it to the
+    /// hardware. Neither reaches the wire, so read the sink back over HTTP to
+    /// learn a window landed.
     fn set_video_wall(
         &self,
         sink: DeviceUid,

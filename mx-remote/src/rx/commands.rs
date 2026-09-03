@@ -565,21 +565,16 @@ pub(super) fn blacklist(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>, reg
 /// clears a wall that should have been restored. Suspect this layout on a wall
 /// that forgets its setting across a reboot, not on one that is visibly
 /// misplaced.
-/// Payload length of a video-wall command, and the version the opcode was
-/// introduced at.
-///
-/// The floor is usable here because the opcode did not exist below it, so no
-/// sender stamps lower - which is what a floor needs, rather than the version
-/// the layout was last changed at. Most opcodes do not have that property.
+/// Payload length of a video-wall command: 29 bytes of fields in a 4-aligned
+/// struct, and the receiver requires all 32 and ignores any tail.
 const VIDEO_WALL_SIZE: usize = 32;
-const VIDEO_WALL_PROTOCOL: u16 = 0x28;
 
 pub(super) fn video_wall(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
     let p = rx.frame.payload();
-    if rx.frame.protocol() < VIDEO_WALL_PROTOCOL || p.len() < VIDEO_WALL_SIZE {
+    if p.len() < VIDEO_WALL_SIZE {
         return;
     }
     ev.push(Event::VideoWallCommand {

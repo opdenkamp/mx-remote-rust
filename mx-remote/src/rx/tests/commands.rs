@@ -1297,26 +1297,26 @@ fn an_idle_sink_reports_whatever_geometry_it_still_detects() {
 }
 
 #[test]
-fn a_video_wall_command_needs_the_version_that_introduced_it() {
-    // The opcode did not exist below this version, so nothing stamps lower and
-    // the floor costs no sender anything. That is what makes a floor usable
-    // here and not on most opcodes, where the row was fixed long before the
-    // layout settled and a floor would drop every frame.
+fn a_video_wall_command_is_read_at_any_stamp() {
+    // Deliberately no version floor. The module that owns this opcode never
+    // reads the stamp - its gates are the target uid and the length - and its
+    // answer to a MatrixOS too old to carry the opcode is to fail registration
+    // at load, not to check a version per frame. A floor here would rest on
+    // nothing that module could corroborate, and it fails in the direction that
+    // costs: too low is free, too high drops every frame from a sender nobody
+    // is testing against.
     let mut h = command_device(92);
     let mut p = poisoned(32);
     p[0..16].copy_from_slice(uid_n(92).as_bytes());
 
-    h.feed_proto(op::V2IP_VIDEO_WALL, 0x27, &p);
-    assert!(
-        !h.saw(|e| matches!(e, Event::VideoWallCommand { .. })),
-        "a command stamped below the version the opcode was introduced at was read"
-    );
-
-    h.feed_proto(op::V2IP_VIDEO_WALL, 0x28, &p);
-    assert!(
-        h.saw(|e| matches!(e, Event::VideoWallCommand { .. })),
-        "a command at the introducing version was refused"
-    );
+    for stamp in [0x00, 0x27, 0x28] {
+        h.events.clear();
+        h.feed_proto(op::V2IP_VIDEO_WALL, stamp, &p);
+        assert!(
+            h.saw(|e| matches!(e, Event::VideoWallCommand { .. })),
+            "a wall command stamped {stamp:#04x} was dropped"
+        );
+    }
 }
 
 #[test]
