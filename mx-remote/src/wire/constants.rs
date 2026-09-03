@@ -7,7 +7,12 @@
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Highest MX Remote protocol version understood.
-pub const PROTOCOL_VERSION: u16 = 0x28;
+///
+/// This is what a hello announces about this client, and it is not what any
+/// frame is stamped with - `stamp_for` decides that per opcode. A peer holds
+/// it as this client's ceiling, so understating it costs whatever the peer
+/// then withholds.
+pub const PROTOCOL_VERSION: u16 = 0x29;
 
 /// UDP port used in broadcast mode.
 pub const BROADCAST_PORT: u16 = 8811;

@@ -17,7 +17,6 @@ use std::net::Ipv4Addr;
 use crate::types::{AmpZoneSettings, V2ipAudioFormat, VolumeMuteStatus};
 
 use super::bayconfig::{parse_bay_config, BAY_CONFIG_SIZE};
-use super::constants::PROTOCOL_VERSION;
 use super::enums::{
     BayFeatures, BayStatus, DeviceFeature, EdidProfile, MultiviewerViewMode, RcAction,
 };
@@ -55,10 +54,13 @@ fn uid_round_trips_through_its_dotted_hex_form() {
 
 #[test]
 fn hello_frame() {
-    // The version string is fixed data rather than the crate's own VERSION: this
-    // vector pins the payload layout, which a version that moves cannot do.
+    // The version string and the announced protocol are fixed data rather than
+    // the crate's own VERSION and PROTOCOL_VERSION: this vector pins the
+    // payload layout, which a number that moves cannot do. That this client
+    // announces PROTOCOL_VERSION is asserted where a peer decodes its hello,
+    // in runtime::tests.
     let payload = build_hello(
-        PROTOCOL_VERSION,
+        0x28,
         "TestApp",
         "P9SN00000000",
         "2.1.3",
