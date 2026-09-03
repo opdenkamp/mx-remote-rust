@@ -552,8 +552,8 @@ fn a_built_manual_switch_frame_decodes_to_what_was_built() {
 /// harness has to rewrite the sender to a peer: the library genuinely cannot
 /// decode its own sends. And once it does, the handlers split - some act on the
 /// device named in the payload, others on whoever sent the frame - so a round
-/// trip only proves something if it asserts against the one the handler
-/// actually updates.
+/// trip only proves something if it asserts against the bay the request names
+/// rather than whichever one the handler happens to update.
 #[derive(Default)]
 struct Requests {
     names: Mutex<Vec<BayNameChange>>,
@@ -633,22 +633,27 @@ fn a_control_method_decodes_back_to_what_it_asked_for() {
         "hidden did not round trip onto the addressed bay"
     );
 
-    // Keyed off whoever sent the frame, so it lands on the peer's bay.
     round_trip("set_volume", f.remote.set_volume(out, 37, Some(false)));
-    let peer_out = f.remote.bay(BayUid::new(peer, 2)).expect("no peer bay");
     assert_eq!(
-        peer_out.volume.and_then(|v| v.volume_left),
-        Some(37),
-        "volume did not round trip onto the sender's bay"
-    );
-    assert_ne!(
         f.remote
             .bay(out)
             .expect("no bay")
             .volume
             .and_then(|v| v.volume_left),
         Some(37),
-        "volume also landed on the addressed bay; this handler is sender-keyed"
+        "volume did not round trip onto the addressed bay"
+    );
+    // The sender is a different device here, and owns a bay with the same port
+    // number, so a handler reading the sender lands on this one instead of
+    // failing to land anywhere.
+    assert_ne!(
+        f.remote
+            .bay(BayUid::new(peer, 2))
+            .expect("no peer bay")
+            .volume
+            .and_then(|v| v.volume_left),
+        Some(37),
+        "volume landed on the sender's bay rather than the one it named"
     );
 }
 

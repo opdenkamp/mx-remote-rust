@@ -32,10 +32,10 @@ const RC_NARROW_SIZE: usize = 3;
 const RC_WIDE_SIZE: usize = 4;
 
 /// Payload length of the superseded `AUDIO_SET_VOLUME` layout, which addresses
-/// its target by serial and carries a one-byte bay, and of the current one,
-/// which addresses it by uid and carries two.
+/// its target by serial and carries a one-byte bay. Anything longer is the
+/// current layout, which addresses its target by uid and carries two bay bytes;
+/// that one is 24 with its tail padding and readable from 21 without it.
 const SET_VOLUME_LEGACY_SIZE: usize = 20;
-const SET_VOLUME_SIZE: usize = 24;
 
 /// The bay and the value a remote-control key or action frame carries.
 fn rc_bay_and_value(f: &Frame) -> Option<(u16, u16)> {
@@ -174,23 +174,34 @@ pub(super) fn rc_key(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 }
 
 /// Applies an `AUDIO_SET_VOLUME` request: a volume per channel and a mute
-/// bitmask, for one bay of the device that sent it.
+/// bitmask, for the bay its payload names.
 ///
-/// Two layouts, told apart by length. The superseded form names its target by
-/// serial and carries a one-byte bay; the current one names it by uid and
-/// carries two. The stamp does separate them here - it was raised in the same
-/// change, making this the one opcode whose stamp selects a layout - but the
-/// length says the same thing without trusting the sender to stamp correctly,
-/// and the two cannot be confused for each other: the first sixteen bytes are
-/// a printable serial in one and a binary identifier in the other.
+/// **The bay belongs to the device in the payload, not to the sender.** The two
+/// differ for every such frame that does anything: a controller asking for a
+/// volume owns no bay the request could be about, so reading the sender loses
+/// the setting rather than misplacing it visibly. This matches the other
+/// uid-addressed requests, `BAY_HIDE` and `V2IP_MANUAL_SRC_SWITCH`; the status
+/// frames that do file under the sender are reports a device makes about
+/// itself.
 ///
-/// Either way the volume is filed under the sender rather than under the
-/// target the payload names.
+/// Two layouts, told apart by length alone. The superseded form names its
+/// target by serial and carries a one-byte bay; anything longer is the current
+/// form, which names it by uid and carries two. Both stamp the same version, so
+/// there is no stamp to select on - unlike `NET_LINK_STATUS`, where a widened
+/// field did raise one. The two cannot be confused for each other anyway: the
+/// first sixteen bytes are a printable serial in one and a binary identifier in
+/// the other.
 pub(super) fn volume_set(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
-    let (port, at) = match f.payload().len() {
-        SET_VOLUME_LEGACY_SIZE => (f.u8(16).map(u16::from), 17),
-        n if n >= SET_VOLUME_SIZE => (f.u16(16), 18),
+    let (target, port, at) = match f.payload().len() {
+        n if n > SET_VOLUME_LEGACY_SIZE => (rx.uid_or_zero(0), f.u16(16), 18),
+        SET_VOLUME_LEGACY_SIZE => {
+            let serial = f.str(0, 16).unwrap_or_default();
+            let Some(device) = state.device_by_serial(&serial) else {
+                return;
+            };
+            (device.uid, f.u8(16).map(u16::from), 17)
+        }
         _ => return,
     };
     let Some(port) = port else {
@@ -208,7 +219,7 @@ pub(super) fn volume_set(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         muted_left: muted.map(|m| MuteStatus::from_wire(m).left()),
         muted_right: muted.map(|m| MuteStatus::from_wire(m).right()),
     };
-    if let Some(device) = state.device_mut(rx.sender()) {
+    if let Some(device) = state.device_mut(target) {
         device.apply_bay_volume(port, volume, ev);
     }
 }

@@ -176,6 +176,58 @@ fn a_volume_request_is_read_at_the_layout_its_length_says() {
         .expect("the current form did not decode");
     assert_eq!((v.volume_left, v.volume_right), (Some(55), Some(66)));
     assert_eq!((v.muted_left, v.muted_right), (Some(false), Some(true)));
+
+    // The current form stops at the mute byte, without the three bytes of tail
+    // padding that round its struct to 24. Gating on the padded size rather
+    // than on the last field would drop this, and the superseded layout is what
+    // decides the boundary: anything past its length is the current one.
+    let mut unpadded = sender.as_bytes().to_vec();
+    unpadded.extend_from_slice(&[2, 0, 77, 88, 1]);
+    assert_eq!(unpadded.len(), 21);
+    h.feed(op::AUDIO_SET_VOLUME, &unpadded);
+    let v = h
+        .bay(2)
+        .audio_volume
+        .expect("an unpadded request was dropped");
+    assert_eq!((v.volume_left, v.volume_right), (Some(77), Some(88)));
+    assert_eq!((v.muted_left, v.muted_right), (Some(true), Some(false)));
+}
+
+/// A volume request names the bay it is for, and a controller is not it.
+#[test]
+fn a_volume_request_lands_on_the_bay_it_names() {
+    let mut h = bay_state(129);
+    let target = h.sender;
+    let controller = uid_n(200);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "CTRL0001", "4.8.0", DeviceFeature::MANAGER),
+    );
+
+    // The frame every fixture here had the sender address itself, which is the
+    // one shape that cannot tell the two uids apart. A controller owns no bay
+    // the request could be about, so filing under the sender loses the setting
+    // entirely rather than putting it somewhere visible.
+    let mut current = target.as_bytes().to_vec();
+    current.extend_from_slice(&[2, 0, 55, 66, 2, 0, 0, 0]);
+    h.feed_as(controller, op::AUDIO_SET_VOLUME, &current);
+
+    let v = h
+        .bay(2)
+        .audio_volume
+        .expect("the addressed bay never saw the request");
+    assert_eq!((v.volume_left, v.volume_right), (Some(55), Some(66)));
+    assert_eq!((v.muted_left, v.muted_right), (Some(false), Some(true)));
+
+    // The superseded form names its target by serial rather than by uid, and
+    // resolves to the same bay.
+    let mut legacy = vec![0u8; 20];
+    field(&mut legacy, 0, 16, "HD0001");
+    legacy[16..].copy_from_slice(&[2, 33, 44, 1]);
+    h.feed_as(controller, op::AUDIO_SET_VOLUME, &legacy);
+    let v = h.bay(2).audio_volume.expect("no volume");
+    assert_eq!((v.volume_left, v.volume_right), (Some(33), Some(44)));
 }
 
 /// The value that means "leave this alone" is not a volume and not a mute.
