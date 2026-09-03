@@ -69,8 +69,8 @@ fn rx_stats(p: &[u8]) -> V2ipRxStats {
 /// frame's stamp and its length together.
 ///
 /// `valid` follows the sink IP being configured rather than the sink being
-/// enabled, so a sink that is switched off still reports, carrying an idle
-/// reason with no geometry.
+/// enabled, so a sink that is switched off still reports, naming itself idle
+/// or, from an older sender, reporting no packets.
 fn decoder_detail(protocol: u16, p: &[u8]) -> V2ipDecoderDetail {
     if protocol < DECODER_PROTOCOL || p.len() < DECODER_SIZE {
         return V2ipDecoderDetail::Absent;

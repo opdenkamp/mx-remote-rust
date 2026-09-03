@@ -984,6 +984,55 @@ fn stats_with_decoder(valid: u8) -> Vec<u8> {
 }
 
 #[test]
+fn an_idle_sink_keeps_every_cause_beneath_idle() {
+    // A switched-off sink reports idle, and the word can carry causes beneath
+    // it: what the decoder still observes is reported whether or not the sink
+    // is on. Those bits are a reading, not a fault to escalate - idle outranks
+    // them, and a caller testing a fault mask over the whole word would call a
+    // sink somebody deliberately switched off broken. What this pins is that
+    // the library reports the word as it arrived: suppressing the lower bits
+    // here would answer that question for every caller, and answer it by
+    // throwing away what the decoder saw.
+    //
+    // Which causes accompany idle is the sender's business and will change, so
+    // this asserts the bits the fixture wrote rather than a word a device is
+    // expected to produce.
+    let mut h = command_device(88);
+    let mut p = stats_with_decoder(1);
+    p[129] = V2ipDecoderReason::IDLE.to_wire();
+    p[140..144].copy_from_slice(
+        &((1u32 << V2ipDecoderReason::NO_PACKETS.to_wire())
+            | (1u32 << V2ipDecoderReason::NO_FORMAT.to_wire())
+            | (1u32 << V2ipDecoderReason::IDLE.to_wire()))
+        .to_le_bytes(),
+    );
+    h.feed(op::V2IP_STATS, &p);
+
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("no decoder reading");
+    assert_eq!(d.reason, V2ipDecoderReason::IDLE, "idle did not win");
+    for cause in [
+        V2ipDecoderReason::NO_PACKETS,
+        V2ipDecoderReason::NO_FORMAT,
+        V2ipDecoderReason::IDLE,
+    ] {
+        assert!(
+            d.has_cause(cause),
+            "{cause} was dropped from a word that carried it"
+        );
+    }
+    assert!(
+        !d.has_cause(V2ipDecoderReason::PACKETS_DEGRADED),
+        "a cause the word does not carry was reported"
+    );
+}
+
+#[test]
 fn the_decoder_block_is_read_at_its_own_offsets() {
     let mut h = command_device(81);
     let mut p = stats_with_decoder(1);

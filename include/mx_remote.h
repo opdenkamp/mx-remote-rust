@@ -2881,9 +2881,9 @@ typedef struct {
  * `detail` is zero unless `detail` is `MXR_V2IP_DECODER_ANSWERED`.
  *
  * `detail` follows the sink being configured rather than the sink being
- * enabled, so a sink that is switched off still reports - with no geometry and
- * reason 1, the same reading a sink whose source has died produces. Nothing
- * here says a sink was switched off deliberately.
+ * enabled, so a sink that is switched off still reports - as reason 10, or
+ * from an older sender as reason 1, which is the same reading a sink whose
+ * source has died produces. Nothing here answers whether a sink is enabled.
  *
  * Colour depth is absent on purpose and will stay absent: the video processor
  * answers that from a driver constant rather than from the codestream, so
@@ -2907,17 +2907,21 @@ typedef struct {
    * ranks: several causes can be true at once and a fixed priority order in
    * the firmware decides which lands here. Classify on `flags`, which
    * carries all of them; a test against this field asks which cause won
-   * instead. Reason 10 is effectively unreachable and reason 9 is the one
-   * most often hidden here — see `flags`.
+   * instead. Reason 10 is the exception and is read here: it outranks the
+   * whole word, and testing it first is what stops a switched-off sink
+   * being reported as broken. Reason 9 is the one most often hidden here —
+   * see `flags`.
    *
    * A pending switch is a step in an operation someone asked for rather
    * than a fault, and PTP unlocked costs audio alone: audio cannot enable
    * and the picture is unaffected, so reporting it as a fault puts an
-   * overlay over a good picture. Reason 10 is effectively unreachable on
-   * shipping firmware, and a sink switched off deliberately reports reason
-   * 1 indefinitely instead - nothing here answers whether a sink is
-   * enabled, which comes from `mxr_v2ip_details()` or the device's HTTP
-   * status.
+   * overlay over a good picture. Reason 10 says the sink is switched off,
+   * and carries no implication about `width` and `height`: those are read
+   * before any cause is decided, so a switched-off sink still detecting a
+   * codestream reports a real geometry. An older sender reports reason 1
+   * for the same sink, so an absent reason 10 is not evidence a sink is
+   * enabled - nothing here answers that, which comes from
+   * `mxr_v2ip_details()` or the device's HTTP status.
    */
   uint8_t reason;
   /**
@@ -2938,7 +2942,8 @@ typedef struct {
    *
    * No value here means "no signal": a decoder with nothing to decode
    * reports 0, which is indistinguishable from a real RGB reading. A zero
-   * `width` or `height` is what says the decoder recovered nothing. The 255
+   * `width` or `height` is what says the decoder recovered nothing - which
+   * is not the same as the sink being switched off, and does not imply it. The 255
    * is its own value rather than the 0xF a signal report uses for an
    * unknown colour space.
    */
@@ -2965,7 +2970,13 @@ typedef struct {
    * the primary one. Bit 0 is cleared by the sender, so an empty word means
    * nothing beyond the primary cause applies.
    *
-   * This is what to classify on. A cause that is true can be missing from
+   * This is what to classify on, once reason 10 has been ruled out. That
+   * cause outranks the whole word and leaves the bits below it set - a sink
+   * switched off while running keeps the bits the decoder genuinely saw on
+   * the way down - so a fault mask over `flags` reports a deliberately
+   * disabled sink as broken.
+   *
+   * A cause that is true can be missing from
    * `reason` and present here: reason 9, the pipeline rebuilding after the
    * transmitter bridge stayed unlocked, sits below every input-side cause,
    * so a pipeline restarting in a loop shows an input-side cause in

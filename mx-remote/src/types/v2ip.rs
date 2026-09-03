@@ -546,19 +546,29 @@ impl V2ipDecoderReason {
     /// after the change settles, which [`V2ipDecoderReport::updates`] cannot
     /// distinguish: a value carried forward is still a stored reading.
     pub const TX_BRIDGE_UNLOCKED: Self = Self(9);
-    /// The sink is configured but not expecting a stream.
+    /// The sink is configured but switched off, so no stream is expected.
     ///
-    /// Effectively unreachable on current firmware: the sink derives its
-    /// expectation from the channel's running state, which the pipeline
-    /// re-establishes within about one 10ms poll, so the window this describes
-    /// closes before a report goes out. A sink that has been switched off
-    /// reports [`Self::NO_PACKETS`] indefinitely instead, indistinguishable
-    /// from one whose source is dead. **Nothing on this wire says a sink was
-    /// switched off deliberately** - the block carries no enablement field at
-    /// all, so a sink that is off and a sink that should be receiving and is
-    /// not produce the same reading. Enablement comes from `V2IP_DEVICE_CFG`
-    /// or the device's HTTP status, and only whatever issued the instruction
-    /// knows it was deliberate.
+    /// This outranks every other cause: whenever it applies it is what
+    /// [`V2ipDecoderReport::reason`] carries.
+    ///
+    /// **The causes beneath it stay set in [`V2ipDecoderReport::flags`].** A
+    /// sink switched off while it was running keeps the bits the decoder
+    /// genuinely observed on the way down - no packets, no format - so a
+    /// classifier that tests a fault mask over the whole word calls a
+    /// deliberately disabled sink broken. Ask for this cause first and stop
+    /// there; the bits below it describe what was seen, not a fault to report.
+    ///
+    /// This says nothing about geometry, in either direction. The decoder
+    /// reports what it currently detects whatever the cause, so a switched-off
+    /// sink still detecting a codestream carries a real geometry, and a zero
+    /// one means the decoder has nothing rather than that the sink is off.
+    ///
+    /// Older senders never report this and give [`Self::NO_PACKETS`] for a
+    /// disabled sink instead, indistinguishable from one whose source has
+    /// died. So an absent [`Self::IDLE`] is not evidence a sink is enabled,
+    /// and **nothing in this block answers enablement**: it carries no such
+    /// field, and the answer comes from `V2IP_DEVICE_CFG` or the device's HTTP
+    /// status.
     pub const IDLE: Self = Self(10);
 
     /// Wraps a raw wire value, including one this library has no name for.
@@ -679,10 +689,13 @@ pub struct V2ipDecoderReport {
     /// Every cause that applies, as bit N for reason N. See
     /// [`Self::has_cause`].
     ///
-    /// This is what to classify on. [`Self::reason`] carries whichever cause
-    /// won a fixed priority contest, so a cause that is true can be absent
-    /// from it while present here. Bit 0 is cleared by the sender, so an empty
-    /// word means nothing beyond the primary cause applies.
+    /// This is what to classify on, once [`V2ipDecoderReason::IDLE`] has been
+    /// ruled out: that cause outranks the whole word and leaves the bits below
+    /// it set, so a fault mask over `flags` reports a switched-off sink as
+    /// broken. [`Self::reason`] carries whichever cause won a fixed priority
+    /// contest, so a cause that is true can be absent from it while present
+    /// here. Bit 0 is cleared by the sender, so an empty word means nothing
+    /// beyond the primary cause applies.
     ///
     /// [`V2ipDecoderReason::NO_FORMAT`] and
     /// [`V2ipDecoderReason::FORMAT_MISMATCH`] are the two arms of one decision
@@ -699,6 +712,11 @@ impl V2ipDecoderReport {
     /// understands. [`Self::format`] cannot: it reads
     /// [`V2ipDecoderFormat::RGB`] when nothing is arriving, which is
     /// indistinguishable from a real RGB reading.
+    ///
+    /// It answers that and nothing else. The reading is taken before any cause
+    /// is decided, so it does not say whether the sink is switched on: a sink
+    /// that is off can still detect a codestream, and one that is on can
+    /// detect nothing.
     pub const fn has_geometry(&self) -> bool {
         self.width != 0 && self.height != 0
     }
@@ -719,9 +737,10 @@ impl V2ipDecoderReport {
 ///
 /// The three states are distinct answers and only [`Self::Answered`] carries a
 /// reading. `valid` follows the sink being configured rather than the sink
-/// being enabled, so a sink that is switched off still reports - with zero
-/// geometry and [`V2ipDecoderReason::NO_PACKETS`], the same reading a sink
-/// whose source has died produces.
+/// being enabled, so a sink that is switched off still reports: as
+/// [`V2ipDecoderReason::IDLE`], or from an older sender as
+/// [`V2ipDecoderReason::NO_PACKETS`], which is the same reading a sink whose
+/// source has died produces.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum V2ipDecoderDetail {
     /// The report carried no decoder block: the sender's firmware predates it.
