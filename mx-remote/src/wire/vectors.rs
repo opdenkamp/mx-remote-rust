@@ -3,10 +3,18 @@
 
 //! Byte-exact transmit vectors.
 //!
-//! The expected bytes were generated from the reference Python library, so they
-//! pin this port against something outside both implementations. A builder and
-//! a decoder that are wrong together look correct to every round trip; only a
-//! vector from elsewhere, or the firmware struct, catches that.
+//! The expected bytes come from outside this crate, which is the whole point: a
+//! builder and a decoder that are wrong together look correct to every round
+//! trip, so only a vector from elsewhere catches that. Two sources, and a
+//! reader should know which one a vector rests on.
+//!
+//! Most were generated from the reference Python library, and predate this
+//! port. The five marked "adjudicated" were derived from the receiving struct's
+//! own declaration, read out of the receiver by whoever maintains it and pinned
+//! with that target\'s compiler rather than by reading a header - which matters,
+//! because on that target an enum can be one byte and an `ALIGN(8)` written
+//! ahead of the `struct` keyword is ignored. Neither kind is a captured frame;
+//! no capture exists in this tree.
 //!
 //! Every field in a fixture carries a distinct value wherever the layout allows
 //! it. A fixture hides a shift whenever the neighbouring bytes hold the same
@@ -14,11 +22,13 @@
 
 use std::net::Ipv4Addr;
 
-use crate::types::{AmpZoneSettings, V2ipAudioFormat, VolumeMuteStatus};
+use crate::types::{
+    AmpZoneSettings, V2ipAudioFormat, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+};
 
 use super::bayconfig::{parse_bay_config, BAY_CONFIG_SIZE};
 use super::enums::{
-    BayFeatures, BayStatus, DeviceFeature, EdidProfile, MultiviewerViewMode, RcAction,
+    BayFeatures, BayStatus, DeviceFeature, EdidProfile, MultiviewerViewMode, RcAction, RcKey,
 };
 use super::frame::build_frame;
 use super::opcode::{audio_sub, op, protocol_for};
@@ -195,6 +205,112 @@ fn reboot_frame() {
     assert_eq!(
         hex_of(&got),
         "50380100000102030405060708090a0b0c0d0e0f28001000000102030405060708090a0b0c0d0e0f"
+    );
+}
+
+/// Adjudicated against `mxr_tx_key_data`: `PACKED`, 20 bytes, no tail padding.
+///
+/// The uid names the device that should act, not the sender, and the bay is a
+/// port on that target - the inverse of `RC_KEY`, which reports a press on a
+/// port of the device sending it. Both call the field the same thing and encode
+/// it identically, so only the direction distinguishes them and nothing on the
+/// wire catches a swap.
+#[test]
+fn rc_tx_key_frame() {
+    let payload = build_rc_key(TEST_UID, 0x0203, RcKey::from_wire(0x0405));
+    let got = build_frame(
+        TEST_UID,
+        op::RC_TX_KEY,
+        protocol_for(op::RC_TX_KEY),
+        &payload,
+    );
+    assert_eq!(
+        hex_of(&got),
+        "50380c00000102030405060708090a0b0c0d0e0f0c001400000102030405060708090a0b0c0d0e0f03020504"
+    );
+}
+
+/// Adjudicated against `mxr_bay_hidden_data`: 19 bytes of fields in a 24-byte
+/// `ALIGN(8)` struct, and the receiver requires all 24.
+///
+/// The five zeros are the tail. A payload built by summing field widths is 19
+/// and is dropped without a word, so the padding is the assertion here.
+#[test]
+fn bay_hide_frame() {
+    let payload = build_bay_hide(TEST_UID, 0x0203, true);
+    let got = build_frame(TEST_UID, op::BAY_HIDE, protocol_for(op::BAY_HIDE), &payload);
+    assert_eq!(
+        hex_of(&got),
+        "50380600000102030405060708090a0b0c0d0e0f27001800000102030405060708090a0b0c0d0e0f0302010000000000"
+    );
+}
+
+/// Adjudicated: 17 bytes exactly, the uid then 0 for input and 1 for output.
+///
+/// The receiver takes 17, 257 or 514 and ignores everything else. The two
+/// delivery forms put their mode byte first; this one puts it after the uid.
+#[test]
+fn edid_request_frame() {
+    let payload = build_edid_request(TEST_UID, true);
+    let got = build_frame(TEST_UID, op::DEV_EDID, protocol_for(op::DEV_EDID), &payload);
+    assert_eq!(
+        hex_of(&got),
+        "50380100000102030405060708090a0b0c0d0e0f07001100000102030405060708090a0b0c0d0e0f01"
+    );
+}
+
+/// Adjudicated against `mxr_v2ip_switch_data`: 24 bytes, no padding.
+///
+/// The two addresses are big-endian and sit immediately after little-endian
+/// scalars, so they are given octets that differ from each other and read
+/// differently reversed. A receiver also accepts 32 bytes, carrying a power-on
+/// bit this client does not send.
+#[test]
+fn v2ip_source_switch_frame() {
+    let payload = build_v2ip_source_switch(
+        TEST_UID,
+        Ipv4Addr::new(10, 8, 8, 9),
+        Ipv4Addr::new(172, 20, 30, 40),
+    );
+    let got = build_frame(
+        TEST_UID,
+        op::V2IP_SOURCE_SWITCH,
+        protocol_for(op::V2IP_SOURCE_SWITCH),
+        &payload,
+    );
+    assert_eq!(
+        hex_of(&got),
+        "50380600000102030405060708090a0b0c0d0e0f1f001800000102030405060708090a0b0c0d0e0f0a080809ac141e28"
+    );
+}
+
+/// Adjudicated against `vw_mesh_frame`: 29 bytes of fields in a 32-byte
+/// 4-aligned struct, and the receiver requires all 32.
+///
+/// The raster travels with the window on purpose: only the sender knows what
+/// raster the window was measured against, and a window without it cannot be
+/// moved onto a later source. Dropping the two raster fields still produces a
+/// well-formed 28-byte payload, which is why they are pinned here.
+#[test]
+fn video_wall_frame() {
+    let window = VideoWallWindow {
+        pos_x: 1920,
+        pos_y: 1080,
+        width: 960,
+        height: 540,
+        raster_w: 3840,
+        raster_h: 2160,
+    };
+    let payload = build_video_wall(TEST_UID, window, VideoWallOp::STORE);
+    let got = build_frame(
+        TEST_UID,
+        op::V2IP_VIDEO_WALL,
+        protocol_for(op::V2IP_VIDEO_WALL),
+        &payload,
+    );
+    assert_eq!(
+        hex_of(&got),
+        "50382800000102030405060708090a0b0c0d0e0f49002000000102030405060708090a0b0c0d0e0f80073804c0031c02000f700801000000"
     );
 }
 
