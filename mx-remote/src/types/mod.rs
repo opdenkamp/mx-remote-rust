@@ -32,10 +32,11 @@ pub use status::{
     VOLUME_UNCHANGED,
 };
 pub use v2ip::{
-    DeviceV2ipDetails, DeviceV2ipSink, StreamKind, V2ipAudioFormat, V2ipDecoderState,
-    V2ipDeviceStats, V2ipDscpConfig, V2ipRoute, V2ipRouteTarget, V2ipRxStats, V2ipScalingSettings,
-    V2ipStreamSource, V2ipStreamSources, V2ipTxStats, SCALING_FLAGS_DEFINED,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    DeviceV2ipDetails, DeviceV2ipSink, StreamKind, V2ipAudioFormat, V2ipDecoderDetail,
+    V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderReport, V2ipDecoderState, V2ipDeviceStats,
+    V2ipDscpConfig, V2ipRoute, V2ipRouteTarget, V2ipRxStats, V2ipScalingSettings, V2ipStreamSource,
+    V2ipStreamSources, V2ipTxStats, SCALING_FLAGS_DEFINED, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
 };
 
 pub(crate) use v2ip::parse_dscp;

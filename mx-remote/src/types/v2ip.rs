@@ -490,6 +490,261 @@ pub struct V2ipRxStats {
     pub decoder_state: V2ipDecoderState,
 }
 
+/// Why a decoder reports the state it does.
+///
+/// The primary cause only. Several causes can be true at once, and which of
+/// them lands here is a fixed priority order in the firmware that the numbering
+/// does not express: these values are identities, not ranks, and comparing or
+/// ordering them says nothing. Ask [`V2ipDecoderReport::has_cause`] whether a
+/// particular cause applies - a test against this field answers "is this the
+/// one that won" instead, which is a different question.
+///
+/// Firmware adds causes, so the wire value is carried as it arrived: folding an
+/// unrecognised one onto a named cause would report a fault this library
+/// invented. Appending one cannot reorder the existing priorities.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct V2ipDecoderReason(u8);
+
+impl V2ipDecoderReason {
+    /// Decoding normally.
+    pub const OK: Self = Self(0);
+    /// No packets are arriving.
+    pub const NO_PACKETS: Self = Self(1);
+    /// Packets are arriving, degraded.
+    pub const PACKETS_DEGRADED: Self = Self(2);
+    /// No format could be recovered from the codestream.
+    pub const NO_FORMAT: Self = Self(3);
+    /// The recovered format is not the one the sink is configured for.
+    pub const FORMAT_MISMATCH: Self = Self(4);
+    /// The configured output format was refused.
+    pub const FORMAT_REJECTED: Self = Self(5);
+    /// The converter watchdog is holding the stream back.
+    pub const DECODER_BLOCKED: Self = Self(6);
+    /// A source switch is in progress: a step in an operation someone asked
+    /// for, rather than a fault.
+    pub const SWITCH_PENDING: Self = Self(7);
+    /// PTP is unlocked. That costs audio alone; the picture is unaffected.
+    pub const PTP_UNLOCKED: Self = Self(8);
+    /// The pipeline is rebuilding after the HDMI transmitter stayed unlocked.
+    ///
+    /// The picture is down, and has been for five seconds before this can
+    /// appear: the sender debounces the unlocked reading for that long, so
+    /// this never reports a transient. Unlike [`Self::SWITCH_PENDING`] nobody
+    /// asked for it.
+    ///
+    /// The debounce restarts each time it elapses, so this holding across
+    /// reports is a restart loop rather than one event, and that is what to
+    /// escalate on.
+    ///
+    /// It sits near the bottom of the priority order, below every input-side
+    /// cause, so a rebuilding pipeline names one of those in
+    /// [`V2ipDecoderReport::reason`] and carries this in
+    /// [`V2ipDecoderReport::flags`] alone - always, rather than briefly.
+    ///
+    /// It is evaluated only while no format change is in progress. Across a
+    /// switch it holds its previous value and clears on the first reading
+    /// after the change settles, which [`V2ipDecoderReport::updates`] cannot
+    /// distinguish: a value carried forward is still a stored reading.
+    pub const TX_BRIDGE_UNLOCKED: Self = Self(9);
+    /// The sink is configured but not expecting a stream.
+    ///
+    /// Effectively unreachable on current firmware: the sink derives its
+    /// expectation from the channel's running state, which the pipeline
+    /// re-establishes within about one 10ms poll, so the window this describes
+    /// closes before a report goes out. A sink that has been switched off
+    /// reports [`Self::NO_PACKETS`] indefinitely instead, indistinguishable
+    /// from one whose source is dead. **Nothing on this wire says a sink was
+    /// switched off deliberately** - the block carries no enablement field at
+    /// all, so a sink that is off and a sink that should be receiving and is
+    /// not produce the same reading. Enablement comes from `V2IP_DEVICE_CFG`
+    /// or the device's HTTP status, and only whatever issued the instruction
+    /// knows it was deliberate.
+    pub const IDLE: Self = Self(10);
+
+    /// Wraps a raw wire value, including one this library has no name for.
+    pub const fn from_wire(value: u8) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw wire value.
+    pub const fn to_wire(self) -> u8 {
+        self.0
+    }
+}
+
+impl fmt::Display for V2ipDecoderReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::OK => f.write_str("ok"),
+            Self::NO_PACKETS => f.write_str("no packets"),
+            Self::PACKETS_DEGRADED => f.write_str("packets degraded"),
+            Self::NO_FORMAT => f.write_str("no format recovered"),
+            Self::FORMAT_MISMATCH => f.write_str("format mismatch"),
+            Self::FORMAT_REJECTED => f.write_str("format rejected"),
+            Self::DECODER_BLOCKED => f.write_str("decoder blocked"),
+            Self::SWITCH_PENDING => f.write_str("switch pending"),
+            Self::PTP_UNLOCKED => f.write_str("PTP unlocked"),
+            Self::TX_BRIDGE_UNLOCKED => f.write_str("TX bridge unlocked"),
+            Self::IDLE => f.write_str("idle"),
+            Self(v) => write!(f, "reason {v}"),
+        }
+    }
+}
+
+/// The colour space a decoder recovered from a codestream.
+///
+/// Zero is RGB and is also what a decoder with nothing to decode reports, so no
+/// value here means "no signal" - [`V2ipDecoderReport::has_geometry`] is what
+/// answers that.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct V2ipDecoderFormat(u16);
+
+impl V2ipDecoderFormat {
+    /// RGB.
+    pub const RGB: Self = Self(0);
+    /// YCbCr 4:4:4.
+    pub const YCBCR_444: Self = Self(1);
+    /// YCbCr 4:2:2.
+    pub const YCBCR_422: Self = Self(2);
+    /// YCbCr 4:2:0.
+    pub const YCBCR_420: Self = Self(3);
+    /// The decoder cannot name the format.
+    ///
+    /// 255, which is a value of its own rather than the 0xF a signal report
+    /// uses for an unknown colour space. Mapping one onto the other yields a
+    /// colour space the decoder never reported.
+    pub const UNNAMED: Self = Self(255);
+
+    /// Wraps a raw wire value, including one this library has no name for.
+    pub const fn from_wire(value: u16) -> Self {
+        Self(value)
+    }
+
+    /// Returns the raw wire value.
+    pub const fn to_wire(self) -> u16 {
+        self.0
+    }
+}
+
+impl fmt::Display for V2ipDecoderFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::RGB => f.write_str("RGB"),
+            Self::YCBCR_444 => f.write_str("YCbCr 4:4:4"),
+            Self::YCBCR_422 => f.write_str("YCbCr 4:2:2"),
+            Self::YCBCR_420 => f.write_str("YCbCr 4:2:0"),
+            Self::UNNAMED => f.write_str("unnamed"),
+            Self(v) => write!(f, "format {v}"),
+        }
+    }
+}
+
+/// What a sink's decoder recovered from the codestream it is being given.
+///
+/// This is what the decoder understood, read ahead of the scaler: the geometry
+/// is unrounded and is not what the display is being sent. It separates "the
+/// decoder understood the codestream" from "a picture came out the other end".
+///
+/// Colour depth is absent on purpose and will stay absent. The video processor
+/// answers that one from a driver constant rather than from the codestream, so
+/// there is no reading to carry; assert depth at the encoder's input bay
+/// instead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipDecoderReport {
+    /// The primary cause of the state the decoder is in.
+    pub reason: V2ipDecoderReason,
+    /// The converter watchdog is holding the stream back.
+    pub blocking: bool,
+    /// The recovered picture width, and 0 when none was recovered.
+    pub width: u16,
+    /// The recovered picture height, and 0 when none was recovered.
+    pub height: u16,
+    /// The recovered colour space.
+    pub format: V2ipDecoderFormat,
+    /// How many readings the sink has stored. Monotonic, wrapping at 65535
+    /// after some 36 hours, and never reset.
+    ///
+    /// A sink reads its video processor every two seconds and reports every
+    /// second, so roughly every other report repeats a reading already seen:
+    /// a frame arriving says nothing about how fresh the values in it are.
+    /// This counter moves only when a reading is stored, so a processor that
+    /// stopped answering leaves it still rather than implying a refresh.
+    ///
+    /// After pointing a sink at something else, wait for this to advance by
+    /// two before trusting the geometry. It ticks when a reply lands rather
+    /// than when a query is sent, so the first tick can carry an answer the
+    /// processor read fractionally before the switch; the second cannot,
+    /// because at most one query is outstanding at a time.
+    pub updates: u16,
+    /// Every cause that applies, as bit N for reason N. See
+    /// [`Self::has_cause`].
+    ///
+    /// This is what to classify on. [`Self::reason`] carries whichever cause
+    /// won a fixed priority contest, so a cause that is true can be absent
+    /// from it while present here. Bit 0 is cleared by the sender, so an empty
+    /// word means nothing beyond the primary cause applies.
+    ///
+    /// [`V2ipDecoderReason::NO_FORMAT`] and
+    /// [`V2ipDecoderReason::FORMAT_MISMATCH`] are the two arms of one decision
+    /// and never appear together.
+    pub flags: u32,
+    /// How many times the converter watchdog has triggered.
+    pub blocked_count: u32,
+}
+
+impl V2ipDecoderReport {
+    /// Reports whether the decoder recovered a geometry.
+    ///
+    /// This is what says whether the decoder is being given a codestream it
+    /// understands. [`Self::format`] cannot: it reads
+    /// [`V2ipDecoderFormat::RGB`] when nothing is arriving, which is
+    /// indistinguishable from a real RGB reading.
+    pub const fn has_geometry(&self) -> bool {
+        self.width != 0 && self.height != 0
+    }
+
+    /// Reports whether `reason` is among the causes that apply.
+    ///
+    /// [`Self::reason`] carries the primary cause and `flags` carries all of
+    /// them at once. Bit 0 is unused, so [`V2ipDecoderReason::OK`] is never
+    /// among them and an empty word means nothing beyond the primary cause
+    /// applies.
+    pub const fn has_cause(&self, reason: V2ipDecoderReason) -> bool {
+        let bit = reason.to_wire();
+        bit > 0 && bit < u32::BITS as u8 && self.flags & (1 << bit) != 0
+    }
+}
+
+/// What a statistics report says about the sink's decoder.
+///
+/// The three states are distinct answers and only [`Self::Answered`] carries a
+/// reading. `valid` follows the sink being configured rather than the sink
+/// being enabled, so a sink that is switched off still reports - with zero
+/// geometry and [`V2ipDecoderReason::NO_PACKETS`], the same reading a sink
+/// whose source has died produces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum V2ipDecoderDetail {
+    /// The report carried no decoder block: the sender's firmware predates it.
+    #[default]
+    Absent,
+    /// The block is there and the decoder has never answered. Every field it
+    /// would carry is meaningless, so none is offered.
+    NeverAnswered,
+    /// A reading.
+    Answered(V2ipDecoderReport),
+}
+
+impl V2ipDecoderDetail {
+    /// The reading, for a caller that treats both of the other states as
+    /// "nothing to show".
+    pub const fn reading(self) -> Option<V2ipDecoderReport> {
+        match self {
+            Self::Answered(report) => Some(report),
+            _ => None,
+        }
+    }
+}
+
 /// The cumulative and per-minute transmit and receive statistics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct V2ipDeviceStats {
@@ -501,4 +756,6 @@ pub struct V2ipDeviceStats {
     pub rx: V2ipRxStats,
     /// Receive counts over the last minute.
     pub rx_per_minute: V2ipRxStats,
+    /// What the sink's decoder recovered from the codestream it is decoding.
+    pub decoder: V2ipDecoderDetail,
 }

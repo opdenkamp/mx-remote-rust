@@ -1306,6 +1306,31 @@ typedef int8_t mxr_tribool_t;
 #endif // __cplusplus
 
 /**
+ * What a statistics report says about a sink's decoder.
+ */
+enum mxr_v2ip_decoder_detail_t
+#ifdef __cplusplus
+  : int32_t
+#endif // __cplusplus
+ {
+  /**
+   * The report carried no decoder block: the sender's firmware predates it.
+   */
+  MXR_V2IP_DECODER_ABSENT = 0,
+  /**
+   * The block is there and the decoder has never answered.
+   */
+  MXR_V2IP_DECODER_NEVER_ANSWERED = 1,
+  /**
+   * The block carries a reading.
+   */
+  MXR_V2IP_DECODER_ANSWERED = 2,
+};
+#ifndef __cplusplus
+typedef int32_t mxr_v2ip_decoder_detail_t;
+#endif // __cplusplus
+
+/**
  * A running client. Opaque: everything about it is reached through the
  * functions below.
  */
@@ -2849,6 +2874,117 @@ typedef struct {
 } mxr_v2ip_rx_stats_t;
 
 /**
+ * What a sink's decoder recovered from the codestream it is being given.
+ *
+ * This is what the decoder understood, read ahead of the scaler: the geometry
+ * is unrounded and is not what the display is being sent. Every field but
+ * `detail` is zero unless `detail` is `MXR_V2IP_DECODER_ANSWERED`.
+ *
+ * `detail` follows the sink being configured rather than the sink being
+ * enabled, so a sink that is switched off still reports - with no geometry and
+ * reason 1, the same reading a sink whose source has died produces. Nothing
+ * here says a sink was switched off deliberately.
+ *
+ * Colour depth is absent on purpose and will stay absent: the video processor
+ * answers that from a driver constant rather than from the codestream, so
+ * there is no reading to carry. Assert depth at the encoder's input bay
+ * instead.
+ */
+typedef struct {
+  /**
+   * Which of the three states this report is in.
+   */
+  mxr_v2ip_decoder_detail_t detail;
+  /**
+   * The primary cause of the state the decoder is in, by the sender's own
+   * names: 0 OK, 1 NO_PACKETS, 2 PACKETS_DEGRADED, 3 NO_FORMAT, 4
+   * FORMAT_MISMATCH, 5 FORMAT_REJECTED, 6 DECODER_BLOCKED, 7
+   * SWITCH_PENDING, 8 PTP_UNLOCKED, 9 TX_BRIDGE_UNLOCKED, 10 IDLE.
+   * Firmware adds causes, so an unrecognised value is passed through as it
+   * arrived.
+   *
+   * The primary cause only, and the numbers are identities rather than
+   * ranks: several causes can be true at once and a fixed priority order in
+   * the firmware decides which lands here. Classify on `flags`, which
+   * carries all of them; a test against this field asks which cause won
+   * instead. Reason 10 is effectively unreachable and reason 9 is the one
+   * most often hidden here — see `flags`.
+   *
+   * A pending switch is a step in an operation someone asked for rather
+   * than a fault, and PTP unlocked costs audio alone: audio cannot enable
+   * and the picture is unaffected, so reporting it as a fault puts an
+   * overlay over a good picture. Reason 10 is effectively unreachable on
+   * shipping firmware, and a sink switched off deliberately reports reason
+   * 1 indefinitely instead - nothing here answers whether a sink is
+   * enabled, which comes from `mxr_v2ip_details()` or the device's HTTP
+   * status.
+   */
+  uint8_t reason;
+  /**
+   * The converter watchdog is holding the stream back.
+   */
+  bool blocking;
+  /**
+   * The recovered picture width, and 0 when none was recovered.
+   */
+  uint16_t width;
+  /**
+   * The recovered picture height, and 0 when none was recovered.
+   */
+  uint16_t height;
+  /**
+   * The recovered colour space: 0 RGB, 1 YCbCr 4:4:4, 2 YCbCr 4:2:2,
+   * 3 YCbCr 4:2:0, 255 the decoder cannot name it.
+   *
+   * No value here means "no signal": a decoder with nothing to decode
+   * reports 0, which is indistinguishable from a real RGB reading. A zero
+   * `width` or `height` is what says the decoder recovered nothing. The 255
+   * is its own value rather than the 0xF a signal report uses for an
+   * unknown colour space.
+   */
+  uint16_t format;
+  /**
+   * How many readings the sink has stored. Monotonic, wrapping at 65535
+   * after some 36 hours, and never reset.
+   *
+   * A sink reads its video processor every two seconds and reports every
+   * second, so roughly every other report repeats a reading already seen:
+   * a frame arriving says nothing about how fresh the values in it are.
+   * This counter moves only when a reading is stored, so a processor that
+   * stopped answering leaves it still rather than implying a refresh.
+   *
+   * After pointing a sink at something else, wait for this to advance by
+   * two before trusting the geometry. It ticks when a reply lands rather
+   * than when a query is sent, so the first tick can carry an answer the
+   * processor read fractionally before the switch; the second cannot,
+   * because at most one query is outstanding at a time.
+   */
+  uint16_t updates;
+  /**
+   * Every cause that applies, as bit N for reason N, where `reason` carries
+   * the primary one. Bit 0 is cleared by the sender, so an empty word means
+   * nothing beyond the primary cause applies.
+   *
+   * This is what to classify on. A cause that is true can be missing from
+   * `reason` and present here: reason 9, the pipeline rebuilding after the
+   * transmitter bridge stayed unlocked, sits below every input-side cause,
+   * so a pipeline restarting in a loop shows an input-side cause in
+   * `reason` and bit 9 here alone - always, rather than briefly. Bit 9
+   * needs a sustained five seconds to appear at all, and sustained across
+   * reports it means a restart loop rather than one event, because the
+   * sender's debounce restarts each time it elapses.
+   *
+   * Reasons 3 and 4 are the two arms of one decision and never appear
+   * together.
+   */
+  uint32_t flags;
+  /**
+   * How many times the converter watchdog has triggered.
+   */
+  uint32_t blocked_count;
+} mxr_v2ip_decoder_t;
+
+/**
  * A device's V2IP statistics, cumulative and over the last minute.
  */
 typedef struct {
@@ -2868,6 +3004,10 @@ typedef struct {
    * Receive counts over the last minute.
    */
   mxr_v2ip_rx_stats_t rx_per_minute;
+  /**
+   * What the sink's decoder recovered from the codestream it is decoding.
+   */
+  mxr_v2ip_decoder_t decoder;
 } mxr_v2ip_stats_t;
 
 /**

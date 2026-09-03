@@ -5,9 +5,12 @@
 
 use crate::event::Event;
 use crate::state::State;
-use crate::types::{V2ipDecoderState, V2ipDeviceStats, V2ipRxStats, V2ipTxStats};
+use crate::types::{
+    V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderReport, V2ipDecoderState,
+    V2ipDeviceStats, V2ipRxStats, V2ipTxStats,
+};
 
-use super::handlers::{byte, u32_at};
+use super::handlers::{byte, u16_at, u32_at};
 use super::Rx;
 
 /// Block sizes of the statistics payload.
@@ -21,6 +24,11 @@ use super::Rx;
 const TX_STATS_SIZE: usize = 20;
 const RX_STATS_SIZE: usize = 44;
 const STATS_SIZE: usize = 2 * TX_STATS_SIZE + 2 * RX_STATS_SIZE;
+
+/// The decoder block, appended after the four counter blocks. A shorter payload
+/// is a sender that predates it, and its counters sit at the same offsets, which
+/// is what appending the block bought.
+const DECODER_SIZE: usize = 24;
 
 /// The payload length of an enable/disable request, which carries no
 /// statistics of its own.
@@ -52,6 +60,33 @@ fn rx_stats(p: &[u8]) -> V2ipRxStats {
     }
 }
 
+/// Reads the decoder block, which a sender omits and this reads by length
+/// rather than by the frame's stamp.
+///
+/// `valid` follows the sink IP being configured rather than the sink being
+/// enabled, so a sink that is switched off still reports, carrying an idle
+/// reason with no geometry.
+fn decoder_detail(p: &[u8]) -> V2ipDecoderDetail {
+    if p.len() < DECODER_SIZE {
+        return V2ipDecoderDetail::Absent;
+    }
+    if byte(p, 0) == 0 {
+        return V2ipDecoderDetail::NeverAnswered;
+    }
+    V2ipDecoderDetail::Answered(V2ipDecoderReport {
+        reason: V2ipDecoderReason::from_wire(byte(p, 1)),
+        blocking: byte(p, 2) != 0,
+        // Byte 3 is reserved: it is where a colour depth would have gone, and
+        // the processor has no reading to put there.
+        width: u16_at(p, 4),
+        height: u16_at(p, 6),
+        format: V2ipDecoderFormat::from_wire(u16_at(p, 8)),
+        updates: u16_at(p, 10),
+        flags: u32_at(p, 12),
+        blocked_count: u32_at(p, 16),
+    })
+}
+
 pub(super) fn v2ip_stats(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
     if p.len() == STATS_REQUEST_SIZE || p.len() < STATS_SIZE {
@@ -63,6 +98,7 @@ pub(super) fn v2ip_stats(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         tx_per_minute: tx_stats(&p[TX_STATS_SIZE..rx_base]),
         rx: rx_stats(&p[rx_base..rx_base + RX_STATS_SIZE]),
         rx_per_minute: rx_stats(&p[rx_base + RX_STATS_SIZE..rx_base + 2 * RX_STATS_SIZE]),
+        decoder: decoder_detail(&p[STATS_SIZE..]),
     };
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_v2ip_stats(stats, ev);

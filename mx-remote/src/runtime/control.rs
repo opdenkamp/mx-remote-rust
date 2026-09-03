@@ -688,6 +688,16 @@ impl Remote {
     // ---- the whole device ----
 
     /// Starts or stops a V2IP device reporting its transport statistics.
+    ///
+    /// There is no free-running mode: a device reports only while a
+    /// subscription is live, at 1Hz, and the subscription lapses after a
+    /// minute. A caller that wants a continuous feed re-sends inside the
+    /// minute; nothing here re-arms it.
+    ///
+    /// Reports reach [`crate::EventHandler::on_v2ip_stats_changed`] and read
+    /// back through [`Remote::v2ip_stats`]. A device new enough to send it also
+    /// carries what the sink's decoder recovered, in
+    /// [`crate::V2ipDeviceStats::decoder`].
     pub fn subscribe_v2ip_stats(
         &self,
         device: DeviceUid,

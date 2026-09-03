@@ -12,12 +12,14 @@ use std::net::Ipv4Addr;
 
 use crate::event::Event;
 use crate::types::{
-    AudioChangeSource, MultiviewerCommand, V2ipDecoderState, VideoWallCommand, VideoWallOp,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    AudioChangeSource, MultiviewerCommand, V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason,
+    V2ipDecoderState, VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, V2IP_DSCP_DEFAULT, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_PORT_ANC, V2IP_PORT_AUDIO,
+    V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, poisoned, uid_n, Cfg};
@@ -802,6 +804,391 @@ fn a_starting_decoder_is_not_a_verdict() {
     assert_eq!(V2ipDecoderState::from_wire(9).to_string(), "state 9");
 }
 
+/// A statistics report with the decoder block appended, poisoned everywhere a
+/// caller then writes nothing.
+///
+/// The counter blocks in front of it are left poisoned: the block is read from
+/// the payload length rather than from anything in them, and a decode that
+/// reached into them would read a number rather than a zero.
+fn stats_with_decoder(valid: u8) -> Vec<u8> {
+    let mut p = poisoned(152);
+    p[128] = valid;
+    p[129] = V2ipDecoderReason::FORMAT_MISMATCH.to_wire();
+    p[130] = 0; // blocking
+    p[131] = 0x77; // reserved, and never a colour depth
+    p[132..134].copy_from_slice(&3840u16.to_le_bytes());
+    p[134..136].copy_from_slice(&2160u16.to_le_bytes());
+    p[136..138].copy_from_slice(&V2ipDecoderFormat::YCBCR_422.to_wire().to_le_bytes());
+    p[138..140].copy_from_slice(&600u16.to_le_bytes());
+    // Bit 20 is a cause this build does not name, and it is what makes the
+    // word's width readable: every cause it does name fits in the low half.
+    p[140..144].copy_from_slice(&((1u32 << 4) | (1u32 << 8) | (1u32 << 20)).to_le_bytes());
+    p[144..148].copy_from_slice(&100_009u32.to_le_bytes());
+    // The block's own tail padding, 20 bytes of fields rounded to 24. A device
+    // sends it as zero, having cleared the payload buffer first, so this is
+    // poison a parser must ignore rather than anything a sender puts there.
+    p[148..152].copy_from_slice(&0xDEADBEEFu32.to_le_bytes());
+    p
+}
+
+#[test]
+fn the_decoder_block_is_read_at_its_own_offsets() {
+    let mut h = command_device(81);
+    let mut p = stats_with_decoder(1);
+    // Every field distinct, and the counters in front of the block set so that
+    // a decoder reading the block at the wrong base is visible as a counter
+    // that moved.
+    p[0..4].copy_from_slice(&11u32.to_le_bytes()); // tx totals, video
+    p[40..44].copy_from_slice(&33u32.to_le_bytes()); // rx totals, video total
+    p[80] = V2ipDecoderState::HEALTHY.to_wire();
+    h.feed(op::V2IP_STATS, &p);
+
+    let stats = h.device().v2ip_stats.expect("no stats");
+    assert_eq!((stats.tx.video, stats.rx.video_total), (11, 33));
+    assert_eq!(stats.rx.decoder_state, V2ipDecoderState::HEALTHY);
+
+    let d = stats
+        .decoder
+        .reading()
+        .expect("a valid decoder block read as no reading");
+    assert_eq!(d.reason, V2ipDecoderReason::FORMAT_MISMATCH);
+    assert!(
+        !d.blocking,
+        "the reserved byte beside it is set, and it is not the watchdog flag"
+    );
+    assert_eq!((d.width, d.height), (3840, 2160));
+    assert_eq!(d.format, V2ipDecoderFormat::YCBCR_422);
+    assert_eq!(d.updates, 600);
+    assert_eq!(d.flags, (1u32 << 4) | (1u32 << 8) | (1u32 << 20));
+    assert_eq!(d.blocked_count, 100_009);
+    assert!(d.has_geometry());
+
+    // The other direction, so that the flag above is read rather than always
+    // false.
+    p[130] = 1;
+    h.feed(op::V2IP_STATS, &p);
+    assert!(
+        h.device()
+            .v2ip_stats
+            .expect("no stats")
+            .decoder
+            .reading()
+            .expect("no reading")
+            .blocking
+    );
+}
+
+#[test]
+fn a_report_that_stops_after_the_counters_carries_no_decoder_block() {
+    let mut h = command_device(82);
+
+    // What a sender predating the block sends. The bytes that would hold it are
+    // absent rather than zero, so nothing here is a reading.
+    let p = poisoned(128);
+    h.feed(op::V2IP_STATS, &p);
+    assert_eq!(
+        h.device().v2ip_stats.expect("no stats").decoder,
+        V2ipDecoderDetail::Absent
+    );
+
+    // And a longer report than this build knows still yields the block, since
+    // a version adds to the tail.
+    let mut long = stats_with_decoder(1);
+    long.extend_from_slice(&poisoned(16));
+    h.feed(op::V2IP_STATS, &long);
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("a tail this build does not know cost it the block it does");
+    assert_eq!((d.width, d.height), (3840, 2160));
+}
+
+#[test]
+fn a_decoder_that_has_never_answered_offers_no_reading() {
+    let mut h = command_device(83);
+
+    // Everything behind `valid` still carries what a real reading would, which
+    // is what a reader keying on any of it would report as a 4K picture.
+    let p = stats_with_decoder(0);
+    h.feed(op::V2IP_STATS, &p);
+    assert_eq!(
+        h.device().v2ip_stats.expect("no stats").decoder,
+        V2ipDecoderDetail::NeverAnswered
+    );
+}
+
+#[test]
+fn geometry_says_there_is_no_signal_and_format_never_does() {
+    let mut h = command_device(84);
+
+    // A sink with nothing arriving: zero geometry beside a format of zero,
+    // which is RGB and is exactly what a real RGB source reads as.
+    let mut p = stats_with_decoder(1);
+    p[129] = V2ipDecoderReason::NO_PACKETS.to_wire();
+    p[132..136].copy_from_slice(&[0; 4]);
+    p[136..138].copy_from_slice(&V2ipDecoderFormat::RGB.to_wire().to_le_bytes());
+    h.feed(op::V2IP_STATS, &p);
+
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("a sink with no stream reports, and this dropped the reading");
+    assert_eq!(d.reason, V2ipDecoderReason::NO_PACKETS);
+    assert_eq!(d.format, V2ipDecoderFormat::RGB);
+    assert!(
+        !d.has_geometry(),
+        "nothing was recovered, and only the geometry says so"
+    );
+
+    // The other direction: a working stream carrying that same format. Both
+    // halves pin the format to RGB rather than to each other, so the pair keeps
+    // testing what it says it does even if one half is edited later. The reason
+    // moves with the geometry because the wire ties them - an idle sink reports
+    // no geometry - and the format is what stays put across both.
+    let mut p = stats_with_decoder(1);
+    p[136..138].copy_from_slice(&V2ipDecoderFormat::RGB.to_wire().to_le_bytes());
+    h.feed(op::V2IP_STATS, &p);
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("no reading");
+    assert_eq!(d.format, V2ipDecoderFormat::RGB);
+    assert!(
+        d.has_geometry(),
+        "a working RGB stream read as no signal, which is what format 0 invites"
+    );
+}
+
+#[test]
+fn an_unnamed_format_is_not_an_unknown_colour_space() {
+    let mut h = command_device(85);
+    let mut p = stats_with_decoder(1);
+    p[136..138].copy_from_slice(&255u16.to_le_bytes());
+    p[129] = 200; // a cause no build of this library names
+    h.feed(op::V2IP_STATS, &p);
+
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("no reading");
+    assert_eq!(d.format, V2ipDecoderFormat::UNNAMED);
+    assert_eq!(d.format.to_wire(), 255);
+    assert_ne!(
+        d.format.to_wire(),
+        0xF,
+        "the decoder's unnamed format is not a signal report's unknown colour space"
+    );
+    assert_eq!(d.reason, V2ipDecoderReason::from_wire(200));
+    assert_eq!(d.reason.to_string(), "reason 200");
+
+    // A format wider than a byte, which every value named here is not. Firmware
+    // adds formats, and the field is two bytes whether or not one has used them.
+    let mut p = stats_with_decoder(1);
+    p[136..138].copy_from_slice(&0x0102u16.to_le_bytes());
+    h.feed(op::V2IP_STATS, &p);
+    assert_eq!(
+        h.device()
+            .v2ip_stats
+            .expect("no stats")
+            .decoder
+            .reading()
+            .expect("no reading")
+            .format,
+        V2ipDecoderFormat::from_wire(0x0102)
+    );
+}
+
+#[test]
+fn the_flags_word_names_every_cause_but_never_the_first() {
+    let mut h = command_device(86);
+    let mut p = stats_with_decoder(1);
+    p[140..144].copy_from_slice(
+        &((1u32 << V2ipDecoderReason::PTP_UNLOCKED.to_wire())
+            | (1u32 << V2ipDecoderReason::DECODER_BLOCKED.to_wire()))
+        .to_le_bytes(),
+    );
+    h.feed(op::V2IP_STATS, &p);
+
+    let d = h
+        .device()
+        .v2ip_stats
+        .expect("no stats")
+        .decoder
+        .reading()
+        .expect("no reading");
+    assert!(d.has_cause(V2ipDecoderReason::PTP_UNLOCKED));
+    assert!(d.has_cause(V2ipDecoderReason::DECODER_BLOCKED));
+    assert!(!d.has_cause(V2ipDecoderReason::NO_PACKETS));
+    assert!(
+        !d.has_cause(V2ipDecoderReason::OK),
+        "bit 0 is unused, so ok is never among the causes"
+    );
+    assert!(
+        !d.has_cause(V2ipDecoderReason::from_wire(200)),
+        "a cause past the word's width is not in it"
+    );
+}
+
+#[test]
+fn a_report_stamped_above_this_clients_own_version_is_still_read() {
+    let mut h = command_device(87);
+    let p = stats_with_decoder(1);
+    h.feed_proto(op::V2IP_STATS, PROTOCOL_VERSION + 1, &p);
+
+    // The receive path takes a frame's stamp and discards it. A ceiling here
+    // would drop a newer device's report whole - the counters that predate the
+    // block with it - and the symptom appears only once a device is upgraded,
+    // by which time nothing points at the client. The asymmetry with transmit
+    // is deliberate: a frame is stamped at its opcode's own version because the
+    // device has a ceiling, which is not a reason to grow one here.
+    let stats = h
+        .device()
+        .v2ip_stats
+        .expect("a stamp above this client's version cost it the whole report");
+    assert_eq!(stats.tx.video, u32::from_le_bytes([0xA5, 0xA4, 0xA7, 0xA6]));
+    assert!(
+        stats.decoder.reading().is_some(),
+        "the counters survived the stamp and the block did not"
+    );
+}
+
+#[test]
+fn half_a_geometry_is_not_a_geometry() {
+    let mut h = command_device(89);
+
+    // One dimension zero is the only shape that separates "both were
+    // recovered" from "either was", and no reading a sink sends has it: a
+    // decoder that recovered a width recovered a height. It is here because
+    // the two readings differ nowhere else.
+    for (width, height) in [(0u16, 2160u16), (3840, 0)] {
+        let mut p = stats_with_decoder(1);
+        p[132..134].copy_from_slice(&width.to_le_bytes());
+        p[134..136].copy_from_slice(&height.to_le_bytes());
+        h.feed(op::V2IP_STATS, &p);
+        let d = h
+            .device()
+            .v2ip_stats
+            .expect("no stats")
+            .decoder
+            .reading()
+            .expect("no reading");
+        assert!(
+            !d.has_geometry(),
+            "{width}x{height} is half a geometry and was read as a whole one"
+        );
+    }
+}
+
+#[test]
+fn the_primary_cause_is_not_derivable_from_the_flags_word() {
+    let mut h = command_device(90);
+
+    // `reason` cannot be computed from `flags`: it is the sender's fixed
+    // priority order, which the numbering does not express. In the first
+    // reading bit 1 is set and bit 7 is the reason; in the second bit 1 is the
+    // reason while bit 3 is also set. So it is neither the lowest set bit nor
+    // the highest, and a caller asking "is this cause present" has to read the
+    // word rather than compare the byte.
+    //
+    // The first two are a teardown reported from a device - the switch, then
+    // the silence after it - relayed here rather than captured, so they are
+    // evidence of what a sink sends and not a frame this crate has seen. The
+    // third is composed from the priority order rather than observed at all.
+    let readings = [
+        (
+            V2ipDecoderReason::SWITCH_PENDING,
+            0b1000_1010u32,
+            [
+                V2ipDecoderReason::NO_PACKETS,
+                V2ipDecoderReason::NO_FORMAT,
+                V2ipDecoderReason::SWITCH_PENDING,
+            ],
+        ),
+        (
+            V2ipDecoderReason::NO_PACKETS,
+            0b0000_1010u32,
+            [
+                V2ipDecoderReason::NO_PACKETS,
+                V2ipDecoderReason::NO_FORMAT,
+                V2ipDecoderReason::NO_PACKETS,
+            ],
+        ),
+        // The sharper case, and a standing one rather than a moment: the
+        // transmitter bridge sits below every input-side cause, so a pipeline
+        // rebuilding in a loop always names an input cause and carries bit 9
+        // here alone. A caller reading the byte never sees the loop at all.
+        (
+            V2ipDecoderReason::NO_PACKETS,
+            0b0010_0000_0010u32,
+            [
+                V2ipDecoderReason::NO_PACKETS,
+                V2ipDecoderReason::TX_BRIDGE_UNLOCKED,
+                V2ipDecoderReason::TX_BRIDGE_UNLOCKED,
+            ],
+        ),
+    ];
+
+    // The set has to contradict both derivations, or a parser implementing one
+    // of them passes on the readings that happen not to catch it. Losing the
+    // first reading leaves the other two agreeing with a lowest-set-bit answer,
+    // so this guards the fixtures rather than the parser: it fires when the set
+    // degrades, not only when the decode does.
+    let bit_of = |r: V2ipDecoderReason| u32::from(r.to_wire());
+    assert!(
+        readings
+            .iter()
+            .any(|(r, flags, _)| bit_of(*r) != flags.trailing_zeros()),
+        "no reading here contradicts reading the primary cause as the lowest set bit"
+    );
+    assert!(
+        readings
+            .iter()
+            .any(|(r, flags, _)| bit_of(*r) != u32::BITS - 1 - flags.leading_zeros()),
+        "no reading here contradicts reading the primary cause as the highest set bit"
+    );
+
+    for (reason, flags, present) in readings {
+        let mut p = stats_with_decoder(1);
+        p[129] = reason.to_wire();
+        p[140..144].copy_from_slice(&flags.to_le_bytes());
+        h.feed(op::V2IP_STATS, &p);
+        let d = h
+            .device()
+            .v2ip_stats
+            .expect("no stats")
+            .decoder
+            .reading()
+            .expect("no reading");
+        assert_eq!(d.reason, reason);
+        for cause in present {
+            assert!(
+                d.has_cause(cause),
+                "{cause} is set in {flags:#b} and unread"
+            );
+        }
+        assert!(
+            !d.has_cause(V2ipDecoderReason::DECODER_BLOCKED),
+            "a cause absent from {flags:#b} was reported as applying"
+        );
+        assert!(
+            !d.has_cause(V2ipDecoderReason::OK),
+            "bit 0 is cleared by the sender, so ok is never a cause"
+        );
+    }
+}
+
 // ---- V2IP stream configuration ----
 
 #[test]
@@ -901,7 +1288,7 @@ fn an_options_write_caches_no_noise_bits() {
     assert_ne!(scaling.flags & SCALING_FLAG_AUTO_SCALING, 0);
 }
 
-/// A real `V2IP_DEVICE_CFG` from a 10.12.32-1 unit, captured off a live mesh.
+/// A real `V2IP_DEVICE_CFG`, captured off a live mesh.
 ///
 /// The expected values below come from the sending unit's own configuration
 /// and from firmware behaviour, not from what this decoder produces.

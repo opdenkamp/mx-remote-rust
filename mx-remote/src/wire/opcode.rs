@@ -160,6 +160,11 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::V2IP_DEVICE_CFG => 0x11,
         op::AMP_ZONE_SETTINGS => 0x1C,
         op::AMP_DOLBY_STATE => 0x1C,
+        // 0x13 rather than the 0x29 the firmware's own table now carries for
+        // this opcode. Nothing in the firmware imposes a per-opcode minimum on
+        // receive - the gate is a ceiling alone - so 0x13 is accepted by every
+        // device that handles the opcode, while 0x29 would be dropped by
+        // anything below that ceiling and would take the counters with it.
         op::V2IP_STATS => 0x13,
         op::V2IP_TILING => 0x14,
         op::V2IP_POWER_SAVE => 0x15,

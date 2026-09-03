@@ -14,6 +14,7 @@
 use std::ffi::{c_char, CStr, CString};
 use std::ptr;
 
+use mx_remote::{V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderReport};
 use mx_remote_ffi::*;
 
 /// A distinguishable identifier, from one byte.
@@ -662,4 +663,64 @@ fn a_route_with_an_unparseable_address_is_an_argument_error() {
 
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };
+}
+
+/// Only one of the three decoder states carries a reading, and the other two
+/// carry nothing rather than a stale copy of one.
+///
+/// A C caller has no `Option` to stop it reading the geometry regardless, so
+/// what stops it reporting a 4K picture from a sink whose decoder has never
+/// answered is that the fields beside `detail` are zero.
+#[test]
+fn only_an_answered_decoder_carries_a_reading() {
+    let answered: mxr_v2ip_decoder_t = V2ipDecoderDetail::Answered(V2ipDecoderReport {
+        reason: V2ipDecoderReason::PTP_UNLOCKED,
+        blocking: true,
+        width: 3840,
+        height: 2160,
+        format: V2ipDecoderFormat::YCBCR_420,
+        updates: 600,
+        flags: 1 << 8,
+        blocked_count: 100_009,
+    })
+    .into();
+    assert_eq!(
+        answered.detail,
+        mxr_v2ip_decoder_detail_t::MXR_V2IP_DECODER_ANSWERED
+    );
+    assert_eq!(answered.reason, 8);
+    assert!(answered.blocking);
+    assert_eq!((answered.width, answered.height), (3840, 2160));
+    assert_eq!(answered.format, 3);
+    assert_eq!(answered.updates, 600);
+    assert_eq!(answered.flags, 1 << 8);
+    assert_eq!(answered.blocked_count, 100_009);
+
+    for (detail, expected) in [
+        (
+            V2ipDecoderDetail::Absent,
+            mxr_v2ip_decoder_detail_t::MXR_V2IP_DECODER_ABSENT,
+        ),
+        (
+            V2ipDecoderDetail::NeverAnswered,
+            mxr_v2ip_decoder_detail_t::MXR_V2IP_DECODER_NEVER_ANSWERED,
+        ),
+    ] {
+        let empty: mxr_v2ip_decoder_t = detail.into();
+        assert_eq!(empty.detail, expected);
+        assert!(!empty.blocking);
+        assert_eq!(
+            (
+                u32::from(empty.reason),
+                u32::from(empty.width),
+                u32::from(empty.height),
+                u32::from(empty.format),
+                u32::from(empty.updates),
+                empty.flags,
+                empty.blocked_count,
+            ),
+            (0, 0, 0, 0, 0, 0, 0),
+            "{expected:?} carried a reading it does not have"
+        );
+    }
 }
