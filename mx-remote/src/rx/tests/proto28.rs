@@ -15,7 +15,7 @@ use crate::wire::{
     V2IP_PORT_VIDEO,
 };
 
-use crate::testing::{bay_config_rec, field, poisoned, Cfg};
+use crate::testing::{bay_config_rec, field, hello_payload, poisoned, uid_n, Cfg};
 
 use super::Harness;
 
@@ -669,4 +669,195 @@ fn a_per_record_loop_is_bounded_by_the_declared_length() {
         "a record beyond the declared length became a bay"
     );
     assert_eq!(BAY_CONFIG_SIZE, 61);
+}
+
+/// A configuration a management client writes for another device belongs to
+/// that device.
+///
+/// The payload names its subject in the first sixteen bytes, and every receiver
+/// on the network resolves it from there: equal to the sender it is a device
+/// describing itself, and different it is a write for the device it names. A
+/// receiver that read the sender instead would file a controller's write to a
+/// transceiver against the controller, leaving the transceiver's record as it
+/// was and the controller's describing hardware it is not.
+#[test]
+fn a_managed_write_lands_on_the_device_it_names() {
+    let mut h = v2ip_device(30);
+    let sink = h.sender;
+    let controller = uid_n(31);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "CTRL0001", "4.8.0", DeviceFeature::MANAGER),
+    );
+
+    let mut cfg = Cfg::addresses(sink, "239.1.2.3");
+    cfg.rate = 40;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &cfg.bytes());
+
+    let named = h
+        .state
+        .device(sink)
+        .expect("the device the write names is not registered")
+        .v2ip_details
+        .expect("the write did not reach the device it names");
+    assert_eq!(named.tx_rate, Some(40));
+    assert_eq!(named.video.ip, ip("239.1.2.3"));
+
+    assert!(
+        h.state
+            .device(controller)
+            .expect("the controller is not registered")
+            .v2ip_details
+            .is_none(),
+        "the write was filed against the sender rather than its subject"
+    );
+}
+
+/// A device describing itself is still read as its own.
+///
+/// The subject and the sender are the same uid on every report a device sends
+/// about itself, which is the case the network is mostly made of. Resolving by
+/// subject has to leave it alone.
+#[test]
+fn a_device_describing_itself_is_read_as_its_own() {
+    let mut h = v2ip_device(32);
+    let sender = h.sender;
+
+    let mut cfg = Cfg::addresses(sender, "239.4.5.6");
+    cfg.rate = 30;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+
+    let details = h.device().v2ip_details.expect("no details");
+    assert_eq!(details.tx_rate, Some(30));
+    assert_eq!(details.video.ip, ip("239.4.5.6"));
+}
+
+/// A device that is not management cannot write another device's configuration.
+///
+/// A receiver takes a write for a third party only from a sender it treats as
+/// management, so a record moved on any other sender's say-so is a record this
+/// client holds and the network does not.
+#[test]
+fn a_write_for_another_device_from_an_ordinary_peer_is_dropped() {
+    let mut h = v2ip_device(33);
+    let sink = h.sender;
+    let peer = uid_n(34);
+    h.feed_as(
+        peer,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "OneIP", "TX0002", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+
+    let mut cfg = Cfg::addresses(sink, "239.7.8.9");
+    cfg.rate = 40;
+    h.feed_as(peer, op::V2IP_DEVICE_CFG, &cfg.bytes());
+
+    assert!(
+        h.state
+            .device(sink)
+            .expect("the named device is not registered")
+            .v2ip_details
+            .is_none(),
+        "a peer with no management standing moved another device's record"
+    );
+    assert!(
+        h.state
+            .device(peer)
+            .expect("the peer is not registered")
+            .v2ip_details
+            .is_none(),
+        "the write was filed against the sender"
+    );
+}
+
+/// A controller's write is trusted through the bit a controller actually sets.
+///
+/// The two kinds of writer announce themselves differently and neither implies
+/// the other: an external application sets the manager bit, and a device
+/// controlling its mesh sets the master bit instead. Testing only the first
+/// would refuse every write that comes from a controller, which is the ordinary
+/// case rather than an unusual one.
+#[test]
+fn a_mesh_controllers_write_lands_on_the_device_it_names() {
+    let mut h = v2ip_device(35);
+    let sink = h.sender;
+    let controller = uid_n(36);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x28,
+            "OneIP",
+            "CTRL0002",
+            "4.8.0",
+            DeviceFeature::MESH_MASTER | DeviceFeature::VIDEO_ROUTING,
+        ),
+    );
+
+    let mut cfg = Cfg::addresses(sink, "239.2.3.4");
+    cfg.rate = 60;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &cfg.bytes());
+
+    let named = h
+        .state
+        .device(sink)
+        .expect("the named device is not registered")
+        .v2ip_details
+        .expect("a controller's write did not reach the device it names");
+    assert_eq!(named.tx_rate, Some(60));
+}
+
+/// A controller a device names is trusted for that device even while it
+/// announces neither bit.
+///
+/// A device sets the master bit only while it is both controlling its mesh and
+/// has bays mapped, so one promoted before it has any announces nothing while
+/// still being the controller its mesh obeys. What closes that window is the
+/// controller uid the devices in the mesh report.
+#[test]
+fn a_controller_a_device_names_is_trusted_for_that_device() {
+    let mut h = v2ip_device(37);
+    let sink = h.sender;
+    let controller = uid_n(38);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x28,
+            "OneIP",
+            "CTRL0003",
+            "4.8.0",
+            DeviceFeature::VIDEO_ROUTING,
+        ),
+    );
+
+    // Before the sink says who it follows, a sender with neither bit is a
+    // stranger and its write for the sink is dropped.
+    let mut cfg = Cfg::addresses(sink, "239.3.4.5");
+    cfg.rate = 60;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &cfg.bytes());
+    assert!(
+        h.state
+            .device(sink)
+            .expect("the named device is not registered")
+            .v2ip_details
+            .is_none(),
+        "a sender nothing has vouched for moved another device's record"
+    );
+
+    // The sub-opcode at 0, the controller uid at 4.
+    let mut mesh = poisoned(40);
+    mesh[0] = 0xFF;
+    mesh[4..20].copy_from_slice(controller.as_bytes());
+    h.feed(op::MESH_OPERATION, &mesh);
+
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &cfg.bytes());
+    let named = h
+        .state
+        .device(sink)
+        .expect("the named device is not registered")
+        .v2ip_details
+        .expect("the controller the device names was not trusted for it");
+    assert_eq!(named.tx_rate, Some(60));
 }

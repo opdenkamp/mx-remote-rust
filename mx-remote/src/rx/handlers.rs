@@ -6,7 +6,7 @@
 use std::net::Ipv4Addr;
 
 use crate::event::Event;
-use crate::state::{HelloInfo, State};
+use crate::state::{Device, HelloInfo, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TopologyEntry, V2ipDscpConfig,
@@ -339,13 +339,55 @@ fn apply_stream_route(
     }
 }
 
+/// The device a V2IP configuration frame is about, or `None` when nothing on
+/// the network would act on it.
+///
+/// The payload names its subject in the first sixteen bytes, and that is what
+/// decides whose configuration this is - not who sent it. Equal to the sender
+/// it is a device describing itself, which is what almost every one of these
+/// frames is. Different, it is a write for the device it names, and a receiver
+/// takes one only from a sender it treats as management. Anything else is
+/// dropped rather than filed against the sender, because a frame the network
+/// ignores must not move a record here.
+fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid> {
+    let subject = uid_at(p, 0);
+    if subject == rx.sender() {
+        return Some(subject);
+    }
+    // An unknown subject is dropped, as it is on a device: there is no record
+    // to move, and inventing one from a third party's description would create
+    // a device nothing has been heard from.
+    state.device(subject)?;
+    // Management standing, or the subject naming this sender as its mesh
+    // controller. The second is asked of the subject rather than the sender
+    // because it closes the window where a controller has been promoted but has
+    // no bays mapped yet, and so announces neither bit while still being the
+    // controller its mesh obeys.
+    //
+    // A subject that has named no controller contributes nothing here rather
+    // than refusing: not knowing who a device follows is not knowing that it
+    // follows nobody, and a client that has just started knows nothing about
+    // anyone for as long as a broadcast period.
+    let manages = state.device(rx.sender()).is_some_and(Device::is_management)
+        || state
+            .device(subject)
+            .is_some_and(|d| !d.mesh_master.is_zero() && d.mesh_master == rx.sender());
+    manages.then_some(subject)
+}
+
 /// Applies a device's V2IP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
+///
+/// Every block lands on the device the payload names, which is the sender only
+/// when the sender is describing itself.
 pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
     if p.len() < 61 {
         return;
     }
+    let Some(subject) = v2ip_config_subject(state, rx, p) else {
+        return;
+    };
     let tx_rate = p.get(40).copied().filter(|rate| {
         (crate::wire::V2IP_SOURCE_RATE_MIN..=crate::wire::V2IP_SOURCE_RATE_MAX).contains(rate)
     });
@@ -369,7 +411,7 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             flags: byte(p, 60) & SCALING_FLAGS_DEFINED,
         },
     };
-    if let Some(device) = state.device_mut(rx.sender()) {
+    if let Some(device) = state.device_mut(subject) {
         device.set_v2ip_details(details, ev);
     }
 
@@ -387,7 +429,7 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
                 width: u16_at(p, 84),
                 height: u16_at(p, 86),
             };
-            if let Some(device) = state.device_mut(rx.sender()) {
+            if let Some(device) = state.device_mut(subject) {
                 device.set_tiling(tiling, ev);
             }
         }
@@ -404,7 +446,7 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             },
             audio_fmt: p.get(112..120).and_then(audio_format),
         };
-        if let Some(device) = state.device_mut(rx.sender()) {
+        if let Some(device) = state.device_mut(subject) {
             device.set_v2ip_sink(sink, ev);
         }
     }

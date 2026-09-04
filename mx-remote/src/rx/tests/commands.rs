@@ -1708,9 +1708,28 @@ const DEVICE_CFG_CAPTURE: [u8; 120] = [
     0, 0, 0, 0, 0, 0, 0, 0,                         // sink_audio_fmt
 ];
 
+/// The unit the capture came from, as its own payload names it.
+///
+/// A configuration frame carries its subject in the first sixteen bytes, and a
+/// device describing itself puts its own uid there. So the capture has to
+/// arrive from this uid to be the report it is: fed from any other sender it is
+/// a management write for a third device, which is a different frame with
+/// different rules.
+const DEVICE_CFG_CAPTURE_UID: DeviceUid = DeviceUid::from_array([
+    0x27, 0x40, 0x01, 0x04, 0x85, 0xac, 0xb7, 0xaa, 0x3e, 0x7d, 0x2c, 0x67, 0xc6, 0x07, 0x00, 0xf5,
+]);
+
+/// A harness whose peer is the unit the capture was taken from.
+fn capture_device() -> Harness {
+    let mut h = Harness::new(0);
+    h.sender = DEVICE_CFG_CAPTURE_UID;
+    h.hello(0x28, "ONEIP", "CM0001", DeviceFeature::VIDEO_ROUTING);
+    h
+}
+
 #[test]
 fn a_captured_device_config_decodes_field_for_field() {
-    let mut h = command_device(97);
+    let mut h = capture_device();
     h.feed(op::V2IP_DEVICE_CFG, &DEVICE_CFG_CAPTURE);
 
     let details = h.device().v2ip_details.expect("no details");
@@ -1755,7 +1774,7 @@ fn a_captured_device_config_decodes_field_for_field() {
 
 #[test]
 fn a_stamped_tiling_block_is_told_from_an_absent_one() {
-    let mut h = command_device(98);
+    let mut h = capture_device();
     let target = uid_n(99);
 
     let mut p = DEVICE_CFG_CAPTURE;
