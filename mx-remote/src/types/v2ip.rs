@@ -503,6 +503,29 @@ impl DeviceV2ipDetails {
 /// device refused, or that reached it while it was offline, reads back here as
 /// though it had taken effect. Only the device's own configuration report
 /// confirms a route, and it sends that on its own schedule rather than in reply.
+///
+/// **Addresses that read as unset mean "no route, or the sink could not work
+/// one out" - never "definitely not subscribed".** This block is the one part
+/// of a device configuration with no validity marker of its own, so a sender
+/// with nothing to say sends zeros and every receiver stores them. A sender
+/// leaves it empty when its own stream configuration does not resolve, and that
+/// covers more than having no route: a selected source whose record has not
+/// arrived yet, which is the state after a restart at either end, missing audio
+/// bay configuration, or any of the three streams failing its validity check.
+/// The audio format has a second gate of its own, so it can be absent while the
+/// addresses are not.
+///
+/// This is worth expecting rather than guarding against. Any scaling change
+/// makes the device rebuild and rebroadcast this block, and a write aimed at a
+/// remote bay sends it zeroed however it was requested - so the empty reading
+/// arrives most often during exactly the no-signal troubleshooting that
+/// prompted the change. A device's periodic report puts a real route back
+/// within a minute of it having one.
+///
+/// An empty reading is applied rather than ignored on purpose. A sink that has
+/// genuinely dropped its route sends the same zeros, and so does every report
+/// after it, so refusing them would cache a route that nothing later could ever
+/// clear.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DeviceV2ipSink {
     /// The streams the sink subscribes to.
