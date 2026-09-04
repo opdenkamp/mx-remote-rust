@@ -7,8 +7,8 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE,
-    V2IP_DSCP_MAX, V2IP_DSCP_SET,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET,
 };
 
 /// Which of a V2IP device's streams an address describes.
@@ -253,7 +253,117 @@ pub const SCALING_FLAG_AUTO_SCALING: u8 = 1 << 7;
 pub const SCALING_FLAGS_DEFINED: u8 =
     SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
 
+/// Lowest refresh rate a V2IP output stage accepts, in Hz.
+///
+/// A receiver replaces anything outside
+/// [`V2IP_SCALING_REFRESH_MIN`]..=[`V2IP_SCALING_REFRESH_MAX`] with 50 rather
+/// than refusing the write, so 0 asks for 50Hz here instead of asking for
+/// nothing.
+pub const V2IP_SCALING_REFRESH_MIN: u16 = 24;
+
+/// Highest refresh rate a V2IP output stage accepts, in Hz. See
+/// [`V2IP_SCALING_REFRESH_MIN`].
+pub const V2IP_SCALING_REFRESH_MAX: u16 = 120;
+
+/// The output format to scale a V2IP sink to.
+///
+/// Built from a depth and a colour space rather than from a packed signal-type
+/// word, so the word a caller sends cannot carry the unset bpp index a sink
+/// reports while it has no mode configured.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipOutputMode {
+    /// The CTA-861 short video descriptor to output.
+    pub svd: u8,
+    /// Bit depth: 8, 10 or 12.
+    pub depth: u8,
+    /// The colour space to output.
+    pub colour: V2ipColourSpace,
+    /// Refresh rate in Hz, [`V2IP_SCALING_REFRESH_MIN`] to
+    /// [`V2IP_SCALING_REFRESH_MAX`].
+    pub refresh: u16,
+}
+
+impl V2ipOutputMode {
+    /// Reports whether a sink will take this mode, or why it will not.
+    ///
+    /// Checked here because a sink checks it and then says nothing: every value
+    /// this rejects is one the receiver decodes cleanly and drops, leaving a
+    /// caller with a send that succeeded and a setting that did not move.
+    ///
+    /// Passing is not a guarantee. A sink also weighs the format against the
+    /// EDID of the display attached to it and against what its own clock and
+    /// output stage can produce, and none of that is knowable from here.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.svd == 0 {
+            return Err("svd 0 is how a mode is cleared, not a mode to set");
+        }
+        if crate::lookup_svd(u16::from(self.svd)).is_none() {
+            return Err("the svd names no known video descriptor");
+        }
+        if MxrSignalType::bpp_index_for_depth(self.depth).is_none() {
+            return Err("a V2IP output stage takes 8, 10 or 12 bits per pixel");
+        }
+        if self.colour > V2ipColourSpace::YCBCR420 {
+            return Err("the colour space names none of RGB, 4:4:4, 4:2:2 or 4:2:0");
+        }
+        if !(V2IP_SCALING_REFRESH_MIN..=V2IP_SCALING_REFRESH_MAX).contains(&self.refresh) {
+            return Err("the refresh rate is outside 24..=120Hz");
+        }
+        Ok(())
+    }
+
+    /// The packed signal type a scaling write carries for this mode.
+    ///
+    /// Call [`V2ipOutputMode::validate`] first: an unvalidated depth packs as
+    /// the index for "no depth", which a receiver drops.
+    pub(crate) fn to_signal_type(self) -> MxrSignalType {
+        MxrSignalType::from_parts(
+            self.svd,
+            self.colour.to_wire(),
+            MxrSignalType::bpp_index_for_depth(self.depth).unwrap_or(0),
+        )
+    }
+}
+
+impl fmt::Display for V2ipOutputMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "svd {}, colour {}, {}bpp, {}Hz",
+            self.svd,
+            self.colour.to_wire(),
+            self.depth,
+            self.refresh
+        )
+    }
+}
+
 impl V2ipScalingSettings {
+    /// The mode this sink is configured to scale to, `None` when it has none.
+    ///
+    /// The two are distinct on the wire: a sink with no mode configured leaves
+    /// [`SCALING_FLAG_MODE_VALID`] clear, and never sets it over a zero mode.
+    ///
+    /// Trust it only where the sender reports
+    /// [`crate::DeviceInfo::config_initialised`]. Firmware without that builds
+    /// this block over uninitialised stack, where the valid bit itself is
+    /// noise.
+    pub const fn configured_mode(&self) -> Option<(MxrSignalType, u16)> {
+        if self.flags & SCALING_FLAG_MODE_VALID == 0 {
+            return None;
+        }
+        Some((self.mode, self.refresh))
+    }
+
+    /// Whether the output scales automatically, `None` when the sender did not
+    /// say.
+    pub const fn auto_scaling(&self) -> Option<bool> {
+        if self.flags & SCALING_FLAG_OPTIONS_VALID == 0 {
+            return None;
+        }
+        Some(self.flags & SCALING_FLAG_AUTO_SCALING != 0)
+    }
+
     /// Folds a received scaling config onto the cached one, field by field.
     ///
     /// A write carries the mode or the options alone, so taking the block

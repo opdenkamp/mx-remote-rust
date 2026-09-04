@@ -818,6 +818,24 @@ impl MultiviewerBool {
 }
 
 wire_enum! {
+    /// The colour space a V2IP output scales to.
+    ///
+    /// The field is four bits wide and only these four values are defined. A
+    /// receiver passes the whole nibble to its validator, so a fifth value is
+    /// dropped without a word rather than clamped to one of these.
+    V2ipColourSpace: u8 {
+        /// RGB.
+        RGB = 0;
+        /// YCbCr 4:4:4.
+        YCBCR444 = 1;
+        /// YCbCr 4:2:2.
+        YCBCR422 = 2;
+        /// YCbCr 4:2:0.
+        YCBCR420 = 3;
+    }
+}
+
+wire_enum! {
     /// The 2-byte `mxr_signal_type` carried in scaling configs and bay signal
     /// reports.
     ///
@@ -879,6 +897,36 @@ impl MxrSignalType {
     /// and "RGB" when it *is* set.
     pub const fn is_set(self) -> bool {
         self.0 != 0 && self.bpp_index() as u16 != SIG_BPP_UNSET
+    }
+
+    /// Builds the word from the fields a scaling write consumes.
+    ///
+    /// `non_int` is left clear: the receiving struct carries the bit, and the
+    /// apply path does not read it.
+    ///
+    /// Building rather than editing is the point. A sink with no mode
+    /// configured reports the word with the unset bpp index in it, so a caller
+    /// that read that word back and filled in an svd would send an index no
+    /// depth uses - which the receiver decodes to zero and rejects without
+    /// answering.
+    pub(crate) const fn from_parts(svd: u8, colour: u8, bpp_index: u8) -> Self {
+        Self((svd as u16) | (((colour & 0xF) as u16) << 8) | (((bpp_index & 0x7) as u16) << 13))
+    }
+
+    /// The bpp index that stands for a bit depth, `None` for a depth no index
+    /// names.
+    ///
+    /// Only the three depths a V2IP output stage accepts are here. Index 4
+    /// names 16bpp, which [`MxrSignalType::bpp`] reads back from a device, but
+    /// the output stage refuses it - so offering it as something to write would
+    /// send a frame that is decoded cleanly and then dropped in silence.
+    pub(crate) const fn bpp_index_for_depth(depth: u8) -> Option<u8> {
+        match depth {
+            8 => Some(1),
+            10 => Some(2),
+            12 => Some(3),
+            _ => None,
+        }
     }
 }
 

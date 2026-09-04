@@ -34,6 +34,7 @@ pub use enums::{
     MultiviewerAspectRatio, MultiviewerBool, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, MxrSignalType, RcAction, RcKey, RcType, UtpLinkSpeed,
+    V2ipColourSpace,
 };
 pub use netif::valid_addresses;
 pub use tx::SendError;

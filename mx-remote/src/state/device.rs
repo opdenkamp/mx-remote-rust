@@ -11,8 +11,8 @@ use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    RcSettings, TopologyEntry, V2ipDeviceStats, V2ipStreamSources, V2ipTilingConfig,
-    VolumeMuteStatus,
+    RcSettings, TopologyEntry, V2ipDeviceStats, V2ipScalingSettings, V2ipStreamSources,
+    V2ipTilingConfig, VolumeMuteStatus,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType};
 
@@ -170,6 +170,12 @@ impl Device {
     pub(crate) fn is_v2ip(&self) -> bool {
         self.hello.features.has(DeviceFeature::V2IP_SINK)
             || self.hello.features.has(DeviceFeature::V2IP_SOURCE)
+    }
+
+    /// Whether the device reports a V2IP sink, which is what carries the
+    /// scaling settings.
+    pub(crate) fn is_v2ip_sink(&self) -> bool {
+        self.hello.features.has(DeviceFeature::V2IP_SINK)
     }
 
     pub(crate) fn is_video_matrix(&self) -> bool {
@@ -716,6 +722,32 @@ impl Device {
         ev.push(Event::V2ipDetailsChanged {
             device: self.uid,
             details: merged,
+        });
+    }
+
+    /// The scaling block as last reported or written, all-zero before either.
+    pub(crate) fn v2ip_scaling(&self) -> V2ipScalingSettings {
+        self.v2ip_details.unwrap_or_default().scaling
+    }
+
+    /// Replaces the cached scaling block with the state a write will have left
+    /// on the device.
+    ///
+    /// Separate from [`Device::set_v2ip_details`] because that folds a received
+    /// frame on, and folding cannot express a cleared mode: a write clears one
+    /// by sending the valid bit over a zero mode, while a device with no mode
+    /// configured reports the valid bit clear. Only the second is a state a
+    /// device broadcasts, so it is the one to cache.
+    pub(crate) fn set_v2ip_scaling(&mut self, scaling: V2ipScalingSettings, ev: &mut Vec<Event>) {
+        let mut details = self.v2ip_details.unwrap_or_default();
+        if details.scaling == scaling {
+            return;
+        }
+        details.scaling = scaling;
+        self.v2ip_details = Some(details);
+        ev.push(Event::V2ipDetailsChanged {
+            device: self.uid,
+            details,
         });
     }
 

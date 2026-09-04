@@ -30,20 +30,21 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat, V2ipRoute,
-    V2ipRouteTarget, V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
-    MULTIVIEWER_INPUTS, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat, V2ipOutputMode,
+    V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, VideoWallOp,
+    VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
     build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
-    build_v2ip_manual_source_switch, build_v2ip_source_switch, build_video_wall, mv_cmd_payload,
-    mv_sub, op, Addressee, BayUid, DeviceUid, EdidProfile, MultiviewerAspectRatio,
-    MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode,
-    MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, Opcode,
-    RcAction, RcKey, SendError, StreamAddr, V2ipStreams, DEVICE_NAME_LEN, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_source_switch,
+    build_video_wall, mv_cmd_payload, mv_sub, op, Addressee, BayUid, DeviceUid, EdidProfile,
+    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
+    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
+    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
+    V2ipStreams, DEVICE_NAME_LEN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -796,6 +797,138 @@ impl Remote {
         self.shared
             .send(&Addressee::Broadcast, op::SYS_MONITORING_PULSE, &[])?;
         Ok(())
+    }
+
+    // ---- V2IP scaling ----
+
+    /// Turns a V2IP sink's automatic scaling on or off.
+    ///
+    /// Automatic scaling and a configured output mode are separate reasons for
+    /// a sink to scale, and this moves only the first: a sink with a mode
+    /// configured goes on scaling to it with automatic scaling off. Turning
+    /// both off is this call plus [`Remote::clear_v2ip_output_mode`].
+    ///
+    /// Nothing acknowledges the frame. Read the sink back through
+    /// [`Remote::v2ip_details`] to learn what it did, and treat the block as
+    /// meaningful only where [`crate::DeviceInfo::config_initialised`] is set.
+    pub fn set_v2ip_auto_scaling(
+        &self,
+        device: DeviceUid,
+        enabled: bool,
+    ) -> Result<(), ControlError> {
+        let written = if enabled {
+            SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING
+        } else {
+            SCALING_FLAG_OPTIONS_VALID
+        };
+        self.set_v2ip_scaling(device, MxrSignalType::NONE, 0, written, move |cached| {
+            V2ipScalingSettings {
+                flags: (cached.flags & !SCALING_FLAG_AUTO_SCALING)
+                    | SCALING_FLAG_OPTIONS_VALID
+                    | (written & SCALING_FLAG_AUTO_SCALING),
+                ..cached
+            }
+        })
+    }
+
+    /// Sets the output format a V2IP sink scales to.
+    ///
+    /// The mode is checked here and nothing is sent if it fails, because every
+    /// value a sink refuses it refuses in silence. Passing that check is not a
+    /// guarantee: the sink also weighs the format against the display's EDID
+    /// and against what its own output stage can produce.
+    ///
+    /// **Turn automatic scaling off first if it is on.** A sink refuses a mode
+    /// whose format the attached display does not list while it is scaling
+    /// automatically, and refuses it silently. Setting a mode and then turning
+    /// automatic scaling back on is the order that survives, because the mode
+    /// is checked while automatic scaling is still off.
+    ///
+    /// Configuring a mode is itself a reason to scale, so a sink with one
+    /// scales whether or not automatic scaling is on.
+    pub fn set_v2ip_output_mode(
+        &self,
+        device: DeviceUid,
+        mode: V2ipOutputMode,
+    ) -> Result<(), ControlError> {
+        mode.validate().map_err(ControlError::InvalidRequest)?;
+        let signal = mode.to_signal_type();
+        let refresh = mode.refresh;
+        self.set_v2ip_scaling(
+            device,
+            signal,
+            refresh,
+            SCALING_FLAG_MODE_VALID,
+            move |cached| V2ipScalingSettings {
+                mode: signal,
+                refresh,
+                flags: cached.flags | SCALING_FLAG_MODE_VALID,
+            },
+        )
+    }
+
+    /// Clears the output format a V2IP sink is configured to scale to.
+    ///
+    /// The sink stops scaling for that reason and keeps its automatic scaling
+    /// setting, so a sink scaling for both reasons goes on scaling until
+    /// [`Remote::set_v2ip_auto_scaling`] turns the other one off.
+    ///
+    /// This is the only way to express "no mode configured", and it is what a
+    /// caller restoring a sink that had none has to send: a sink reports no
+    /// mode by leaving the mode's valid bit clear, which is not something a
+    /// write can say.
+    pub fn clear_v2ip_output_mode(&self, device: DeviceUid) -> Result<(), ControlError> {
+        // The valid bit with a zero descriptor is the clear. The receiver takes
+        // that branch ahead of validating anything, and ignores the depth,
+        // colour space and refresh rate beside it.
+        self.set_v2ip_scaling(
+            device,
+            MxrSignalType::NONE,
+            0,
+            SCALING_FLAG_MODE_VALID,
+            |cached| V2ipScalingSettings {
+                mode: MxrSignalType::NONE,
+                refresh: 0,
+                flags: cached.flags & !SCALING_FLAG_MODE_VALID,
+            },
+        )
+    }
+
+    /// The one send behind the scaling methods.
+    ///
+    /// `written` is the flag byte that goes out, and `applied` says what the
+    /// sink will report afterwards. The two differ where the wire spells a
+    /// write differently from the state it produces - clearing a mode is sent
+    /// as the valid bit over a zero mode and read back as the valid bit clear -
+    /// so predicting the cached value from the frame alone would leave a
+    /// caller reading a state no device ever broadcasts.
+    fn set_v2ip_scaling(
+        &self,
+        device: DeviceUid,
+        mode: MxrSignalType,
+        refresh: u16,
+        written: u8,
+        applied: impl FnOnce(V2ipScalingSettings) -> V2ipScalingSettings + Send + 'static,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.is_v2ip_sink() {
+                return Err(ControlError::Unsupported(
+                    "scaling settings need a V2IP sink",
+                ));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_DEVICE_CFG,
+                build_v2ip_scaling(d.uid, mode, refresh, written),
+            )
+            .then(move |state, ev| {
+                if let Some(d) = state.device_mut(device) {
+                    let cached = d.v2ip_scaling();
+                    d.set_v2ip_scaling(applied(cached), ev);
+                }
+            }))
+        })
     }
 
     // ---- video wall ----

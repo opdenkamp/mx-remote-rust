@@ -24,11 +24,13 @@ use std::net::Ipv4Addr;
 
 use crate::types::{
     AmpZoneSettings, V2ipAudioFormat, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
 };
 
 use super::bayconfig::{parse_bay_config, BAY_CONFIG_SIZE};
 use super::enums::{
-    BayFeatures, BayStatus, DeviceFeature, EdidProfile, MultiviewerViewMode, RcAction, RcKey,
+    BayFeatures, BayStatus, DeviceFeature, EdidProfile, MultiviewerViewMode, MxrSignalType,
+    RcAction, RcKey,
 };
 use super::frame::build_frame;
 use super::opcode::{audio_sub, op, protocol_for};
@@ -506,4 +508,44 @@ fn bay_config_record_fields() {
 #[test]
 fn a_record_shorter_than_the_declared_width_is_dropped() {
     assert!(parse_bay_config(&[0u8; BAY_CONFIG_SIZE - 1]).is_none());
+}
+
+/// Adjudicated against `v2ip_device_config_update`: 88 bytes, which is the
+/// whole struct and the receiver's minimum.
+///
+/// Three of the zero runs are the assertion, not filler. The source block at
+/// 16..40 is zeroed because a receiver hands this frame's addresses to its
+/// encoder on every frame it applies rather than only on the ones that carry
+/// addresses, and a zero video address is refused for not being multicast -
+/// so a scaling write that put anything there would repoint a transceiver's
+/// stream. The `ff` at 40 is a rate outside the valid range, which is how a
+/// frame says it is not setting one; a zero there asks for a rate of zero. The
+/// tiling uid at 64 is zero, which is what says no window is carried.
+///
+/// The payload stops at 88 rather than running to the 120-byte form. The tail
+/// that form appends is copied into a receiver's record for the target with no
+/// validity test, and this frame is a broadcast, so the longer form would zero
+/// every device's idea of the target's sink subscription as a side effect.
+#[test]
+fn v2ip_scaling_frame() {
+    let payload = build_v2ip_scaling(
+        TEST_UID,
+        // svd 16, colour 4:2:2, the bpp index for 12bpp.
+        MxrSignalType::from_wire(0x6210),
+        60,
+        SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING,
+    );
+    let got = build_frame(
+        TEST_UID,
+        op::V2IP_DEVICE_CFG,
+        protocol_for(op::V2IP_DEVICE_CFG),
+        &payload,
+    );
+    assert_eq!(
+        hex_of(&got),
+        "50381100000102030405060708090a0b0c0d0e0f3c005800000102030405060708090a0b0c0d0e0f\
+         000000000000000000000000000000000000000000000000ff0000000000000000000000000000\
+         0010623c0083000000000000000000000000000000000000000000000000000000"
+            .replace(['\n', ' '], "")
+    );
 }

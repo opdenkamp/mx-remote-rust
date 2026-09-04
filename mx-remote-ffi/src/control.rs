@@ -19,8 +19,8 @@ use std::ffi::c_char;
 use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipRoute,
-    V2ipRouteTarget, VideoWallWindow,
+    MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
+    V2ipOutputMode, V2ipRoute, V2ipRouteTarget, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -760,6 +760,150 @@ pub unsafe extern "C" fn mxr_send_monitoring_pulse(remote: *const mxr_remote_t) 
     // SAFETY: the caller guarantees a live handle or null.
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| from_control(r.remote.send_monitoring_pulse()))
+}
+
+// ---- V2IP scaling ----
+
+/// The colour space a V2IP sink scales its output to.
+pub const MXR_V2IP_COLOUR_RGB: u8 = 0;
+/// YCbCr 4:4:4. See `MXR_V2IP_COLOUR_RGB`.
+pub const MXR_V2IP_COLOUR_YCBCR444: u8 = 1;
+/// YCbCr 4:2:2. See `MXR_V2IP_COLOUR_RGB`.
+pub const MXR_V2IP_COLOUR_YCBCR422: u8 = 2;
+/// YCbCr 4:2:0. See `MXR_V2IP_COLOUR_RGB`.
+pub const MXR_V2IP_COLOUR_YCBCR420: u8 = 3;
+
+/// Lowest refresh rate a V2IP output stage accepts, in Hz.
+pub const MXR_V2IP_SCALING_REFRESH_MIN: u16 = 24;
+
+/// Highest refresh rate a V2IP output stage accepts, in Hz.
+pub const MXR_V2IP_SCALING_REFRESH_MAX: u16 = 120;
+
+/// The output format to scale a V2IP sink to.
+///
+/// Given as a depth and a colour space rather than as a packed signal-type
+/// word, so a caller cannot send the "no depth" index a sink reports while it
+/// has none configured - a value a sink decodes cleanly and then drops.
+///
+/// `svd` must name a known video descriptor and may not be zero, `depth` must
+/// be 8, 10 or 12, `colour` one of the `MXR_V2IP_COLOUR_*` values, and
+/// `refresh` between `MXR_V2IP_SCALING_REFRESH_MIN` and
+/// `MXR_V2IP_SCALING_REFRESH_MAX`. Each is checked before anything is sent.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_output_mode_t {
+    /// The CTA-861 short video descriptor to output.
+    pub svd: u8,
+    /// Bit depth: 8, 10 or 12.
+    pub depth: u8,
+    /// One of the `MXR_V2IP_COLOUR_*` values.
+    pub colour: u8,
+    /// Refresh rate in Hz.
+    pub refresh: u16,
+}
+
+impl From<mxr_v2ip_output_mode_t> for V2ipOutputMode {
+    fn from(m: mxr_v2ip_output_mode_t) -> Self {
+        Self {
+            svd: m.svd,
+            depth: m.depth,
+            colour: V2ipColourSpace::from_wire(m.colour),
+            refresh: m.refresh,
+        }
+    }
+}
+
+/// Reads a mode argument, refusing a null pointer.
+unsafe fn output_mode(mode: *const mxr_v2ip_output_mode_t) -> Result<V2ipOutputMode, mxr_result_t> {
+    // SAFETY: the caller guarantees an initialised struct or null.
+    match unsafe { mode.as_ref() } {
+        Some(m) => Ok((*m).into()),
+        None => Err(fail(
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+            "the mode pointer is null",
+        )),
+    }
+}
+
+/// Turns a V2IP sink's automatic scaling on or off.
+///
+/// Automatic scaling and a configured output mode are separate reasons for a
+/// sink to scale, and this moves only the first: a sink with a mode configured
+/// goes on scaling to it with automatic scaling off. Turning both off is this
+/// call plus `mxr_clear_v2ip_output_mode()`.
+///
+/// Nothing acknowledges the frame, so `MXR_OK` means it was sent. Read the sink
+/// back with `mxr_v2ip_details()`, and trust the scaling fields only where the
+/// device reports `MXR_FEATURE_CONFIG_INITIALISED`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_auto_scaling(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    enabled: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_auto_scaling(device.into(), enabled))
+    })
+}
+
+/// Sets the output format a V2IP sink scales to.
+///
+/// The mode is checked here and `MXR_ERR_INVALID_ARGUMENT` returned without
+/// sending anything, because a sink refuses a bad one in silence. Passing is
+/// not a guarantee: the sink also weighs the format against the attached
+/// display's EDID and against what its own output stage can produce.
+///
+/// **Turn automatic scaling off first if it is on.** A sink silently refuses a
+/// mode the display does not list while it is scaling automatically. Set the
+/// mode, then turn automatic scaling back on if it was on.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `mode` points at an initialised
+/// [`mxr_v2ip_output_mode_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_output_mode(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    mode: *const mxr_v2ip_output_mode_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        match unsafe { output_mode(mode) } {
+            Ok(m) => from_control(r.remote.set_v2ip_output_mode(device.into(), m)),
+            Err(code) => code,
+        }
+    })
+}
+
+/// Clears the output format a V2IP sink is configured to scale to.
+///
+/// The sink stops scaling for that reason and keeps its automatic scaling
+/// setting. This is the only way to express "no mode configured", and it is
+/// what restoring a sink that had none requires: a sink reports no mode by
+/// leaving `MXR_SCALING_FLAG_MODE_VALID` clear, which a write cannot say.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_clear_v2ip_output_mode(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.clear_v2ip_output_mode(device.into()))
+    })
 }
 
 // ---- video wall ----

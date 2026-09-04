@@ -14,7 +14,7 @@ use crate::types::{
     VIDEO_WALL_CLEARED,
 };
 
-use super::enums::{EdidProfile, RcAction, RcKey};
+use super::enums::{EdidProfile, MxrSignalType, RcAction, RcKey};
 use super::opcode::audio_sub;
 use super::uid::DeviceUid;
 
@@ -346,5 +346,66 @@ pub(crate) fn build_audio_select_input(
     p.extend_from_slice(source.as_bytes());
     p.extend_from_slice(&sink_endpoint.to_le_bytes());
     p.extend_from_slice(&source_endpoint.to_le_bytes());
+    p
+}
+
+/// The `tx_rate` a frame that is not setting a rate carries.
+///
+/// The field's valid range ends well below this, and a receiver drops an
+/// out-of-range rate and keeps the one it had. Sending a plain zero would ask
+/// for a rate of zero.
+const V2IP_RATE_UNSET: u8 = 0xFF;
+
+/// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that writes one sink's scaling
+/// block, leaving every other field of the configuration alone.
+///
+/// 88 bytes, which is both the receiver's minimum and the whole of
+/// `v2ip_device_config_update`: uid 0..16, source 16..40, the options word at
+/// 40, audio return 48..56, scaling 56..64, tiling 64..88.
+///
+/// **88 rather than the 120-byte form.** The longer form appends a sink block,
+/// and a receiver copies that block into its record for the target with no
+/// validity test of its own - unlike the source, rate, marking, scaling and
+/// tiling fields, which each sit behind one. This frame is a broadcast, so
+/// every device on the network runs that copy, not just the addressee: sending
+/// the long form with the block zeroed would replace the whole network's idea
+/// of where the target's sink is subscribed, as a side effect of setting one
+/// scaling flag. At 88 the block is absent rather than zeroed and nothing
+/// reads it.
+///
+/// **The source block at 16..40 must stay zeroed**, and does. A receiver hands
+/// this frame's addresses to its encoder unconditionally, on every frame it
+/// applies rather than only on the ones that carry addresses; what stops a
+/// scaling write from repointing the encoder is that the call refuses a video
+/// address which is not multicast. Zero is not multicast. Anything that is,
+/// written here, would move a transceiver's stream.
+///
+/// Which halves of the block a receiver reads is chosen by the validity bits in
+/// `flags`, not by this layout: the mode and refresh are read behind one bit
+/// and the options behind another, so a write that carries neither bit lands as
+/// a no-op rather than as a request to zero the settings.
+pub(crate) fn build_v2ip_scaling(
+    target: DeviceUid,
+    mode: MxrSignalType,
+    refresh: u16,
+    flags: u8,
+) -> Vec<u8> {
+    let mut p = Vec::with_capacity(88);
+    p.extend_from_slice(target.as_bytes());
+    // source: three stream slots, left zeroed so the encoder keeps its own.
+    p.resize(40, 0);
+    p.push(V2IP_RATE_UNSET);
+    // Three dscp bytes with no MXR_V2IP_DSCP_SET bit, so no marking is applied,
+    // then the padding that aligns the audio-return slot.
+    p.resize(48, 0);
+    // audio return: zeroed, which reads as carrying no address.
+    p.resize(56, 0);
+    p.extend_from_slice(&mode.to_wire().to_le_bytes());
+    p.extend_from_slice(&refresh.to_le_bytes());
+    p.push(flags);
+    // The scaling struct is 8-aligned, so its five bytes of fields are followed
+    // by three of padding; then the tiling window, whose zero uid is what says
+    // no window is carried.
+    p.resize(88, 0);
     p
 }

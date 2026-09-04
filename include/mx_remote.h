@@ -1008,6 +1008,36 @@
 #define MXR_MV_SOURCE_INPUT_4 4
 
 /**
+ * The colour space a V2IP sink scales its output to.
+ */
+#define MXR_V2IP_COLOUR_RGB 0
+
+/**
+ * YCbCr 4:4:4. See `MXR_V2IP_COLOUR_RGB`.
+ */
+#define MXR_V2IP_COLOUR_YCBCR444 1
+
+/**
+ * YCbCr 4:2:2. See `MXR_V2IP_COLOUR_RGB`.
+ */
+#define MXR_V2IP_COLOUR_YCBCR422 2
+
+/**
+ * YCbCr 4:2:0. See `MXR_V2IP_COLOUR_RGB`.
+ */
+#define MXR_V2IP_COLOUR_YCBCR420 3
+
+/**
+ * Lowest refresh rate a V2IP output stage accepts, in Hz.
+ */
+#define MXR_V2IP_SCALING_REFRESH_MIN 24
+
+/**
+ * Highest refresh rate a V2IP output stage accepts, in Hz.
+ */
+#define MXR_V2IP_SCALING_REFRESH_MAX 120
+
+/**
  * A window's horizontal origin must be a multiple of this.
  */
 #define MXR_VIDEO_WALL_POS_ALIGN 64
@@ -1491,6 +1521,37 @@ typedef struct {
    */
   uint8_t eq_right[MXR_AMP_EQ_BANDS];
 } mxr_amp_zone_settings_t;
+
+/**
+ * The output format to scale a V2IP sink to.
+ *
+ * Given as a depth and a colour space rather than as a packed signal-type
+ * word, so a caller cannot send the "no depth" index a sink reports while it
+ * has none configured - a value a sink decodes cleanly and then drops.
+ *
+ * `svd` must name a known video descriptor and may not be zero, `depth` must
+ * be 8, 10 or 12, `colour` one of the `MXR_V2IP_COLOUR_*` values, and
+ * `refresh` between `MXR_V2IP_SCALING_REFRESH_MIN` and
+ * `MXR_V2IP_SCALING_REFRESH_MAX`. Each is checked before anything is sent.
+ */
+typedef struct {
+  /**
+   * The CTA-861 short video descriptor to output.
+   */
+  uint8_t svd;
+  /**
+   * Bit depth: 8, 10 or 12.
+   */
+  uint8_t depth;
+  /**
+   * One of the `MXR_V2IP_COLOUR_*` values.
+   */
+  uint8_t colour;
+  /**
+   * Refresh rate in Hz.
+   */
+  uint16_t refresh;
+} mxr_v2ip_output_mode_t;
 
 /**
  * Where a video-wall sink's window sits, and the picture it was measured
@@ -3997,6 +4058,59 @@ mxr_result_t mxr_reboot(const mxr_remote_t *remote, mxr_uid_t device);
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
+
+/**
+ * Turns a V2IP sink's automatic scaling on or off.
+ *
+ * Automatic scaling and a configured output mode are separate reasons for a
+ * sink to scale, and this moves only the first: a sink with a mode configured
+ * goes on scaling to it with automatic scaling off. Turning both off is this
+ * call plus `mxr_clear_v2ip_output_mode()`.
+ *
+ * Nothing acknowledges the frame, so `MXR_OK` means it was sent. Read the sink
+ * back with `mxr_v2ip_details()`, and trust the scaling fields only where the
+ * device reports `MXR_FEATURE_CONFIG_INITIALISED`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_auto_scaling(const mxr_remote_t *remote, mxr_uid_t device, bool enabled);
+
+/**
+ * Sets the output format a V2IP sink scales to.
+ *
+ * The mode is checked here and `MXR_ERR_INVALID_ARGUMENT` returned without
+ * sending anything, because a sink refuses a bad one in silence. Passing is
+ * not a guarantee: the sink also weighs the format against the attached
+ * display's EDID and against what its own output stage can produce.
+ *
+ * **Turn automatic scaling off first if it is on.** A sink silently refuses a
+ * mode the display does not list while it is scaling automatically. Set the
+ * mode, then turn automatic scaling back on if it was on.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `mode` points at an initialised
+ * [`mxr_v2ip_output_mode_t`].
+ */
+mxr_result_t mxr_set_v2ip_output_mode(const mxr_remote_t *remote,
+                                      mxr_uid_t device,
+                                      const mxr_v2ip_output_mode_t *mode);
+
+/**
+ * Clears the output format a V2IP sink is configured to scale to.
+ *
+ * The sink stops scaling for that reason and keeps its automatic scaling
+ * setting. This is the only way to express "no mode configured", and it is
+ * what restoring a sink that had none requires: a sink reports no mode by
+ * leaving `MXR_SCALING_FLAG_MODE_VALID` clear, which a write cannot say.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_clear_v2ip_output_mode(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
  * Shows a window on a sink's video wall without storing it.

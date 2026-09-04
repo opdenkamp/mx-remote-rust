@@ -18,16 +18,19 @@ use crate::event::EventHandler;
 use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, BayNameChange, EdidProfileChange,
-    EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipRoute, V2ipRouteTarget, VOLUME_UNCHANGED,
+    EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute, V2ipRouteTarget,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
     Addressee, BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile,
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipStreams, HEADER_LEN,
-    PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
+    V2ipStreams, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -1949,4 +1952,270 @@ fn a_setting_the_multiviewer_would_drop_never_reaches_the_wire() {
         f.remote.set_multiviewer_input_source(uid, 4, uid_n(60)),
         Err(ControlError::InvalidRequest(_))
     ));
+}
+
+/// A scaling write carries nothing but the scaling block.
+///
+/// The receiver hands this frame's source addresses to its encoder on every
+/// frame it applies, not only on the ones that carry addresses, and what stops
+/// a scaling write from repointing the encoder is that a zero video address is
+/// not multicast. The rate beside them is dropped for being out of range. So
+/// the zeros and the `0xFF` are the assertion: a builder that filled either in
+/// would move a transceiver's stream or reset its rate as a side effect of
+/// turning scaling off.
+#[test]
+fn a_scaling_write_carries_nothing_but_the_scaling_block() {
+    let f = Fixture::new();
+    let sink = uid_n(220);
+    f.everything(sink, 0x28, "SC0001");
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_auto_scaling(sink, true)
+        .expect("the socket is open and the device is above the floor");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+
+    assert_eq!(p.len(), 88, "the payload is not the size the sink requires");
+    assert_eq!(u16::from_le_bytes([frame[22], frame[23]]), 88);
+    assert_eq!(&p[..16], sink.as_bytes(), "the frame names another device");
+    assert!(
+        p[16..40].iter().all(|b| *b == 0),
+        "a source address would repoint the encoder"
+    );
+    assert!(
+        !(V2IP_SOURCE_RATE_MIN..=V2IP_SOURCE_RATE_MAX).contains(&p[40]),
+        "the rate is inside the valid range, so it would replace the sink's"
+    );
+    assert!(
+        p[41..44].iter().all(|b| *b & V2IP_DSCP_SET == 0),
+        "a marking would be applied"
+    );
+    assert!(
+        p[64..80].iter().all(|b| *b == 0),
+        "a non-zero tiling uid would carry a window"
+    );
+    assert_eq!(
+        p[60],
+        SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING
+    );
+    assert_eq!(
+        p[60] & SCALING_FLAG_MODE_VALID,
+        0,
+        "an options write claimed to carry a mode"
+    );
+}
+
+/// Clearing a mode is spelled one way on a write and the other way in a
+/// report, and the cache has to hold the report's spelling.
+///
+/// A write clears a configured mode by setting the valid bit over a zero
+/// descriptor; a sink with no mode configured reports the valid bit clear and
+/// never sets it over a zero mode. Caching what was sent would leave a caller
+/// reading back a state no device ever broadcasts - a mode configured to
+/// descriptor zero.
+#[test]
+fn clearing_a_mode_is_written_set_and_cached_clear() {
+    let f = Fixture::new();
+    let sink = uid_n(221);
+    f.everything(sink, 0x28, "SC0002");
+    f.connect();
+
+    f.remote
+        .set_v2ip_output_mode(
+            sink,
+            V2ipOutputMode {
+                svd: 16,
+                depth: 12,
+                colour: V2ipColourSpace::YCBCR422,
+                refresh: 60,
+            },
+        )
+        .expect("the mode is one a sink accepts");
+    let cached = f
+        .remote
+        .v2ip_details(sink)
+        .expect("the write back left no configuration");
+    assert_eq!(
+        cached.scaling.configured_mode().map(|(m, r)| (m.svd(), r)),
+        Some((16, 60)),
+        "the mode that was set did not reach the cache"
+    );
+
+    f.tap.clear();
+    f.remote
+        .clear_v2ip_output_mode(sink)
+        .expect("the socket is open and the device is above the floor");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+
+    assert_eq!(
+        p[60] & SCALING_FLAG_MODE_VALID,
+        SCALING_FLAG_MODE_VALID,
+        "the clear did not claim to carry a mode, so the sink ignores it"
+    );
+    assert_eq!(
+        u16::from_le_bytes([p[56], p[57]]),
+        0,
+        "the descriptor is not zero, so this sets a mode rather than clearing one"
+    );
+
+    let cached = f
+        .remote
+        .v2ip_details(sink)
+        .expect("the write back left no configuration");
+    assert_eq!(
+        cached.scaling.configured_mode(),
+        None,
+        "the cache holds a mode the sink will not report"
+    );
+}
+
+/// Turning automatic scaling on leaves a configured mode where it is.
+///
+/// The two are separate reasons for a sink to scale and each is written behind
+/// its own validity bit, so an options write that claimed the mode half would
+/// overwrite the mode with whatever it happened to carry.
+#[test]
+fn an_auto_scaling_write_leaves_a_configured_mode_alone() {
+    let f = Fixture::new();
+    let sink = uid_n(222);
+    f.everything(sink, 0x28, "SC0003");
+    f.connect();
+
+    f.remote
+        .set_v2ip_output_mode(
+            sink,
+            V2ipOutputMode {
+                svd: 4,
+                depth: 8,
+                colour: V2ipColourSpace::RGB,
+                refresh: 60,
+            },
+        )
+        .expect("the mode is one a sink accepts");
+    f.remote
+        .set_v2ip_auto_scaling(sink, false)
+        .expect("the socket is open and the device is above the floor");
+
+    let cached = f
+        .remote
+        .v2ip_details(sink)
+        .expect("the write back left no configuration");
+    assert_eq!(
+        cached.scaling.configured_mode().map(|(m, _)| m.svd()),
+        Some(4),
+        "turning automatic scaling off dropped the configured mode"
+    );
+    assert_eq!(cached.scaling.auto_scaling(), Some(false));
+
+    f.remote
+        .set_v2ip_auto_scaling(sink, true)
+        .expect("the socket is open and the device is above the floor");
+    let cached = f
+        .remote
+        .v2ip_details(sink)
+        .expect("the write back left no configuration");
+    assert_eq!(cached.scaling.auto_scaling(), Some(true));
+    assert_eq!(
+        cached.scaling.configured_mode().map(|(m, _)| m.svd()),
+        Some(4)
+    );
+}
+
+/// Every mode a sink refuses, refused here instead.
+///
+/// A sink drops each of these without answering, so a caller that sent one
+/// would see the send succeed and the setting stay where it was.
+#[test]
+fn an_output_mode_a_sink_would_drop_is_refused_before_it_is_sent() {
+    let f = Fixture::new();
+    let sink = uid_n(223);
+    f.everything(sink, 0x28, "SC0004");
+    f.connect();
+
+    let good = V2ipOutputMode {
+        svd: 16,
+        depth: 10,
+        colour: V2ipColourSpace::YCBCR444,
+        refresh: 50,
+    };
+    assert!(
+        f.remote.set_v2ip_output_mode(sink, good).is_ok(),
+        "the mode every case below is derived from was itself refused"
+    );
+
+    let refused = |what: &str, mode: V2ipOutputMode| {
+        f.tap.clear();
+        let got = f.remote.set_v2ip_output_mode(sink, mode);
+        assert!(
+            matches!(got, Err(ControlError::InvalidRequest(_))),
+            "{what}: {got:?}"
+        );
+        assert!(
+            f.tap.frames().is_empty(),
+            "{what} reached the wire despite being refused"
+        );
+    };
+
+    refused(
+        "descriptor zero, which clears rather than sets",
+        V2ipOutputMode { svd: 0, ..good },
+    );
+    refused(
+        "a descriptor no table names",
+        V2ipOutputMode { svd: 254, ..good },
+    );
+    // 16bpp has a bpp index and reads back from a device, but the output stage
+    // refuses it - so it decodes cleanly and is then dropped in silence.
+    refused("16 bits per pixel", V2ipOutputMode { depth: 16, ..good });
+    refused(
+        "a depth no index names",
+        V2ipOutputMode { depth: 9, ..good },
+    );
+    refused(
+        "a colour space outside the four defined",
+        V2ipOutputMode {
+            colour: V2ipColourSpace::from_wire(4),
+            ..good
+        },
+    );
+    // Out of range does not refuse the write on the sink: it silently replaces
+    // the rate with 50, so a caller asking for 0 gets 50Hz rather than nothing.
+    refused(
+        "refresh below the range",
+        V2ipOutputMode { refresh: 0, ..good },
+    );
+    refused(
+        "refresh above the range",
+        V2ipOutputMode {
+            refresh: 144,
+            ..good
+        },
+    );
+}
+
+/// Scaling settings belong to a sink, and a device without one takes the frame
+/// and does nothing with it.
+#[test]
+fn a_scaling_write_needs_a_v2ip_sink() {
+    let f = Fixture::new();
+    let amp = uid_n(224);
+    f.amplifier(amp, 0x28, "SC0005");
+    f.connect();
+
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.set_v2ip_auto_scaling(amp, true),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.clear_v2ip_output_mode(amp),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(
+        f.tap.frames().is_empty(),
+        "a device with no sink was sent a scaling write"
+    );
 }
