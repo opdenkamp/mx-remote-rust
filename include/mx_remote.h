@@ -1856,6 +1856,22 @@ typedef struct {
 /**
  * The signal a bay measures, beyond the description in
  * [`mxr_bay_info_t::signal_type`].
+ *
+ * **On a decoder's output bay the signal description is a snapshot of the
+ * routed source, taken when that stream last started.** Nothing refreshes it
+ * while the route holds, so a source that changes format in place leaves
+ * `frame_rate`, `tmds_clock`, the audio block and the bay's signal description
+ * all reading the format from before the change. Re-routing the bay does
+ * resample them, unless the newly selected source's record has not arrived yet
+ * - which leaves the previous values standing rather than clearing them.
+ *
+ * `status` and `scaling` are re-stamped on every scaling change too, so they
+ * can be newer than the description beside them. `clock_rate` is computed from
+ * the snapshot and carries its age despite sitting with them.
+ *
+ * **For a decoder's current input format, read the input bay it is routed to.**
+ * That record is refreshed by the source's own reports, and it is the reason a
+ * decoder's own output bay can disagree with the picture on the cable.
  */
 typedef struct {
   /**
@@ -1867,7 +1883,9 @@ typedef struct {
    */
   uint32_t tmds_clock;
   /**
-   * Video clock rate in Hz.
+   * Video clock rate in Hz, computed rather than measured: the pixel clock of
+   * `scaling` while the bay scales, and otherwise the signal description's
+   * own, halved for 4:2:0 and scaled by colour depth.
    */
   uint32_t clock_rate;
   /**
@@ -1875,7 +1893,7 @@ typedef struct {
    */
   uint32_t status;
   /**
-   * The signal type the bay is scaling to.
+   * The format the bay is scaling to, carrying none while it is not scaling.
    */
   mxr_signal_type_t scaling;
 } mxr_signal_details_t;
@@ -4088,6 +4106,10 @@ mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
  * back with `mxr_v2ip_details()`, and trust the scaling fields only where the
  * device reports `MXR_FEATURE_CONFIG_INITIALISED`.
  *
+ * **Read any route you still need before writing.** The sink rebuilds and
+ * rebroadcasts its subscription in response, and the addresses in
+ * `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -4106,6 +4128,23 @@ mxr_result_t mxr_set_v2ip_auto_scaling(const mxr_remote_t *remote, mxr_uid_t dev
  * mode the display does not list while it is scaling automatically. Set the
  * mode, then turn automatic scaling back on if it was on.
  *
+ * **Pass an `svd` and a `refresh` that agree.** A sink stores both halves and,
+ * with its match-source setting on as it ships, reports back the SVD matching
+ * the refresh it holds: a 60Hz SVD written with a refresh of 50 reads back as
+ * that SVD's 50Hz sibling, once, and stays there. A sink with match-source off
+ * reports the SVD it was given. Either way a pair that agrees reads back
+ * unchanged and the format driven is the same, and the substitution appears on
+ * the sink's next report rather than in the next `mxr_v2ip_details()`.
+ *
+ * A mode read from the sink's own web interface is not interchangeable with
+ * this pair. That interface reports the SVD's 60Hz sibling and carries the
+ * refresh in a field of its own, so writing back what it shows as the mode, on
+ * its own, changes the setting rather than restoring it.
+ *
+ * **Read any route you still need before writing.** The sink rebuilds and
+ * rebroadcasts its subscription in response, and the addresses in
+ * `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
+ *
  * # Safety
  *
  * `remote` is null or a live handle, and `mode` points at an initialised
@@ -4122,6 +4161,10 @@ mxr_result_t mxr_set_v2ip_output_mode(const mxr_remote_t *remote,
  * setting. This is the only way to express "no mode configured", and it is
  * what restoring a sink that had none requires: a sink reports no mode by
  * leaving `MXR_SCALING_FLAG_MODE_VALID` clear, which a write cannot say.
+ *
+ * **Read any route you still need before writing.** The sink rebuilds and
+ * rebroadcasts its subscription in response, and the addresses in
+ * `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
  *
  * # Safety
  *

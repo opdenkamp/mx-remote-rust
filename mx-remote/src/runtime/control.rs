@@ -811,6 +811,10 @@ impl Remote {
     /// Nothing acknowledges the frame. Read the sink back through
     /// [`Remote::v2ip_details`] to learn what it did, and treat the block as
     /// meaningful only where [`crate::DeviceInfo::config_initialised`] is set.
+    /// **Read any route you still need before writing.** The sink rebuilds
+    /// and rebroadcasts its subscription in response, and that report can
+    /// arrive empty for up to a minute; [`crate::DeviceV2ipSink`] says when
+    /// and why.
     pub fn set_v2ip_auto_scaling(
         &self,
         device: DeviceUid,
@@ -846,6 +850,26 @@ impl Remote {
     ///
     /// Configuring a mode is itself a reason to scale, so a sink with one
     /// scales whether or not automatic scaling is on.
+    ///
+    /// **Pass a descriptor and a refresh rate that agree.** A sink stores both
+    /// halves and, with its match-source setting on as it ships, reports back
+    /// the descriptor matching the refresh it holds: a 60Hz descriptor written
+    /// with a refresh of 50 reads back as that descriptor's 50Hz sibling, once,
+    /// and stays there. A sink with match-source off reports the descriptor it
+    /// was given. Either way a pair that agrees reads back unchanged, and the
+    /// format driven is the same - so this costs a caller nothing except a
+    /// descriptor it did not write. That substitution shows up on the sink's
+    /// next report rather than immediately, because
+    /// [`crate::V2ipScalingSettings`] holds what was written until then.
+    ///
+    /// A mode read from the sink's own web interface is not interchangeable
+    /// with this pair. That interface reports the descriptor's 60Hz sibling and
+    /// carries the refresh in a field of its own, so writing back what it shows
+    /// as the mode, on its own, changes the setting rather than restoring it.
+    /// **Read any route you still need before writing.** The sink rebuilds
+    /// and rebroadcasts its subscription in response, and that report can
+    /// arrive empty for up to a minute; [`crate::DeviceV2ipSink`] says when
+    /// and why.
     pub fn set_v2ip_output_mode(
         &self,
         device: DeviceUid,
@@ -877,6 +901,10 @@ impl Remote {
     /// caller restoring a sink that had none has to send: a sink reports no
     /// mode by leaving the mode's valid bit clear, which is not something a
     /// write can say.
+    /// **Read any route you still need before writing.** The sink rebuilds
+    /// and rebroadcasts its subscription in response, and that report can
+    /// arrive empty for up to a minute; [`crate::DeviceV2ipSink`] says when
+    /// and why.
     pub fn clear_v2ip_output_mode(&self, device: DeviceUid) -> Result<(), ControlError> {
         // The valid bit with a zero descriptor is the clear. The receiver takes
         // that branch ahead of validating anything, and ignores the depth,

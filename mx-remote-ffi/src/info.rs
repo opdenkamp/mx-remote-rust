@@ -321,6 +321,22 @@ impl From<BayAudioDetails> for mxr_audio_details_t {
 
 /// The signal a bay measures, beyond the description in
 /// [`mxr_bay_info_t::signal_type`].
+///
+/// **On a decoder's output bay the signal description is a snapshot of the
+/// routed source, taken when that stream last started.** Nothing refreshes it
+/// while the route holds, so a source that changes format in place leaves
+/// `frame_rate`, `tmds_clock`, the audio block and the bay's signal description
+/// all reading the format from before the change. Re-routing the bay does
+/// resample them, unless the newly selected source's record has not arrived yet
+/// - which leaves the previous values standing rather than clearing them.
+///
+/// `status` and `scaling` are re-stamped on every scaling change too, so they
+/// can be newer than the description beside them. `clock_rate` is computed from
+/// the snapshot and carries its age despite sitting with them.
+///
+/// **For a decoder's current input format, read the input bay it is routed to.**
+/// That record is refreshed by the source's own reports, and it is the reason a
+/// decoder's own output bay can disagree with the picture on the cable.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_signal_details_t {
@@ -328,11 +344,13 @@ pub struct mxr_signal_details_t {
     pub frame_rate: f64,
     /// TMDS clock rate in Hz.
     pub tmds_clock: u32,
-    /// Video clock rate in Hz.
+    /// Video clock rate in Hz, computed rather than measured: the pixel clock of
+    /// `scaling` while the bay scales, and otherwise the signal description's
+    /// own, halved for 4:2:0 and scaled by colour depth.
     pub clock_rate: u32,
     /// The bay status word from the report's bay block.
     pub status: u32,
-    /// The signal type the bay is scaling to.
+    /// The format the bay is scaling to, carrying none while it is not scaling.
     pub scaling: mxr_signal_type_t,
 }
 

@@ -210,6 +210,24 @@ impl VolumeMuteStatus {
 
 /// What a bay signal status report carries beyond the signal-detected flag and
 /// the human-readable signal type.
+///
+/// **On a decoder's output bay the signal description is a snapshot of the
+/// routed source, taken when that stream last started.** Nothing refreshes it
+/// while the route holds, so a source that changes format in place leaves
+/// [`frame_rate`](Self::frame_rate), [`tmds_clock`](Self::tmds_clock),
+/// [`audio`](Self::audio) and the bay's signal description all reading the
+/// format from before the change. Re-routing the bay does resample them, unless
+/// the newly selected source's record has not arrived yet - which leaves the
+/// previous values standing rather than clearing them.
+///
+/// [`status`](Self::status) and [`scaling`](Self::scaling) are re-stamped on
+/// every scaling change too, so they can be newer than the description beside
+/// them. [`clock_rate`](Self::clock_rate) is computed from the snapshot and
+/// carries its age despite sitting with them.
+///
+/// **For a decoder's current input format, read the input bay it is routed to.**
+/// That record is refreshed by the source's own reports, and it is the reason a
+/// decoder's own output bay can disagree with the picture on the cable.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BaySignalDetails {
     /// Frame rate in Hz, already corrected for a 1000/1001 clock.
@@ -218,9 +236,12 @@ pub struct BaySignalDetails {
     pub tmds_clock: u32,
     /// The bay status word from the report's bay block.
     pub status: BayStatus,
-    /// The signal type the bay is scaling to.
+    /// The format the bay is scaling to, not [`MxrSignalType::is_set`] while it
+    /// is not scaling.
     pub scaling: MxrSignalType,
-    /// Video clock rate in Hz.
+    /// Video clock rate in Hz, computed rather than measured: the pixel clock of
+    /// [`scaling`](Self::scaling) while the bay scales, and otherwise the
+    /// signal description's own, halved for 4:2:0 and scaled by colour depth.
     pub clock_rate: u32,
     /// The audio alongside the video, absent when the report carried no audio
     /// block.

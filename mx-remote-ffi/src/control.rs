@@ -836,6 +836,10 @@ unsafe fn output_mode(mode: *const mxr_v2ip_output_mode_t) -> Result<V2ipOutputM
 /// back with `mxr_v2ip_details()`, and trust the scaling fields only where the
 /// device reports `MXR_FEATURE_CONFIG_INITIALISED`.
 ///
+/// **Read any route you still need before writing.** The sink rebuilds and
+/// rebroadcasts its subscription in response, and the addresses in
+/// `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -862,6 +866,23 @@ pub unsafe extern "C" fn mxr_set_v2ip_auto_scaling(
 /// **Turn automatic scaling off first if it is on.** A sink silently refuses a
 /// mode the display does not list while it is scaling automatically. Set the
 /// mode, then turn automatic scaling back on if it was on.
+///
+/// **Pass an `svd` and a `refresh` that agree.** A sink stores both halves and,
+/// with its match-source setting on as it ships, reports back the SVD matching
+/// the refresh it holds: a 60Hz SVD written with a refresh of 50 reads back as
+/// that SVD's 50Hz sibling, once, and stays there. A sink with match-source off
+/// reports the SVD it was given. Either way a pair that agrees reads back
+/// unchanged and the format driven is the same, and the substitution appears on
+/// the sink's next report rather than in the next `mxr_v2ip_details()`.
+///
+/// A mode read from the sink's own web interface is not interchangeable with
+/// this pair. That interface reports the SVD's 60Hz sibling and carries the
+/// refresh in a field of its own, so writing back what it shows as the mode, on
+/// its own, changes the setting rather than restoring it.
+///
+/// **Read any route you still need before writing.** The sink rebuilds and
+/// rebroadcasts its subscription in response, and the addresses in
+/// `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
 ///
 /// # Safety
 ///
@@ -890,6 +911,10 @@ pub unsafe extern "C" fn mxr_set_v2ip_output_mode(
 /// setting. This is the only way to express "no mode configured", and it is
 /// what restoring a sink that had none requires: a sink reports no mode by
 /// leaving `MXR_SCALING_FLAG_MODE_VALID` clear, which a write cannot say.
+///
+/// **Read any route you still need before writing.** The sink rebuilds and
+/// rebroadcasts its subscription in response, and the addresses in
+/// `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
 ///
 /// # Safety
 ///
