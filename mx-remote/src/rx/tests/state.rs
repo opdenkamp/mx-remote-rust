@@ -366,3 +366,70 @@ fn a_page_does_not_replace_the_list_it_is_part_of() {
         "a page was read as the whole list"
     );
 }
+
+/// A device is not fully described until it has sent its bay configuration.
+///
+/// Nothing on the wire says how many bays to expect - not the hello, not the
+/// records, which carry neither an index nor a total - so what can be
+/// established is that the configuration was sent, and nothing about it can be
+/// concluded from a hello alone.
+#[test]
+fn a_device_that_has_not_sent_its_bays_is_not_fully_described() {
+    let mut h = Harness::new(34);
+    h.hello(0x28, "FF88", "PG0005", DeviceFeature::VIDEO_ROUTING);
+
+    assert!(
+        !h.device().configuration_complete(),
+        "a device was fully described on its hello alone"
+    );
+    assert!(
+        !h.saw(|e| matches!(e, Event::DeviceConfigComplete { .. })),
+        "completion was announced before anything was known"
+    );
+
+    // The secondary list is not that configuration: a device sends the primary
+    // one whatever else it sends, so having only this is not having described
+    // itself.
+    h.feed(
+        op::SYS_BAY_CONFIG_SECONDARY,
+        &bay_config_rec(
+            2,
+            1,
+            0,
+            "Output 2",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    // With its link in too, the only thing still outstanding is the primary
+    // list - which is what makes this assertion about that list and not about
+    // something else still missing.
+    h.feed(op::SYS_LINKS, &link_rec(2, "AMP00001", "Zone 2", 0));
+    assert!(
+        !h.device().configuration_complete(),
+        "the secondary list was taken for the configuration"
+    );
+
+    // Its bays, and then the one link record each of them owes.
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    assert!(
+        !h.device().configuration_complete(),
+        "the links this device owes were not waited for"
+    );
+
+    h.feed(op::SYS_LINKS, &link_rec(1, "AMP00001", "Zone 1", 0));
+    assert!(h.device().configuration_complete());
+    assert!(h.saw(|e| matches!(e, Event::DeviceConfigComplete { .. })));
+}

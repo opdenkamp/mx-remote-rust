@@ -74,6 +74,11 @@ pub(crate) struct Device {
     /// use. A set rather than a counter because a device re-sends its
     /// configuration, and a repeat must not count twice.
     pub(crate) link_records: BTreeSet<u16>,
+    /// Whether the device has sent its primary bay configuration.
+    ///
+    /// Every unit sends that list whatever else it sends, so it is the one
+    /// thing whose arrival can be required of any device.
+    pub(crate) bay_config_received: bool,
 
     pub(crate) v2ip_sources: Option<Vec<V2ipStreamSources>>,
     /// Source records by their position in the sender's list.
@@ -123,6 +128,7 @@ impl Device {
             last_ping: now,
             hello_received: now,
             link_records: BTreeSet::new(),
+            bay_config_received: false,
             v2ip_sources: None,
             v2ip_source_pages: BTreeMap::new(),
             v2ip_details: None,
@@ -373,8 +379,19 @@ impl Device {
 
     // ---- configuration completeness ----
 
+    /// Whether the device's bay configuration has arrived.
+    ///
+    /// That it was sent at all is the whole of what can be established. A
+    /// device pages its bays and nothing on the wire marks the last page -
+    /// no count, no index, no terminating frame - and nothing it says about
+    /// itself gives the number to expect, so counting what arrived can only be
+    /// compared against a guess.
+    ///
+    /// For a V2IP device this is half the answer by itself: its bays include
+    /// ones that live on other devices, and those arrive on a frame of their
+    /// own that [`Self::configuration_complete`] requires separately.
     fn has_bays(&self) -> bool {
-        self.bays.len() >= self.inputs().count() + self.outputs().count()
+        self.bay_config_received
     }
 
     /// Whether the device owes link records this client has not seen.
@@ -520,6 +537,15 @@ impl Device {
     /// Only a record that landed on a known bay counts. A record naming a bay
     /// this client has not seen yet is dropped rather than held, matching what
     /// a device does with the same frame, and the device re-sends.
+    /// Notes that the device has sent its primary bay configuration.
+    pub(crate) fn note_bay_config(&mut self, ev: &mut Vec<Event>) {
+        if self.bay_config_received {
+            return;
+        }
+        self.bay_config_received = true;
+        self.check_config_complete(ev);
+    }
+
     pub(crate) fn note_link_record(&mut self, port: u16, ev: &mut Vec<Event>) {
         if !self.link_records.insert(port) {
             return;

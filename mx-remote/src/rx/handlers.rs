@@ -15,7 +15,7 @@ use crate::types::{
     SCALING_FLAG_SKIP_420, VOLUME_UNCHANGED,
 };
 use crate::wire::{
-    parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
+    op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
     MxrSignalType, RcAction, RcKey, V2ipFpgaFeature, BAY_CONFIG_SIZE, FW_VERSION_LEN,
 };
 
@@ -76,6 +76,13 @@ pub(super) fn bay_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         if let Some(cfg) = parse_bay_config(record) {
             device.apply_bay_config(&cfg, rx.timestamp, ev);
         }
+    }
+    // The primary list, specifically. Every unit sends that one whatever else
+    // it sends, so requiring it strands nothing, and the secondary list does
+    // not stand in for it: a device that has sent only the secondary one has
+    // not yet described itself.
+    if rx.frame.opcode() == op::SYS_BAY_CONFIG {
+        device.note_bay_config(ev);
     }
 }
 
