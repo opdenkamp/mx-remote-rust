@@ -159,10 +159,7 @@ pub(super) fn ir_capture(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     if meta.nb_timings == 0 {
         return;
     }
-    let Some(timings) = usize::from(meta.nb_timings)
-        .checked_mul(IR_TIMING_SIZE)
-        .and_then(|len| p.get(IR_DATA_SIZE..IR_DATA_SIZE + len))
-    else {
+    let Some(timings) = ir_timings(p, usize::from(meta.nb_timings)) else {
         return;
     };
     let capture = IrCapture {
@@ -170,12 +167,36 @@ pub(super) fn ir_capture(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         timestamp: u32_at(p, 4),
         last_change: u32_at(p, 8),
         meta,
-        timings: timings.to_vec(),
+        timings,
     };
     let bay = BayUid::new(rx.sender(), capture.port);
     if state.bay(bay).is_some() {
         ev.push(Event::IrCaptured { bay, capture });
     }
+}
+
+/// Reads the counted timings behind an infrared header, as sixteen-bit values.
+///
+/// Two widths exist on the wire and the header counts timings rather than
+/// bytes, so what is left behind the header is what says which arrived: the
+/// same count occupies twice as much in the wider form. A sender of the narrow
+/// one is widened here rather than refused, so a caller is handed one
+/// representation whichever sent it - the values are identical, only the
+/// encoding differs.
+///
+/// Tested widest first. A narrow list is exactly as long as its count, so it
+/// can never be mistaken for a wide one, and a frame shorter than its own count
+/// is refused rather than truncated.
+fn ir_timings(p: &[u8], count: usize) -> Option<Vec<u8>> {
+    let tail = p.get(IR_DATA_SIZE..)?;
+    if let Some(wide) = count
+        .checked_mul(IR_TIMING_SIZE)
+        .and_then(|n| tail.get(..n))
+    {
+        return Some(wide.to_vec());
+    }
+    let narrow = tail.get(..count)?;
+    Some(narrow.iter().flat_map(|&t| [t, 0]).collect())
 }
 
 fn ir_meta(p: &[u8]) -> IrMeta {

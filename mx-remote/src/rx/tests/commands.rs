@@ -174,15 +174,16 @@ fn an_ir_capture_aligns_its_timestamp() {
     assert_eq!(capture.timings, [1, 2, 3, 4, 5, 6, 7, 8]);
 }
 
-/// The header counts the timings, so a frame that does not carry what it counts
-/// is refused, and one that carries more does not hand the extra to a caller.
+/// Both timing widths are read, and both reach a caller as the wider one.
 ///
-/// A timing is two bytes. A sender from before they were widened describes the
-/// same count in half the bytes, and there is no width to report beside the
-/// blob - so a narrow list handed over as a wide one would be wrong with
-/// nothing able to say so. The count is what separates them.
+/// The header counts timings rather than bytes, so what follows it is what says
+/// which width arrived: the same count takes twice the room in the wider form.
+/// A narrow list is widened rather than refused - the values are the device's
+/// and only the encoding differs - so a caller gets one representation whatever
+/// sent it. A frame carrying less than even the narrow form declares is
+/// refused, and bytes behind a full list are not timings.
 #[test]
-fn an_ir_capture_carries_exactly_the_timings_it_counts() {
+fn an_ir_capture_reads_both_timing_widths() {
     let mut h = command_device(44);
     h.feed(
         op::SYS_BAY_CONFIG,
@@ -202,7 +203,6 @@ fn an_ir_capture_carries_exactly_the_timings_it_counts() {
             _ => None,
         })
     };
-
     let frame = |count: u16, tail: &[u8]| {
         let mut p = poisoned(24 + tail.len());
         p[0..2].copy_from_slice(&3u16.to_le_bytes());
@@ -211,26 +211,34 @@ fn an_ir_capture_carries_exactly_the_timings_it_counts() {
         p
     };
 
-    // Four timings' worth of count against one timing's worth of bytes, which
-    // is the width a sender that predates the widening would send.
+    // Four one-byte timings, which is what a sender predating the widening
+    // appends. Each reaches the caller as the same value two bytes wide.
     h.feed(op::RC_IR, &frame(4, &[1, 2, 3, 4]));
-    assert!(
-        capture_of(&h).is_none(),
-        "a list shorter than its own count was handed to a caller"
+    assert_eq!(
+        capture_of(&h).expect("a narrow list was refused").timings,
+        [1, 0, 2, 0, 3, 0, 4, 0],
+        "a narrow list was not widened to the reported representation"
     );
 
-    // The same count with the bytes to back it, and eight more behind the list
-    // that are not timings.
+    // The same count in the wider form is taken as it stands, and the eight
+    // bytes behind the list are not timings.
     h.events.clear();
     h.feed(
         op::RC_IR,
-        &frame(4, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9, 9, 9, 9, 9]),
+        &frame(4, &[1, 0, 2, 0, 3, 0, 4, 0, 9, 9, 9, 9, 9, 9, 9, 9]),
     );
-    let capture = capture_of(&h).expect("a whole list was refused");
     assert_eq!(
-        capture.timings,
-        [1, 2, 3, 4, 5, 6, 7, 8],
+        capture_of(&h).expect("a whole list was refused").timings,
+        [1, 0, 2, 0, 3, 0, 4, 0],
         "bytes behind the list were read as timings"
+    );
+
+    // Less than even the narrow form declares is refused rather than truncated.
+    h.events.clear();
+    h.feed(op::RC_IR, &frame(4, &[1, 2, 3]));
+    assert!(
+        capture_of(&h).is_none(),
+        "a list shorter than its own count was handed to a caller"
     );
 }
 

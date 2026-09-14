@@ -205,7 +205,12 @@ pub struct IrCapture {
     pub last_change: u32,
     /// Metadata for the timings.
     pub meta: IrMeta,
-    /// The raw on/off timing blob following the header.
+    /// The on/off timings following the header, two little-endian bytes each.
+    ///
+    /// Always this width, whichever a sender used: the narrower form older
+    /// devices send is widened on the way in, so the values are the device's
+    /// and only the encoding is this library's. `meta.nb_timings` counts the
+    /// timings, so this is always twice that long.
     ///
     /// Index 0 is never replayed. A device blasting this list starts at the
     /// second timing, so the first holds the gap captured ahead of the burst
