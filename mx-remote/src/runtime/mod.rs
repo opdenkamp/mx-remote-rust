@@ -32,7 +32,7 @@ use crate::state::{Device, State};
 use crate::types::*;
 use crate::wire::{
     build_hello, op, Addressee, BayUid, Conn, DeviceFeature, DeviceUid, FirmwareType, Opcode,
-    SendError, Tx, MULTICAST_IP, MULTICAST_PORT, PROTOCOL_VERSION, VERSION,
+    SendError, Tx, V2ipFpgaFeature, MULTICAST_IP, MULTICAST_PORT, PROTOCOL_VERSION, VERSION,
 };
 
 pub use control::ControlError;
@@ -341,6 +341,17 @@ impl Remote {
     /// Transport statistics a V2IP device reports.
     pub fn v2ip_stats(&self, uid: DeviceUid) -> Option<V2ipDeviceStats> {
         self.shared.read(|state| state.device(uid)?.v2ip_stats)
+    }
+
+    /// What a V2IP device's video processor supports.
+    ///
+    /// `None` until the device has reported a non-empty mask about itself.
+    /// A device reports nothing at all while its processor has yet to answer,
+    /// and an older processor answers with none of the optional commands, so
+    /// "no features" and "not yet known" are the same bytes on the wire and
+    /// both read as `None` here. A mask that has arrived only gains bits.
+    pub fn v2ip_features(&self, uid: DeviceUid) -> Option<V2ipFpgaFeature> {
+        self.shared.read(|state| state.device(uid)?.v2ip_features)
     }
 
     /// The video-wall tiling a V2IP device is configured for.

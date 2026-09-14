@@ -2646,6 +2646,11 @@ typedef struct {
    */
   mxr_device_cb on_tiling_changed;
   /**
+   * The device reported what its video processor supports; read it with
+   * `mxr_v2ip_features()`.
+   */
+  mxr_device_cb on_v2ip_features_changed;
+  /**
    * A source bay's remote-control configuration changed; read it with
    * `mxr_rc_settings()`.
    */
@@ -4810,6 +4815,20 @@ mxr_result_t mxr_v2ip_details(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2i
  * [`mxr_v2ip_sink_t`].
  */
 mxr_result_t mxr_v2ip_sink(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_sink_t *out);
+
+/**
+ * Fills `out` with what a V2IP device's video processor supports.
+ *
+ * Reports `MXR_RESULT_NOT_FOUND` while the device has not said: a processor
+ * that has yet to answer and one with none of the optional commands send the
+ * same empty mask, so neither is reported as a capability set.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `uint64_t`.
+ */
+mxr_result_t mxr_v2ip_features(const mxr_remote_t *remote, mxr_uid_t uid, uint64_t *out);
 
 /**
  * Fills `out` with the window a sink is told to show.

@@ -14,7 +14,7 @@ use crate::types::{
     RcSettings, TopologyEntry, V2ipDeviceStats, V2ipScalingSettings, V2ipStreamSources,
     V2ipTilingConfig, VolumeMuteStatus,
 };
-use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType};
+use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
 
 use super::bay::Bay;
 
@@ -78,6 +78,12 @@ pub(crate) struct Device {
     pub(crate) v2ip_sources: Option<Vec<V2ipStreamSources>>,
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
     pub(crate) v2ip_sink: Option<DeviceV2ipSink>,
+    /// What the device's video processor supports, once it has reported it.
+    ///
+    /// `None` until a frame the device sent about itself carries a non-empty
+    /// mask: a device leaves the field zero when configuring someone else, and
+    /// reports zero of its own while its processor has yet to answer.
+    pub(crate) v2ip_features: Option<V2ipFpgaFeature>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
     pub(crate) setup_done: Option<bool>,
     pub(crate) installer_id: Option<u16>,
@@ -114,6 +120,7 @@ impl Device {
             v2ip_sources: None,
             v2ip_details: None,
             v2ip_sink: None,
+            v2ip_features: None,
             v2ip_stats: None,
             setup_done: None,
             installer_id: None,
@@ -790,6 +797,22 @@ impl Device {
         ev.push(Event::V2ipDetailsChanged {
             device: self.uid,
             details,
+        });
+    }
+
+    /// Records the processor's feature mask, which only ever gains bits.
+    ///
+    /// The caller passes a non-empty mask from a frame the device sent about
+    /// itself; every other frame says nothing about the subject's processor and
+    /// must leave what is cached alone.
+    pub(crate) fn set_v2ip_features(&mut self, features: V2ipFpgaFeature, ev: &mut Vec<Event>) {
+        if self.v2ip_features == Some(features) {
+            return;
+        }
+        self.v2ip_features = Some(features);
+        ev.push(Event::V2ipFeaturesChanged {
+            device: self.uid,
+            features,
         });
     }
 

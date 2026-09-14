@@ -131,6 +131,7 @@ inline std::string last_error() { return std::string(mxr_last_error()); }
     X(on_topology_changed) \
     X(on_amp_dolby_settings_changed) \
     X(on_tiling_changed) \
+    X(on_v2ip_features_changed) \
     X(on_rc_settings_changed) \
     X(on_discover_request) \
     X(on_monitoring_pulse) \

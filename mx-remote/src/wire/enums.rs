@@ -12,15 +12,27 @@
 use core::fmt;
 use core::ops::{BitAnd, BitOr, BitOrAssign};
 
-/// Declares a bitmask newtype over `u32` with the given named bit constants.
+/// Declares a bitmask newtype with the given named bit constants.
+///
+/// The representation defaults to `u32`; give it explicitly as `Name: u64` for
+/// a mask whose wire field is wider.
 macro_rules! bitmask {
     (
         $(#[$meta:meta])*
         $name:ident { $( $(#[$cmeta:meta])* $cname:ident = $value:expr; )* }
     ) => {
+        bitmask! {
+            $(#[$meta])*
+            $name: u32 { $( $(#[$cmeta])* $cname = $value; )* }
+        }
+    };
+    (
+        $(#[$meta:meta])*
+        $name:ident: $repr:ty { $( $(#[$cmeta:meta])* $cname:ident = $value:expr; )* }
+    ) => {
         $(#[$meta])*
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub struct $name(u32);
+        pub struct $name($repr);
 
         impl $name {
             /// No bits set.
@@ -29,12 +41,12 @@ macro_rules! bitmask {
             $( $(#[$cmeta])* pub const $cname: Self = Self($value); )*
 
             /// Wraps a raw wire value, including bits this library has no name for.
-            pub const fn from_bits(bits: u32) -> Self {
+            pub const fn from_bits(bits: $repr) -> Self {
                 Self(bits)
             }
 
             /// Returns the raw wire value.
-            pub const fn bits(self) -> u32 {
+            pub const fn bits(self) -> $repr {
                 self.0
             }
 
@@ -71,7 +83,13 @@ macro_rules! bitmask {
 
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{:#010x}", self.0)
+                // Two hex digits per byte of the wire field, plus "0x".
+                write!(
+                    f,
+                    "{:#0width$x}",
+                    self.0,
+                    width = core::mem::size_of::<$repr>() * 2 + 2
+                )
             }
         }
     };
@@ -163,6 +181,36 @@ bitmask! {
         CONFIG_INITIALISED = 1 << 25;
         /// Set while the device is in its boot loader.
         BOOT_BIT = 1 << 31;
+    }
+}
+
+bitmask! {
+    /// What a V2IP device's video processor supports, as the device reports it
+    /// in its configuration.
+    ///
+    /// Read-only, and a device's own: it fills the field in only on the frame
+    /// describing itself, and leaves it zero on one it sends to configure
+    /// another device. There is no write path.
+    ///
+    /// Bits are assigned by the video processor and only ever appended, so a
+    /// bit this library has no name for is a later capability rather than an
+    /// error. A device reports no features at all until its processor answers,
+    /// and an older processor answers with none of the optional commands, so an
+    /// empty mask is never reported as a capability set - see
+    /// [`crate::Remote::v2ip_features`], which reports it as unknown instead.
+    V2ipFpgaFeature: u64 {
+        /// Applies a DSCP marking to the streams it sources.
+        SOURCE_DSCP = 1 << 0;
+        /// Reports the audio format arriving at its sink.
+        SINK_AUDIO_FORMAT = 1 << 1;
+        /// Places a tiling window on its sink.
+        SINK_TILING_WINDOW = 1 << 2;
+        /// Reports the state of its sink's overlay.
+        SINK_OVERLAY_STATE = 1 << 3;
+        /// Reports its sink's state.
+        SINK_STATE = 1 << 4;
+        /// Reports information about the stream its sink receives.
+        SINK_STREAM_INFO = 1 << 5;
     }
 }
 

@@ -151,6 +151,9 @@ pub(crate) struct Cfg {
     pub(crate) mode: u16,
     pub(crate) refresh: u16,
     pub(crate) flags: u8,
+    /// The video processor's feature bitmask. Zero is what a device reports
+    /// before its processor has answered, so it is the honest default here.
+    pub(crate) codec: u64,
 }
 
 impl Cfg {
@@ -168,6 +171,8 @@ impl Cfg {
         }
     }
 
+    /// The configuration block alone, which is what a controller writing one
+    /// field sends and what every sender emits whole.
     pub(crate) fn bytes(&self) -> Vec<u8> {
         let mut p = poisoned(88);
         p[0..16].copy_from_slice(self.uid.as_bytes());
@@ -190,6 +195,19 @@ impl Cfg {
         p[56..58].copy_from_slice(&self.mode.to_le_bytes());
         p[58..60].copy_from_slice(&self.refresh.to_le_bytes());
         p[60] = self.flags;
+        p
+    }
+
+    /// The whole frame a device sends about itself: the configuration, the sink
+    /// block behind it, and the processor's feature word at the end.
+    ///
+    /// The sink block is zeroed rather than poisoned - a device that has
+    /// resolved no subscription sends zeroes there, and poison would be read as
+    /// addresses.
+    pub(crate) fn bytes_with_options(&self) -> Vec<u8> {
+        let mut p = self.bytes();
+        p.resize(120, 0);
+        p.extend_from_slice(&self.codec.to_le_bytes());
         p
     }
 }

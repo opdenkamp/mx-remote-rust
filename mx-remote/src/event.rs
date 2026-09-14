@@ -4,7 +4,9 @@
 //! Events and the handler that receives them.
 
 use crate::types::*;
-use crate::wire::{BayUid, DeviceUid, EdidProfile, LinkFeature, RcAction, RcKey, RcType};
+use crate::wire::{
+    BayUid, DeviceUid, EdidProfile, LinkFeature, RcAction, RcKey, RcType, V2ipFpgaFeature,
+};
 
 /// Declares the event set.
 ///
@@ -171,6 +173,8 @@ events! {
         InstallerIdChanged => on_installer_id_changed(installer_id: u16);
         /// The sink was told to show a window.
         TilingChanged => on_tiling_changed(tiling: V2ipTilingConfig);
+        /// The device reported what its video processor supports.
+        V2ipFeaturesChanged => on_v2ip_features_changed(features: V2ipFpgaFeature);
         /// A source bay's remote-control configuration changed.
         RcSettingsChanged => on_rc_settings_changed(settings: RcSettings);
         /// A V2IP device was linked to a remote peer.

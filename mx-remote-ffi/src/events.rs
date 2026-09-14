@@ -514,6 +514,9 @@ pub struct mxr_callbacks_t {
     /// The sink was told to show a window; read it with
     /// `mxr_v2ip_tiling()`.
     pub on_tiling_changed: mxr_device_cb,
+    /// The device reported what its video processor supports; read it with
+    /// `mxr_v2ip_features()`.
+    pub on_v2ip_features_changed: mxr_device_cb,
     /// A source bay's remote-control configuration changed; read it with
     /// `mxr_rc_settings()`.
     pub on_rc_settings_changed: mxr_device_cb,
@@ -797,6 +800,10 @@ impl EventHandler for Bridge {
 
     fn on_tiling_changed(&self, device: DeviceUid, _tiling: mx_remote::V2ipTilingConfig) {
         forward!(self.on_tiling_changed(device.into()));
+    }
+
+    fn on_v2ip_features_changed(&self, device: DeviceUid, _features: mx_remote::V2ipFpgaFeature) {
+        forward!(self.on_v2ip_features_changed(device.into()));
     }
 
     fn on_rc_settings_changed(&self, device: DeviceUid, _settings: mx_remote::RcSettings) {

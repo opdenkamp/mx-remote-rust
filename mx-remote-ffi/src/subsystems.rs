@@ -19,8 +19,8 @@ use std::net::Ipv4Addr;
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UtpCableStatus,
-    V2ipDecoderDetail, V2ipDeviceStats, V2ipRxStats, V2ipStreamSource, V2ipStreamSources,
-    V2ipTilingConfig, V2ipTxStats, VctStatus, MULTIVIEWER_INPUTS,
+    V2ipDecoderDetail, V2ipDeviceStats, V2ipFpgaFeature, V2ipRxStats, V2ipStreamSource,
+    V2ipStreamSources, V2ipTilingConfig, V2ipTxStats, VctStatus, MULTIVIEWER_INPUTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -867,6 +867,34 @@ pub unsafe extern "C" fn mxr_v2ip_sink(
             });
         // SAFETY: the caller guarantees a writable mxr_v2ip_sink_t or null.
         unsafe { fill(r, uid, out, "V2IP sink route", value) }
+    })
+}
+
+/// Fills `out` with what a V2IP device's video processor supports.
+///
+/// Reports `MXR_RESULT_NOT_FOUND` while the device has not said: a processor
+/// that has yet to answer and one with none of the optional commands send the
+/// same empty mask, so neither is reported as a capability set.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_features(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut u64,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_features(uid.into())
+            .map(V2ipFpgaFeature::bits);
+        // SAFETY: the caller guarantees a writable uint64_t or null.
+        unsafe { fill(r, uid, out, "processor features", value) }
     })
 }
 

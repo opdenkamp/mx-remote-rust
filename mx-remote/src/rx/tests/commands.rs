@@ -18,8 +18,8 @@ use crate::types::{
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_PORT_ANC, V2IP_PORT_AUDIO,
-    V2IP_PORT_VIDEO,
+    RcAction, RcKey, V2ipFpgaFeature, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, Cfg};
@@ -1840,6 +1840,227 @@ fn a_captured_device_config_decodes_field_for_field() {
     let sink = h.device().v2ip_sink.expect("no sink block");
     assert_eq!(sink.addresses.video.port, 50020);
     assert_eq!(sink.addresses.anc.port, 50021);
+}
+
+/// A sender that stops at the sink block reports no processor features.
+///
+/// The captured frame is exactly that sender, so this is a released shape
+/// rather than a truncation invented for the test.
+#[test]
+fn a_frame_ending_at_the_sink_block_reports_no_processor_features() {
+    let mut h = capture_device();
+    h.feed_proto(
+        op::V2IP_DEVICE_CFG,
+        DEVICE_CFG_CAPTURE_PROTOCOL,
+        &DEVICE_CFG_CAPTURE,
+    );
+
+    assert!(
+        h.device().v2ip_sink.is_some(),
+        "the sink block itself was lost"
+    );
+    assert_eq!(
+        h.device().v2ip_features,
+        None,
+        "a frame with no processor word reported one"
+    );
+}
+
+/// A real shipping `V2IP_DEVICE_CFG`, captured off a live mesh with the
+/// processor word behind the sink block.
+///
+/// A different unit from `DEVICE_CFG_CAPTURE`, and the pair is what pins the
+/// move: bytes 88..120 are the sink block both of them carry at 88, and the
+/// feature mask is at 120 behind it rather than in front.
+#[rustfmt::skip]
+const DEVICE_CFG_CODEC_CAPTURE: [u8; 128] = [
+    0x1A, 0x30, 0x01, 0x10, 0xE1, 0xDC, 0x01, 0xAA, 0x78, 0x7D, 0x10, 0x63, 0xC2, 0x07, 0x00, 0xF5,
+    0xEA, 0x41, 0x6C, 0xC6, 0x64, 0xC3, 0x00, 0x00, // source.video 234.65.108.198:50020
+    0xEA, 0x41, 0x6C, 0xC7, 0x66, 0xC3, 0x00, 0x00, // source.audio 234.65.108.199:50022
+    0xEA, 0x41, 0x6C, 0xC6, 0x65, 0xC3, 0x00, 0x00, // source.anc   234.65.108.198:50021
+    0x5A, 0x90, 0x90, 0x90, 0x00, 0x00, 0x00, 0x00, // tx_rate 90, dscp SET|16 on all three
+    0xEA, 0x41, 0x6C, 0xC8, 0x67, 0xC3, 0x00, 0x00, // audio_return 234.65.108.200:50023
+    0x00, 0xA0, 0x00, 0x00, 0xF2, 0x00, 0x00, 0x00, // scaling: mode 0xa000, refresh 0, flags 0xf2
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // tiling, uid zero: not carried
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xEA, 0x41, 0x6C, 0xC6, 0x64, 0xC3, 0x00, 0x00, // sink.video
+    0xEA, 0x41, 0x6C, 0xC7, 0x66, 0xC3, 0x00, 0x00, // sink.audio
+    0xEA, 0x41, 0x6C, 0xC6, 0x65, 0xC3, 0x00, 0x00, // sink.anc
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sink_audio_fmt: no channels
+    0x3F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // codec: all six feature bits
+];
+
+/// The stamp that capture carries. Nothing on this opcode is selected by it -
+/// every block is found by length - but a fixture fed under a stamp its sender
+/// does not use describes a frame no device sends.
+const DEVICE_CFG_CODEC_PROTOCOL: u16 = 0x12;
+
+/// The unit the longer capture came from, as its own payload names it.
+const DEVICE_CFG_CODEC_UID: DeviceUid = DeviceUid::from_array([
+    0x1A, 0x30, 0x01, 0x10, 0xE1, 0xDC, 0x01, 0xAA, 0x78, 0x7D, 0x10, 0x63, 0xC2, 0x07, 0x00, 0xF5,
+]);
+
+/// A harness whose peer is the unit the longer capture was taken from.
+fn codec_capture_device() -> Harness {
+    let mut h = Harness::new(0);
+    h.sender = DEVICE_CFG_CODEC_UID;
+    h.hello(0x27, "ONEIP", "CM0002", DeviceFeature::VIDEO_ROUTING);
+    h
+}
+
+/// The processor word sits behind the sink block, and the sink block is where
+/// it has always been.
+///
+/// Read the word at the sink block's offset and it comes out as that block's
+/// video address instead - a large invented capability set rather than nothing.
+#[test]
+fn a_captured_processor_word_is_read_behind_the_sink_block() {
+    let mut h = codec_capture_device();
+    h.feed_proto(
+        op::V2IP_DEVICE_CFG,
+        DEVICE_CFG_CODEC_PROTOCOL,
+        &DEVICE_CFG_CODEC_CAPTURE,
+    );
+
+    let features = h.device().v2ip_features.expect("no processor features");
+    assert_eq!(features.bits(), 0x3F);
+    assert!(features.has(V2ipFpgaFeature::SINK_STREAM_INFO));
+
+    let sink = h.device().v2ip_sink.expect("no sink block");
+    assert_eq!(sink.addresses.video.ip, Ipv4Addr::new(234, 65, 108, 198));
+    assert_eq!(sink.addresses.video.port, 50020);
+    assert_eq!(sink.addresses.audio.port, 50022);
+    assert_eq!(sink.addresses.anc.port, 50021);
+    assert_eq!(sink.audio_fmt, None, "a zero format block reports no audio");
+
+    let details = h.device().v2ip_details.expect("no details");
+    assert_eq!(details.tx_rate, Some(90));
+    assert_eq!(details.arc.ip, Ipv4Addr::new(234, 65, 108, 200));
+    assert_eq!(details.dscp.video, Some(V2IP_DSCP_DEFAULT));
+    assert_eq!(details.scaling.refresh, 0);
+    // 0xf2 carries auto-scaling and the options bit, and no mode is configured.
+    assert_ne!(details.scaling.flags & SCALING_FLAG_AUTO_SCALING, 0);
+    assert_eq!(details.scaling.flags & SCALING_FLAG_MODE_VALID, 0);
+    assert_eq!(h.device().tiling, None, "a zero uid is not a window");
+}
+
+/// A full-length frame from a current sender can still carry no mask.
+///
+/// Observed on a unit that had just rebooted: every gate satisfied - 128 bytes,
+/// current stamp, subject equal to sender - and the processor had simply not
+/// answered its feature query yet, so the device had nothing to report. The
+/// same unit reported a real mask a minute later. Length is therefore not a
+/// promise that a mask is there, which is why zero reads as unknown and not as
+/// a device that supports nothing.
+#[test]
+fn a_zero_mask_in_a_full_length_capture_is_still_unknown() {
+    let mut just_booted = DEVICE_CFG_CODEC_CAPTURE;
+    just_booted[120..128].fill(0);
+
+    let mut h = codec_capture_device();
+    h.feed_proto(op::V2IP_DEVICE_CFG, DEVICE_CFG_CODEC_PROTOCOL, &just_booted);
+
+    assert_eq!(
+        h.device().v2ip_features,
+        None,
+        "an unanswered processor was reported as supporting nothing"
+    );
+    // Everything else in the frame is the capture, and still lands.
+    let sink = h.device().v2ip_sink.expect("no sink block");
+    assert_eq!(sink.addresses.video.port, 50020);
+
+    // And the mask lands once the processor answers.
+    h.feed_proto(
+        op::V2IP_DEVICE_CFG,
+        DEVICE_CFG_CODEC_PROTOCOL,
+        &DEVICE_CFG_CODEC_CAPTURE,
+    );
+    assert_eq!(
+        h.device()
+            .v2ip_features
+            .expect("the answered mask was dropped")
+            .bits(),
+        0x3F
+    );
+}
+
+/// A device stamps the word only when describing itself, so a write aimed at
+/// one device says nothing about its processor.
+///
+/// Caching the zero a controller sends would report the subject as supporting
+/// nothing, on the strength of a frame that never asked it.
+#[test]
+fn a_write_from_a_controller_leaves_processor_features_alone() {
+    let mut h = command_device(104);
+    let subject = h.sender;
+    let mut own = Cfg::addresses(subject, "239.1.2.3");
+    own.codec = 0x3F;
+    h.feed(op::V2IP_DEVICE_CFG, &own.bytes_with_options());
+    assert!(h.device().v2ip_features.is_some(), "nothing was cached");
+
+    // A controller with management standing writes the same device's config.
+    // Firmware leaves the word zero on a write aimed at someone else, so the
+    // mask here is one no MatrixOS controller sends - and that is the point:
+    // what makes the subject's features its own is who the frame is from, not
+    // that every other sender happens to write a zero. A client on this
+    // protocol that filled the field in would otherwise redefine a device's
+    // capabilities from across the network.
+    let controller = uid_n(77);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "CTRL0002", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut cfg = Cfg::addresses(subject, "239.9.9.9");
+    cfg.codec = V2ipFpgaFeature::SINK_OVERLAY_STATE.bits();
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &cfg.bytes_with_options());
+
+    let features = h
+        .state
+        .device(subject)
+        .expect("the subject is not registered")
+        .v2ip_features
+        .expect("a controller's write cleared the cached features");
+    assert_eq!(
+        features.bits(),
+        0x3F,
+        "a third party's frame rewrote the subject's processor features"
+    );
+    assert_eq!(
+        h.state.device(controller).and_then(|d| d.v2ip_features),
+        None,
+        "the features landed on the sender instead"
+    );
+}
+
+/// An empty mask is "not reported yet", not "supports nothing".
+///
+/// A processor that has yet to answer after boot and one too old to have any of
+/// the optional commands send the same zero, so nothing distinguishes them and
+/// the honest reading is that the device has not said.
+#[test]
+fn an_empty_processor_mask_is_not_a_capability_set() {
+    let mut h = command_device(103);
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    cfg.codec = 0;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes_with_options());
+
+    assert!(
+        h.device().v2ip_details.is_some(),
+        "the configuration itself was dropped"
+    );
+    assert_eq!(
+        h.device().v2ip_features,
+        None,
+        "an empty mask was reported as a capability set"
+    );
+
+    // Once the processor answers, the mask lands.
+    cfg.codec = V2ipFpgaFeature::SINK_STATE.bits();
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes_with_options());
+    let features = h.device().v2ip_features.expect("a real mask was dropped");
+    assert!(features.has(V2ipFpgaFeature::SINK_STATE));
 }
 
 /// A configuration from before the tiling window is decoded, not refused.

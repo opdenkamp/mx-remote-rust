@@ -15,7 +15,7 @@ use crate::types::{
 };
 use crate::wire::{
     parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, BAY_CONFIG_SIZE, FW_VERSION_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipFpgaFeature, BAY_CONFIG_SIZE, FW_VERSION_LEN,
 };
 
 use super::Rx;
@@ -483,6 +483,32 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             device.set_v2ip_sink(sink, ev);
         }
     }
+
+    // A device's processor features are its own. It fills the word in only on
+    // the frame describing itself and leaves it zero on one it sends to
+    // configure another device, so a write about a third party says nothing
+    // about that party's processor - and caching its zero would report a device
+    // as supporting nothing on the strength of a frame that never asked it.
+    //
+    // Zero from the device itself is no better: the mask is empty until the
+    // processor answers after boot, and an older processor answers with none of
+    // the optional commands. The two are identical on the wire, so an empty
+    // mask stays unknown rather than becoming an empty capability set.
+    //
+    // The length test cannot be observed to fail while that is true - a word
+    // that is not there reads as zero through a bounds-checked accessor, and an
+    // absent mask and an empty one mean the same thing to a caller. It stays
+    // because it is the rule that decides whether the field is present, which
+    // is a different question from what it holds: read the two as one and the
+    // presence of a field silently depends on zero meaning "not reported".
+    if p.len() >= V2IP_CODEC_AT + V2IP_CODEC_SIZE && subject == rx.sender() {
+        let features = V2ipFpgaFeature::from_bits(u64_at(p, V2IP_CODEC_AT));
+        if !features.is_empty() {
+            if let Some(device) = state.device_mut(subject) {
+                device.set_v2ip_features(features, ev);
+            }
+        }
+    }
 }
 
 pub(super) fn bay_hide(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
@@ -733,6 +759,12 @@ pub(super) fn u32_at(p: &[u8], idx: usize) -> u32 {
     p.get(idx..idx + 4)
         .and_then(|b| <[u8; 4]>::try_from(b).ok())
         .map_or(0, u32::from_le_bytes)
+}
+
+pub(super) fn u64_at(p: &[u8], idx: usize) -> u64 {
+    p.get(idx..idx + 8)
+        .and_then(|b| <[u8; 8]>::try_from(b).ok())
+        .map_or(0, u64::from_le_bytes)
 }
 
 pub(super) fn uid_at(p: &[u8], idx: usize) -> DeviceUid {
