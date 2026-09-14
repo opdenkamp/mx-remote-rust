@@ -3,7 +3,7 @@
 
 //! A discovered device and the bays it owns.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
@@ -66,14 +66,8 @@ pub(crate) struct Device {
     pub(crate) rebooting: bool,
     pub(crate) last_ping: Instant,
     pub(crate) hello_received: Instant,
-    /// The ports that have reported a link record.
-    ///
-    /// A device sends one record per bay and pages them across frames, with no
-    /// marker on the last, so the only sound test for a complete set is
-    /// counting one per bay - the same model-based rule the bays themselves
-    /// use. A set rather than a counter because a device re-sends its
-    /// configuration, and a repeat must not count twice.
-    pub(crate) link_records: BTreeSet<u16>,
+    /// Whether the device has reported its link configuration.
+    pub(crate) link_config_received: bool,
     /// Whether the device has sent its primary bay configuration.
     ///
     /// Every unit sends that list whatever else it sends, so it is the one
@@ -127,7 +121,7 @@ impl Device {
             rebooting: false,
             last_ping: now,
             hello_received: now,
-            link_records: BTreeSet::new(),
+            link_config_received: false,
             bay_config_received: false,
             v2ip_sources: None,
             v2ip_source_pages: BTreeMap::new(),
@@ -340,10 +334,6 @@ impl Device {
             .filter(|b| b.is_input() && b.hidden != Some(true))
     }
 
-    pub(crate) fn outputs(&self) -> impl Iterator<Item = &Bay> {
-        self.bays.values().filter(|b| b.is_output())
-    }
-
     /// The streams the given source bay advertises.
     ///
     /// The V2IP sources frame lists one record per source bay in bay order. A
@@ -394,15 +384,23 @@ impl Device {
         self.bay_config_received
     }
 
-    /// Whether the device owes link records this client has not seen.
+    /// Whether the device has yet to report its link configuration.
     ///
-    /// One record per bay, so a set covering every bay is the whole list. The
-    /// frame carries no count and no end marker, and a short page is not the
-    /// last one - a sender shrinks a page under memory pressure, and an evenly
-    /// divided list ends on a full one.
+    /// That it reported at all is the whole of what can be established, and no
+    /// count of bays stands in for it. Two reasons, either enough on its own:
+    ///
+    /// A link record describes one of the sender's own ports. Most of a V2IP
+    /// device's bays are proxies for streams that live on other devices, and
+    /// those own no record - a 14-bay transceiver reports two, for its local
+    /// input and its local output.
+    ///
+    /// A list longer than one payload is cut to what fits rather than
+    /// continued. An 18-bay amplifier reports 17 records in one page and sends
+    /// no second one, so even a device whose bays are all its own never
+    /// accounts for the last of them.
     fn needs_link_config(&self) -> bool {
         (self.is_amp() || self.is_video_matrix() || self.is_audio_matrix() || self.is_v2ip())
-            && self.link_records.len() < self.inputs().count() + self.outputs().count()
+            && !self.link_config_received
     }
 
     pub(crate) fn configuration_complete(&self) -> bool {
@@ -532,11 +530,6 @@ impl Device {
         self.bays.get(&u16::from(port)).map(Bay::uid)
     }
 
-    /// Notes that `port` has reported its link record.
-    ///
-    /// Only a record that landed on a known bay counts. A record naming a bay
-    /// this client has not seen yet is dropped rather than held, matching what
-    /// a device does with the same frame, and the device re-sends.
     /// Notes that the device has sent its primary bay configuration.
     pub(crate) fn note_bay_config(&mut self, ev: &mut Vec<Event>) {
         if self.bay_config_received {
@@ -546,10 +539,12 @@ impl Device {
         self.check_config_complete(ev);
     }
 
-    pub(crate) fn note_link_record(&mut self, port: u16, ev: &mut Vec<Event>) {
-        if !self.link_records.insert(port) {
+    /// Notes that the device has reported its link configuration.
+    pub(crate) fn note_link_config(&mut self, ev: &mut Vec<Event>) {
+        if self.link_config_received {
             return;
         }
+        self.link_config_received = true;
         self.check_config_complete(ev);
     }
 

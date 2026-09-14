@@ -84,6 +84,11 @@ impl Harness {
         self.device().bay(port).expect("bay not registered")
     }
 
+    /// Whether the device is fully described.
+    pub(super) fn complete(&self) -> bool {
+        self.device().configuration_complete()
+    }
+
     /// Whether an event matching `pred` was produced.
     pub(super) fn saw(&self, pred: impl Fn(&Event) -> bool) -> bool {
         self.events.iter().any(pred)

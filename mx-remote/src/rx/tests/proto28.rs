@@ -15,12 +15,33 @@ use crate::wire::{
     V2IP_PORT_VIDEO,
 };
 
-use crate::testing::{bay_config_rec, hello_payload, link_rec, poisoned, uid_n, Cfg};
+use crate::testing::{bay_config_rec, hello_payload, link_rec, poisoned, stream_rec, uid_n, Cfg};
 
 use super::Harness;
 
 fn dscp(value: u8) -> u8 {
     V2IP_DSCP_SET | value
+}
+
+/// What an amplifier announces, which is what makes `is_amp` true and so puts
+/// the device behind the link-configuration gate.
+fn amp_features() -> DeviceFeature {
+    DeviceFeature::AUDIO_ROUTING | DeviceFeature::VOLUME_CONTROL | DeviceFeature::AUDIO_AMPLIFIER
+}
+
+/// A V2IP source list of `count` records, short enough to be sent bare.
+fn stream_rec_page(count: u8) -> Vec<u8> {
+    let mut page = Vec::new();
+    for n in 0..count {
+        page.extend(stream_rec(
+            uid_n(n),
+            "239.9.1.1",
+            "239.9.1.2",
+            "239.9.1.3",
+            V2IP_PORT_VIDEO,
+        ));
+    }
+    page
 }
 
 fn v2ip_device(n: u8) -> Harness {
@@ -323,18 +344,26 @@ fn link_pages_merge() {
     }
 }
 
-/// A re-sent page does not stand in for the pages behind it.
+/// A bay that owns no link record does not hold the configuration open.
 ///
-/// A device re-sends its configuration, so counting records rather than the
-/// bays they are about lets one page repeated enough times satisfy a total it
-/// never covered - and the list would be declared complete with bays in it that
-/// have never reported a link at all.
+/// A link record describes one of the sender's own ports, and most of a V2IP
+/// device's bays are proxies for streams that live on other devices. The
+/// fourteen-bay transceiver below reports two records, for its local input and
+/// its local output, and that is its whole list.
 #[test]
-fn a_repeated_link_page_does_not_complete_the_set() {
+fn a_bay_with_no_link_record_of_its_own_still_completes_the_list() {
     let mut h = Harness::new(28);
-    h.hello(0x28, "FF88", "PG0003", DeviceFeature::VIDEO_ROUTING);
+    h.hello(
+        0x28,
+        "ONEIP-TRX",
+        "PG0003",
+        DeviceFeature::V2IP_SOURCE | DeviceFeature::V2IP_SINK,
+    );
+
+    // One local input and one local output, then twelve bays standing for
+    // streams on other devices.
     let mut cfg = bay_config_rec(
-        1,
+        0,
         0,
         0,
         "Input 1",
@@ -342,33 +371,102 @@ fn a_repeated_link_page_does_not_complete_the_set() {
         BayStatus::NONE,
         BayFeatures::HDMI_IN,
     );
-    for (port, name) in [(2u8, "Output 1"), (3, "Output 2")] {
+    cfg.extend(bay_config_rec(
+        1,
+        1,
+        0,
+        "Output 1",
+        "TV",
+        BayStatus::NONE,
+        BayFeatures::HDMI_OUT,
+    ));
+    for port in 2u8..14 {
+        cfg.extend(bay_config_rec(
+            port,
+            0,
+            0,
+            "Remote",
+            "Elsewhere",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ));
+    }
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+    h.feed(op::SYS_BAY_V2IP_SOURCES, &stream_rec_page(14));
+
+    let mut page = link_rec(0, "AMP00001", "Zone 1", 0);
+    page.extend(link_rec(1, "AMP00001", "Zone 2", 0));
+    h.feed(op::SYS_LINKS, &page);
+    assert!(
+        h.complete(),
+        "twelve bays that own no record were waited for"
+    );
+}
+
+/// A list cut to one payload is the whole of what the device reports.
+///
+/// A device with more records than fit in a page sends what fits and no second
+/// page, so the last bays never account for themselves: the eighteen-bay
+/// amplifier below reports seventeen records and stops.
+#[test]
+fn a_cut_link_list_completes_the_configuration() {
+    let mut h = Harness::new(29);
+    h.hello(0x28, "ProAmp8", "PG0004", amp_features());
+
+    let mut cfg = Vec::new();
+    for port in 1u8..=18 {
         cfg.extend(bay_config_rec(
             port,
             1,
             0,
-            name,
-            "TV",
+            "Zone",
+            "Hall",
             BayStatus::NONE,
             BayFeatures::HDMI_OUT,
         ));
     }
     h.feed(op::SYS_BAY_CONFIG, &cfg);
 
-    let page = link_rec(1, "AMP00001", "Zone 1", 0);
-    for _ in 0..4 {
-        h.feed(op::SYS_LINKS, &page);
+    let mut page = Vec::new();
+    for port in 1u8..=17 {
+        page.extend(link_rec(port, "AMP00001", "Zone", 0));
     }
+    h.feed(op::SYS_LINKS, &page);
     assert!(
-        !h.device().configuration_complete(),
-        "one bay's record, repeated, was counted as three bays' worth"
+        h.complete(),
+        "the bay left out of a cut list held the configuration open"
     );
+}
 
-    // The bays that had not reported still have to.
-    h.feed(op::SYS_LINKS, &link_rec(2, "AMP00001", "Zone 2", 0));
-    assert!(!h.device().configuration_complete());
-    h.feed(op::SYS_LINKS, &link_rec(3, "AMP00001", "Zone 3", 0));
-    assert!(h.device().configuration_complete());
+/// A page naming only bays this client has not seen still reports the list.
+///
+/// The record is dropped, as a device drops the same frame, and the sender
+/// re-sends. What the page establishes is that the device answered at all,
+/// which is the whole of what the link configuration can establish: most of a
+/// V2IP device's bays own no record either way.
+#[test]
+fn a_page_of_unknown_bays_still_reports_the_link_configuration() {
+    let mut h = Harness::new(34);
+    h.hello(0x28, "ProAmp8", "PG0009", amp_features());
+
+    // Before any bay is known, so every record in it names an unknown bay.
+    h.feed(op::SYS_LINKS, &link_rec(7, "AMP00001", "Zone 7", 0));
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            1,
+            0,
+            "Zone 1",
+            "Hall",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    assert!(
+        h.complete(),
+        "a page whose records landed nowhere was not counted as the list"
+    );
 }
 
 #[test]

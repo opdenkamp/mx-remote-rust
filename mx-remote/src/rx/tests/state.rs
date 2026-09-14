@@ -99,19 +99,11 @@ fn discovery_builds_a_device_from_its_configuration() {
         Some(BayUid::new(source, 0))
     );
 
-    // A V2IP device is not fully configured until its links have arrived, and
-    // that means one record per bay. There is no end-of-list marker on the
-    // wire, so a frame that carries no record for a bay leaves it outstanding
-    // rather than standing for the whole list.
-    assert!(!h.device().configuration_complete());
+    // A V2IP device is not fully configured until its link configuration has
+    // arrived.
+    assert!(!h.complete());
     h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 1", 0));
-    assert!(
-        !h.device().configuration_complete(),
-        "one page of links was read as the whole set"
-    );
-
-    h.feed(op::SYS_LINKS, &link_rec(1, "AMP00001", "Zone 2", 0));
-    assert!(h.device().configuration_complete());
+    assert!(h.complete());
     assert!(h.saw(|e| matches!(e, Event::DeviceConfigComplete { .. })));
 }
 
@@ -379,7 +371,7 @@ fn a_device_that_has_not_sent_its_bays_is_not_fully_described() {
     h.hello(0x28, "FF88", "PG0005", DeviceFeature::VIDEO_ROUTING);
 
     assert!(
-        !h.device().configuration_complete(),
+        !h.complete(),
         "a device was fully described on its hello alone"
     );
     assert!(
@@ -402,16 +394,16 @@ fn a_device_that_has_not_sent_its_bays_is_not_fully_described() {
             BayFeatures::HDMI_OUT,
         ),
     );
-    // With its link in too, the only thing still outstanding is the primary
+    // With its links in too, the only thing still outstanding is the primary
     // list - which is what makes this assertion about that list and not about
     // something else still missing.
     h.feed(op::SYS_LINKS, &link_rec(2, "AMP00001", "Zone 2", 0));
     assert!(
-        !h.device().configuration_complete(),
+        !h.complete(),
         "the secondary list was taken for the configuration"
     );
 
-    // Its bays, and then the one link record each of them owes.
+    // The primary list, which is what was missing.
     h.feed(
         op::SYS_BAY_CONFIG,
         &bay_config_rec(
@@ -424,12 +416,6 @@ fn a_device_that_has_not_sent_its_bays_is_not_fully_described() {
             BayFeatures::HDMI_OUT,
         ),
     );
-    assert!(
-        !h.device().configuration_complete(),
-        "the links this device owes were not waited for"
-    );
-
-    h.feed(op::SYS_LINKS, &link_rec(1, "AMP00001", "Zone 1", 0));
-    assert!(h.device().configuration_complete());
+    assert!(h.complete());
     assert!(h.saw(|e| matches!(e, Event::DeviceConfigComplete { .. })));
 }

@@ -655,10 +655,17 @@ pub(super) fn links(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         if state.bay(origin).is_none() {
             continue;
         }
+        // A record naming a bay this client has not seen is dropped rather
+        // than held, matching what a device does with the same frame, and the
+        // device re-sends.
         state.update_link(origin, linked_serial, linked_bay, features, ev);
-        if let Some(device) = state.device_mut(sender) {
-            device.note_link_record(port, ev);
-        }
+    }
+    // The page counts as the list having been reported whatever landed, which
+    // is the whole of what the link configuration establishes. Most of a V2IP
+    // device's bays own no record, so a record per bay is a total no device
+    // reaches.
+    if let Some(device) = state.device_mut(sender) {
+        device.note_link_config(ev);
     }
 }
 
