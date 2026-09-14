@@ -76,6 +76,12 @@ pub(crate) struct Device {
     pub(crate) link_records: BTreeSet<u16>,
 
     pub(crate) v2ip_sources: Option<Vec<V2ipStreamSources>>,
+    /// Source records by their position in the sender's list.
+    ///
+    /// A paged list arrives as windows that can be reordered or lost, so the
+    /// records are held by position and `v2ip_sources` is the run of them that
+    /// has arrived from the start.
+    pub(crate) v2ip_source_pages: BTreeMap<u16, V2ipStreamSources>,
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
     pub(crate) v2ip_sink: Option<DeviceV2ipSink>,
     /// What the device's video processor supports, once it has reported it.
@@ -118,6 +124,7 @@ impl Device {
             hello_received: now,
             link_records: BTreeSet::new(),
             v2ip_sources: None,
+            v2ip_source_pages: BTreeMap::new(),
             v2ip_details: None,
             v2ip_sink: None,
             v2ip_features: None,
@@ -743,6 +750,55 @@ impl Device {
             device: self.uid,
             topology,
         });
+    }
+
+    /// Merges one frame of a device's source list into the list it belongs to.
+    ///
+    /// A list that fits one frame is the whole list and replaces what was held.
+    /// A longer one arrives as pages, and a page is a window rather than the
+    /// list: its records belong at `first + index` whatever order the pages
+    /// arrive in, and it says nothing about the records it leaves out. Only a
+    /// frame covering the whole list may shorten it.
+    ///
+    /// `total` is the sender's count at the moment that page was built rather
+    /// than a promise about the set, so it decides only whether this frame is
+    /// the whole list - it never sizes the result.
+    pub(crate) fn merge_v2ip_sources(
+        &mut self,
+        first: usize,
+        total: usize,
+        page: &[V2ipStreamSources],
+        ev: &mut Vec<Event>,
+    ) {
+        let whole = first == 0 && page.len() == total;
+        if whole {
+            self.v2ip_source_pages.clear();
+        }
+        for (index, source) in page.iter().enumerate() {
+            let Ok(at) = u16::try_from(first + index) else {
+                return;
+            };
+            self.v2ip_source_pages.insert(at, *source);
+        }
+        if whole {
+            self.set_v2ip_sources(page.to_vec(), ev);
+            return;
+        }
+        // A record's position is what maps it to a bay, so the list reported is
+        // the run that has arrived from the start. A gap is where it stops,
+        // never something to fill: a default in the middle would report a bay
+        // as advertising no streams, which is a reading rather than an absence.
+        let mut list = Vec::with_capacity(self.v2ip_source_pages.len());
+        for (at, source) in &self.v2ip_source_pages {
+            if usize::from(*at) != list.len() {
+                break;
+            }
+            list.push(*source);
+        }
+        if list.is_empty() {
+            return;
+        }
+        self.set_v2ip_sources(list, ev);
     }
 
     pub(crate) fn set_v2ip_sources(

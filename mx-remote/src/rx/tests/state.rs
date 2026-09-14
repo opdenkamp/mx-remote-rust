@@ -251,3 +251,118 @@ fn a_frame_from_an_unknown_sender_is_not_acted_on() {
         "the hello exemption did not register the sender"
     );
 }
+
+/// Builds a device that advertises V2IP sources.
+fn source_device(n: u8) -> Harness {
+    let mut h = Harness::new(n);
+    h.hello(
+        0x27,
+        "FF88",
+        "PG0004",
+        DeviceFeature::V2IP_SOURCE | DeviceFeature::V2IP_SINK,
+    );
+    h
+}
+
+/// One page of a source list: where its records start, how long the whole list
+/// was when the page was built, then the records.
+fn source_page(first: u16, total: u16, records: &[Vec<u8>]) -> Vec<u8> {
+    let mut p = Vec::new();
+    p.extend_from_slice(&first.to_le_bytes());
+    p.extend_from_slice(&total.to_le_bytes());
+    p.extend_from_slice(&[0; 4]);
+    for r in records {
+        p.extend_from_slice(r);
+    }
+    p
+}
+
+fn source_rec(n: u8) -> Vec<u8> {
+    stream_rec(
+        uid_n(n),
+        &format!("239.9.{n}.1"),
+        &format!("239.9.{n}.2"),
+        &format!("239.9.{n}.3"),
+        V2IP_PORT_VIDEO,
+    )
+}
+
+/// A payload that is neither bare records nor a page is refused, not read from
+/// the first byte.
+///
+/// Both known forms start their records at a fixed offset, so anything else is
+/// a layout this client cannot place. Reading it from zero would not fail - it
+/// would offset every record and report a full set of plausible addresses
+/// belonging to no bay.
+#[test]
+fn a_source_list_of_an_unplaceable_length_is_refused() {
+    let mut h = source_device(31);
+    let mut odd = source_rec(41);
+    odd.extend_from_slice(&[0; 4]);
+    h.feed(op::SYS_BAY_V2IP_SOURCES, &odd);
+
+    assert!(
+        h.device().v2ip_sources.is_none(),
+        "a record read at the wrong offset was reported as a source"
+    );
+}
+
+/// Pages are placed by the position they state, not by the order they arrive.
+///
+/// Each page is its own datagram, so reordering and loss are both ordinary. A
+/// record's position is what maps it to a bay, which is why it has to come from
+/// the page header rather than from what has been seen so far.
+#[test]
+fn source_pages_are_placed_by_their_stated_position() {
+    let mut h = source_device(32);
+
+    // The second page first, which on its own describes nothing that can be
+    // placed from the start of the list.
+    h.feed(
+        op::SYS_BAY_V2IP_SOURCES,
+        &source_page(2, 4, &[source_rec(43), source_rec(44)]),
+    );
+    assert!(
+        h.device().v2ip_sources.is_none(),
+        "a list was reported with its first records still missing"
+    );
+
+    // The first page completes the run from the start.
+    h.feed(
+        op::SYS_BAY_V2IP_SOURCES,
+        &source_page(0, 4, &[source_rec(41), source_rec(42)]),
+    );
+    let sources = h.device().v2ip_sources.clone().expect("no sources");
+    assert_eq!(
+        sources.iter().map(|s| s.uid).collect::<Vec<_>>(),
+        vec![uid_n(41), uid_n(42), uid_n(43), uid_n(44)],
+        "pages were ordered by arrival rather than by position"
+    );
+}
+
+/// A page revises the records it carries and leaves the rest alone.
+///
+/// A page is a window on the sender's list, so treating one as the list would
+/// leave a reader holding only that window - every bay outside it losing the
+/// source it had.
+#[test]
+fn a_page_does_not_replace_the_list_it_is_part_of() {
+    let mut h = source_device(33);
+    h.feed(
+        op::SYS_BAY_V2IP_SOURCES,
+        &[source_rec(41), source_rec(42), source_rec(43)].concat(),
+    );
+    assert_eq!(h.device().v2ip_sources.as_ref().map(Vec::len), Some(3));
+
+    // One page revising the middle record only.
+    h.feed(
+        op::SYS_BAY_V2IP_SOURCES,
+        &source_page(1, 3, &[source_rec(52)]),
+    );
+    let sources = h.device().v2ip_sources.clone().expect("the list was lost");
+    assert_eq!(
+        sources.iter().map(|s| s.uid).collect::<Vec<_>>(),
+        vec![uid_n(41), uid_n(52), uid_n(43)],
+        "a page was read as the whole list"
+    );
+}

@@ -238,10 +238,35 @@ pub(super) fn temperature(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 /// Width of one record in the V2IP sources frame.
 const V2IP_SOURCE_RECORD: usize = 40;
 
+/// The header a paged source list puts in front of its records: where in the
+/// sender's list this page starts, how many records the whole list held when
+/// the page was built, and four reserved bytes.
+const V2IP_SOURCE_PAGE_HEADER: usize = 8;
+
 pub(super) fn v2ip_sources(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    let sources: Vec<V2ipStreamSources> = rx
-        .frame
-        .payload()
+    let payload = rx.frame.payload();
+    // A list that fits one frame is sent as bare records from the first byte. A
+    // longer one is split into pages, each carrying a header that says where in
+    // the sender's list its records begin. That header is not a whole record,
+    // so the remainder is what tells the two forms apart - and a payload that
+    // is neither is refused rather than read from byte zero, which would shift
+    // every record by the header's width and report a full set of plausible
+    // addresses belonging to no bay.
+    let (first, total, body) = match payload.len() % V2IP_SOURCE_RECORD {
+        0 => (0, payload.len() / V2IP_SOURCE_RECORD, payload),
+        V2IP_SOURCE_PAGE_HEADER => {
+            let Some(body) = payload.get(V2IP_SOURCE_PAGE_HEADER..) else {
+                return;
+            };
+            (
+                usize::from(u16_at(payload, 0)),
+                usize::from(u16_at(payload, 2)),
+                body,
+            )
+        }
+        _ => return,
+    };
+    let sources: Vec<V2ipStreamSources> = body
         .chunks_exact(V2IP_SOURCE_RECORD)
         .map(|record| V2ipStreamSources {
             uid: uid_at(record, 0),
@@ -252,7 +277,7 @@ pub(super) fn v2ip_sources(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
         })
         .collect();
     if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_v2ip_sources(sources, ev);
+        device.merge_v2ip_sources(first, total, &sources, ev);
     }
 }
 
