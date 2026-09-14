@@ -14,7 +14,8 @@ use crate::event::Event;
 use crate::types::{
     AudioChangeSource, MultiviewerCommand, V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason,
     V2ipDecoderState, VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
+    SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
@@ -1991,6 +1992,102 @@ fn a_zero_mask_in_a_full_length_capture_is_still_unknown() {
             .bits(),
         0x3F
     );
+}
+
+/// A device that initialises its configuration reports the second options
+/// group; one that does not has it discarded as the noise it is.
+///
+/// The bits sit where older firmware leaves uninitialised stack, and the
+/// validity bit is what claims the device has these options at all - so junk
+/// there would invent settings rather than misreport real ones.
+#[test]
+fn the_second_scaling_options_group_is_read_only_from_a_sender_that_means_it() {
+    let mut h = Harness::new(106);
+    h.hello(
+        0x28,
+        "ONEIP",
+        "CM0003",
+        DeviceFeature::VIDEO_ROUTING | DeviceFeature::CONFIG_INITIALISED,
+    );
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    // What a factory unit broadcasts: auto scaling on, both options on, and no
+    // mode configured.
+    cfg.flags = SCALING_FLAG_OPTIONS_VALID
+        | SCALING_FLAG_OPTIONS2_VALID
+        | SCALING_FLAG_MATCH_SOURCE
+        | SCALING_FLAG_SKIP_420
+        | SCALING_FLAG_AUTO_SCALING;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+
+    let scaling = h.device().v2ip_details.expect("no details").scaling;
+    assert_eq!(scaling.match_source(), Some(true));
+    assert_eq!(scaling.skip_420(), Some(true));
+    assert_eq!(scaling.auto_scaling(), Some(true));
+    assert_eq!(scaling.configured_mode(), None, "no mode is configured");
+
+    // The same byte from a sender that does not initialise its configuration.
+    let mut h = command_device(107);
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    cfg.flags = SCALING_FLAG_OPTIONS2_VALID | SCALING_FLAG_MATCH_SOURCE;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+
+    let scaling = h.device().v2ip_details.expect("no details").scaling;
+    assert_eq!(
+        scaling.match_source(),
+        None,
+        "uninitialised stack was reported as a setting"
+    );
+    assert_eq!(scaling.skip_420(), None);
+}
+
+/// Knowing a device has these options is not taken back by a write that does
+/// not mention them.
+///
+/// One validity bit covers both, and a controller writing any other field
+/// sends it clear. Reading the capability off the latest frame would report a
+/// device as lacking options it had already announced.
+#[test]
+fn a_later_write_does_not_unsay_the_second_options_group() {
+    let mut h = Harness::new(108);
+    h.hello(
+        0x28,
+        "ONEIP",
+        "CM0004",
+        DeviceFeature::VIDEO_ROUTING | DeviceFeature::CONFIG_INITIALISED,
+    );
+    let sender = h.sender;
+    let mut cfg = Cfg::addresses(sender, "239.1.2.3");
+    cfg.flags = SCALING_FLAG_OPTIONS2_VALID | SCALING_FLAG_MATCH_SOURCE;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+    assert_eq!(
+        h.device().v2ip_details.unwrap().scaling.match_source(),
+        Some(true)
+    );
+
+    // An options-only write, carrying the first group's bit and not the second.
+    let mut options = Cfg::addresses(sender, "239.1.2.3");
+    options.flags = SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
+    h.feed(op::V2IP_DEVICE_CFG, &options.bytes());
+
+    let scaling = h.device().v2ip_details.expect("no details").scaling;
+    assert_eq!(
+        scaling.match_source(),
+        Some(true),
+        "a write about another field unsaid what the device had reported"
+    );
+    assert_eq!(
+        scaling.auto_scaling(),
+        Some(true),
+        "the write itself landed"
+    );
+
+    // And a frame that does carry the bit replaces both options together.
+    let mut off = Cfg::addresses(sender, "239.1.2.3");
+    off.flags = SCALING_FLAG_OPTIONS2_VALID | SCALING_FLAG_SKIP_420;
+    h.feed(op::V2IP_DEVICE_CFG, &off.bytes());
+    let scaling = h.device().v2ip_details.expect("no details").scaling;
+    assert_eq!(scaling.match_source(), Some(false));
+    assert_eq!(scaling.skip_420(), Some(true));
 }
 
 /// A device stamps the word only when describing itself, so a write aimed at

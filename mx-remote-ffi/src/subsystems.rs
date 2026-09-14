@@ -158,6 +158,18 @@ pub struct mxr_v2ip_details_t {
 pub const MXR_SCALING_FLAG_MODE_VALID: u8 = 1 << 0;
 /// Set when the frame carries the scaling options.
 pub const MXR_SCALING_FLAG_OPTIONS_VALID: u8 = 1 << 1;
+/// Set when the frame carries the second group of scaling options.
+///
+/// Firmware with those options sets this on every configuration it sends about
+/// itself, so it doubles as the report that the device has them at all. It is
+/// read only from a sender that says it initialises its configuration: on one
+/// that does not, this bit is uninitialised stack and the settings behind it
+/// would be invented rather than misread.
+pub const MXR_SCALING_FLAG_OPTIONS2_VALID: u8 = 1 << 4;
+/// Set when the output follows its source's format instead of a fixed one.
+pub const MXR_SCALING_FLAG_MATCH_SOURCE: u8 = 1 << 5;
+/// Set when the output declines 4:2:0 rather than scaling it.
+pub const MXR_SCALING_FLAG_SKIP_420: u8 = 1 << 6;
 /// Set when the output scales automatically.
 pub const MXR_SCALING_FLAG_AUTO_SCALING: u8 = 1 << 7;
 

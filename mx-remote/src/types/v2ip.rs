@@ -241,17 +241,34 @@ pub const SCALING_FLAG_MODE_VALID: u8 = 1 << 0;
 /// Set when the frame carries the scaling options.
 pub const SCALING_FLAG_OPTIONS_VALID: u8 = 1 << 1;
 
+/// Set when the frame carries the second group of scaling options.
+///
+/// Firmware that has those options sets this on every configuration it sends
+/// about itself, so it doubles as the report that the device has them at all.
+pub const SCALING_FLAG_OPTIONS2_VALID: u8 = 1 << 4;
+
+/// Set when the output follows its source's format instead of a fixed one.
+pub const SCALING_FLAG_MATCH_SOURCE: u8 = 1 << 5;
+
+/// Set when the output declines 4:2:0 rather than scaling it.
+pub const SCALING_FLAG_SKIP_420: u8 = 1 << 6;
+
 /// Set when the output scales automatically.
 pub const SCALING_FLAG_AUTO_SCALING: u8 = 1 << 7;
 
 /// The flag bits that carry meaning.
 ///
-/// Bits 2..6 are undefined and are not reliably zero on the wire: firmware
-/// that does not initialise the configuration it broadcasts builds this frame
-/// from an uninitialised stack local and ORs its flags onto whatever was
-/// there.
-pub const SCALING_FLAGS_DEFINED: u8 =
-    SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
+/// Bits 2 and 3 have no meaning and are excluded: they are not reliably zero
+/// on the wire, because firmware that does not initialise the configuration it
+/// broadcasts builds this frame from an uninitialised stack local and ORs its
+/// flags onto whatever was there. The same is true of every bit here on such a
+/// sender, which is why each reading below says what it rests on.
+pub const SCALING_FLAGS_DEFINED: u8 = SCALING_FLAG_MODE_VALID
+    | SCALING_FLAG_OPTIONS_VALID
+    | SCALING_FLAG_OPTIONS2_VALID
+    | SCALING_FLAG_MATCH_SOURCE
+    | SCALING_FLAG_SKIP_420
+    | SCALING_FLAG_AUTO_SCALING;
 
 /// Lowest refresh rate a V2IP output stage accepts, in Hz.
 ///
@@ -364,6 +381,37 @@ impl V2ipScalingSettings {
         Some(self.flags & SCALING_FLAG_AUTO_SCALING != 0)
     }
 
+    /// Whether the output follows its source's format, `None` when the device
+    /// has never said.
+    ///
+    /// Firmware with this option announces it on every configuration it sends
+    /// about itself, so a device that has reported it once is known to have
+    /// it. The cached block accumulates its validity bits, so a later write
+    /// carrying only the first options group does not take that back.
+    ///
+    /// Reported only from a sender announcing
+    /// [`crate::DeviceInfo::config_initialised`], so this needs no caveat of
+    /// its own: no firmware has these options without that announcement, and
+    /// one that lacks it would be reporting uninitialised stack. That is the
+    /// difference from [`Self::configured_mode`], which is reported from any
+    /// sender because a mode can be genuine on one of those.
+    pub const fn match_source(&self) -> Option<bool> {
+        if self.flags & SCALING_FLAG_OPTIONS2_VALID == 0 {
+            return None;
+        }
+        Some(self.flags & SCALING_FLAG_MATCH_SOURCE != 0)
+    }
+
+    /// Whether the output declines 4:2:0 rather than scaling it, `None` when
+    /// the device has never said. Reported on the same terms as
+    /// [`Self::match_source`], which shares its validity bit.
+    pub const fn skip_420(&self) -> Option<bool> {
+        if self.flags & SCALING_FLAG_OPTIONS2_VALID == 0 {
+            return None;
+        }
+        Some(self.flags & SCALING_FLAG_SKIP_420 != 0)
+    }
+
     /// Folds a received scaling config onto the cached one, field by field.
     ///
     /// A write carries the mode or the options alone, so taking the block
@@ -382,6 +430,16 @@ impl V2ipScalingSettings {
             out.flags &= !SCALING_FLAG_AUTO_SCALING;
             out.flags |= SCALING_FLAG_OPTIONS_VALID;
             out.flags |= self.flags & SCALING_FLAG_AUTO_SCALING;
+        }
+        // One validity bit covers both options in this group, so a frame
+        // carrying it replaces both and a frame without it leaves both alone -
+        // which is also what keeps the bit itself, and so the knowledge that
+        // the device has these options, from being taken back by a later write
+        // that carries only the first group.
+        if self.flags & SCALING_FLAG_OPTIONS2_VALID != 0 {
+            out.flags &= !(SCALING_FLAG_MATCH_SOURCE | SCALING_FLAG_SKIP_420);
+            out.flags |= SCALING_FLAG_OPTIONS2_VALID;
+            out.flags |= self.flags & (SCALING_FLAG_MATCH_SOURCE | SCALING_FLAG_SKIP_420);
         }
         out
     }

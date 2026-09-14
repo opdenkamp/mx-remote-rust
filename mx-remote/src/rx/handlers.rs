@@ -11,7 +11,8 @@ use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TopologyEntry, V2ipDscpConfig,
     V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus,
-    SCALING_FLAGS_DEFINED, VOLUME_UNCHANGED,
+    SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID,
+    SCALING_FLAG_SKIP_420, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
@@ -400,6 +401,24 @@ fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid
     manages.then_some(subject)
 }
 
+/// Which scaling flag bits may be believed from this sender.
+///
+/// A sender that does not initialise this block builds it over an
+/// uninitialised stack local, so every bit in the byte is suspect. Only the
+/// second options group is dropped for it: those bits cannot be real on such a
+/// sender, whereas the older ones can, and the caller is told which case it has
+/// through the same announcement.
+fn scaling_flag_mask(state: &State, rx: &Rx<'_>) -> u8 {
+    if state
+        .device(rx.sender())
+        .is_some_and(Device::config_initialised)
+    {
+        return SCALING_FLAGS_DEFINED;
+    }
+    SCALING_FLAGS_DEFINED
+        & !(SCALING_FLAG_OPTIONS2_VALID | SCALING_FLAG_MATCH_SOURCE | SCALING_FLAG_SKIP_420)
+}
+
 /// The configuration block as it was before the tiling window was appended to
 /// it, which is the shortest whole one any sender emits.
 ///
@@ -452,10 +471,24 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
         scaling: V2ipScalingSettings {
             mode: MxrSignalType::from_wire(u16_at(p, 56)),
             refresh: u16_at(p, 58),
-            // Only three bits are defined. Firmware that does not initialise
-            // this frame builds it from an uninitialised stack local, so the
-            // rest is noise and must not reach the cache even on a first frame.
-            flags: byte(p, 60) & SCALING_FLAGS_DEFINED,
+            // Undefined bits never reach the cache, even on a first frame:
+            // firmware that does not initialise this frame builds it from an
+            // uninitialised stack local and ORs its flags onto whatever was
+            // there.
+            //
+            // The second options group is dropped from such a sender
+            // entirely. No firmware carries those options without also
+            // announcing that it initialises this block, so a sender that does
+            // not announce it has no such settings - masking them can discard
+            // nothing real, while reading them would invent a capability out
+            // of whatever the stack held.
+            //
+            // The older bits are not that case and are kept. A sender without
+            // the announcement can still have a genuine mode configured, and
+            // the captured frame in the tests is one: its refresh agrees with
+            // the rate its mode names, which junk does not do. Dropping those
+            // would discard the only reading of that device anyone has.
+            flags: byte(p, 60) & scaling_flag_mask(state, rx),
         },
     };
     if let Some(device) = state.device_mut(subject) {
