@@ -12,6 +12,17 @@ links into a C++ program as a plain static archive, with no runtime to
 initialise, no GC pointer rules, and no signal handlers taken from the host
 process.
 
+**Support every protocol version it is possible to support.** Models older than
+any current product line are still in the field, speak the protocol as it was,
+and will never be updated. A firmware maintainer scoping its compatibility work
+to the versions its own product ships is not scoping this library: a layout
+superseded on one product is still live on another. Remove a decoding path only
+when no device can emit it, never because a release stopped caring about it.
+
+A superseded layout usually costs nothing to keep. Where it is told apart by a
+version, that version belongs to releases that shipped long ago and can no
+longer move, so the test cannot go stale the way one on a current row can.
+
 ## Sources of truth
 
 The firmware defines the wire format and settles every disagreement with this
