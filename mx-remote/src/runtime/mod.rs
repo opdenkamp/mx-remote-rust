@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use crate::event::{Event, EventHandler};
 use crate::rx::process_frame;
-use crate::state::{Device, State};
+use crate::state::{Device, State, CONFIG_GRACE};
 use crate::types::*;
 use crate::wire::{
     build_hello, op, Addressee, BayUid, Conn, DeviceFeature, DeviceUid, FirmwareType, Opcode,
@@ -64,10 +64,6 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(50);
 
 /// Shortest gap between two discovery requests.
 const DISCOVER_INTERVAL: Duration = Duration::from_secs(5);
-
-/// How long a device that has announced itself is given to finish sending its
-/// configuration before discovery is asked for again.
-const CONFIG_GRACE: Duration = Duration::from_secs(15);
 
 /// How a [`Remote`] finds the network.
 ///
@@ -576,36 +572,43 @@ impl Shared {
         }
     }
 
-    /// Re-examines the network once a second: liveness, the announcement timer
-    /// and whether anything still owes us its configuration.
+    /// Runs [`Self::probe_once`] once a second until the client is closing.
     fn probe_loop(&self) {
         while self.sleep_until_next_tick() {
-            let now = Instant::now();
-            let want_discover = self.mutate(|state, ev| {
-                let mut incomplete = false;
-                let mut any_complete = false;
-                for device in state.devices.values_mut() {
-                    device.check_online(now, ev);
-                    if device.configuration_complete() {
-                        any_complete = true;
-                    } else if now.saturating_duration_since(device.hello_received) > CONFIG_GRACE {
-                        // Past the grace period a device has said nothing more,
-                        // so ask the network again rather than wait forever.
-                        incomplete = true;
-                    }
-                }
-                // Nothing has finished describing itself, so nothing has been
-                // discovered yet at all.
-                incomplete || !any_complete
-            });
+            self.probe_once(Instant::now());
+        }
+    }
 
-            let discover_due = lock(&self.schedule).discover_due(now);
-            if self.announce_due(now) {
-                self.announce();
+    /// One pass: liveness, completion, the announcement timer and discovery.
+    pub(super) fn probe_once(&self, now: Instant) {
+        let want_discover = self.mutate(|state, ev| {
+            let mut incomplete = false;
+            let mut any_complete = false;
+            for device in state.devices.values_mut() {
+                device.check_online(now, ev);
+                // Re-tested here rather than only where a frame lands: a device
+                // stops waiting for its links on the clock alone, and no frame
+                // arrives to announce that.
+                device.check_config_complete(now, ev);
+                if device.configuration_complete(now) {
+                    any_complete = true;
+                } else if now.saturating_duration_since(device.first_seen) > CONFIG_GRACE {
+                    // Past the grace period a device has said nothing more, so
+                    // ask the network again rather than wait forever.
+                    incomplete = true;
+                }
             }
-            if want_discover && discover_due {
-                let _ = self.discover();
-            }
+            // Nothing has finished describing itself, so nothing has been
+            // discovered yet at all.
+            incomplete || !any_complete
+        });
+
+        let discover_due = lock(&self.schedule).discover_due(now);
+        if self.announce_due(now) {
+            self.announce();
+        }
+        if want_discover && discover_due {
+            let _ = self.discover();
         }
     }
 }

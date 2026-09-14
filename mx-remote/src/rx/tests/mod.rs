@@ -10,7 +10,7 @@ mod state;
 mod subsystems;
 
 use std::net::Ipv4Addr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
@@ -84,9 +84,22 @@ impl Harness {
         self.device().bay(port).expect("bay not registered")
     }
 
-    /// Whether the device is fully described.
+    /// Whether the device is fully described, judged now.
     pub(super) fn complete(&self) -> bool {
-        self.device().configuration_complete()
+        self.device().configuration_complete(Instant::now())
+    }
+
+    /// Moves the device's registration `age` into the past, so a window
+    /// measured from it has had that long to expire in.
+    pub(super) fn age(&mut self, age: Duration) {
+        let device = self
+            .state
+            .device_mut(self.sender)
+            .expect("device not registered");
+        device.first_seen = device
+            .first_seen
+            .checked_sub(age)
+            .expect("the test clock cannot predate the process");
     }
 
     /// Whether an event matching `pred` was produced.

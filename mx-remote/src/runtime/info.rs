@@ -47,6 +47,14 @@ pub struct DeviceInfo {
     /// present.
     pub online: bool,
     /// Whether every part of the device's configuration has arrived.
+    ///
+    /// A device that withholds its link configuration is reported complete
+    /// fifteen seconds after it was discovered, and keeps being asked for the
+    /// rest: an unreported link reads as no link, which is what a link coming
+    /// up later looks like anyway. Its bays, and a V2IP device's source list,
+    /// are waited for without limit - a caller names things after a bay, and a
+    /// name assigned to a placeholder outlives the frame that would have
+    /// corrected it.
     pub configuration_complete: bool,
     /// Whether the device's firmware initialises the configuration it
     /// broadcasts.
@@ -88,7 +96,7 @@ impl DeviceInfo {
             address: device.hello.address,
             status: device.status(now),
             online: device.is_online(now),
-            configuration_complete: device.configuration_complete(),
+            configuration_complete: device.configuration_complete(now),
             config_initialised: device.config_initialised(),
             temperatures: device.temperatures.clone(),
             mesh_master: device.mesh_master,

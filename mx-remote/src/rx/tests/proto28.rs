@@ -5,6 +5,7 @@
 //! V2IP device configuration, the paged reports, and the signal report.
 
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use crate::types::{
     StreamKind, V2ipStreamSource, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
@@ -15,6 +16,7 @@ use crate::wire::{
     V2IP_PORT_VIDEO,
 };
 
+use crate::state::CONFIG_GRACE;
 use crate::testing::{bay_config_rec, hello_payload, link_rec, poisoned, stream_rec, uid_n, Cfg};
 
 use super::Harness;
@@ -438,6 +440,79 @@ fn a_cut_link_list_completes_the_configuration() {
     );
 }
 
+/// Waiting for the links ends; waiting for the bays does not.
+///
+/// What a device withholds reaches a caller as what it does not have, so a wait
+/// with no end reports no fault - it removes the device. A link is safe to stop
+/// waiting for because an unreported one reads as no link, which is what a link
+/// coming up later looks like anyway. A bay is not: a caller names things after
+/// one and persists the name, so a bay arriving after completion has already
+/// been named for a placeholder.
+#[test]
+fn the_links_stop_being_waited_for_and_the_bays_never_do() {
+    let mut h = Harness::new(30);
+    h.hello(0x28, "ProAmp8", "PG0005", amp_features());
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            1,
+            0,
+            "Zone 1",
+            "Hall",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    assert!(
+        !h.complete(),
+        "inside the window the links are still awaited"
+    );
+
+    h.age(CONFIG_GRACE + Duration::from_secs(1));
+    assert!(h.complete(), "past the window they are not");
+
+    // The same window, against a device that has sent no bays at all.
+    let mut h = Harness::new(31);
+    h.hello(0x28, "ProAmp8", "PG0006", amp_features());
+    h.age(CONFIG_GRACE + Duration::from_secs(1));
+    assert!(
+        !h.complete(),
+        "the window stood in for the primary bay list"
+    );
+}
+
+/// Another hello does not restart the window.
+///
+/// A device announces itself every few seconds, so a window measured from the
+/// last hello is one that never closes and a device withholding its links stays
+/// undescribed for as long as the client runs.
+#[test]
+fn the_window_is_not_restarted_by_another_hello() {
+    let mut h = Harness::new(33);
+    h.hello(0x28, "ProAmp8", "PG0008", amp_features());
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            1,
+            0,
+            "Zone 1",
+            "Hall",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    h.age(CONFIG_GRACE + Duration::from_secs(1));
+    assert!(h.complete());
+
+    h.hello(0x28, "ProAmp8", "PG0008", amp_features());
+    assert!(
+        h.complete(),
+        "the announcement the device keeps sending reopened the window"
+    );
+}
+
 /// A page naming only bays this client has not seen still reports the list.
 ///
 /// The record is dropped, as a device drops the same frame, and the sender
@@ -467,6 +542,42 @@ fn a_page_of_unknown_bays_still_reports_the_link_configuration() {
         h.complete(),
         "a page whose records landed nowhere was not counted as the list"
     );
+}
+
+/// Nor does the window stand in for a V2IP device's source list.
+#[test]
+fn the_window_does_not_release_the_v2ip_source_list() {
+    let mut h = Harness::new(32);
+    h.hello(
+        0x28,
+        "ONEIP-TRX",
+        "PG0007",
+        DeviceFeature::V2IP_SOURCE | DeviceFeature::V2IP_SINK,
+    );
+    let mut cfg = bay_config_rec(
+        0,
+        0,
+        0,
+        "Input 1",
+        "Apple TV",
+        BayStatus::NONE,
+        BayFeatures::HDMI_IN,
+    );
+    cfg.extend(bay_config_rec(
+        1,
+        1,
+        0,
+        "Output 1",
+        "TV",
+        BayStatus::NONE,
+        BayFeatures::HDMI_OUT,
+    ));
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+    h.age(CONFIG_GRACE + Duration::from_secs(1));
+    assert!(!h.complete(), "the source list was not waited for");
+
+    h.feed(op::SYS_BAY_V2IP_SOURCES, &stream_rec_page(2));
+    assert!(h.complete());
 }
 
 #[test]

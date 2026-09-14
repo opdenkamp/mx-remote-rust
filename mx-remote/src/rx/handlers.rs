@@ -82,7 +82,7 @@ pub(super) fn bay_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     // not stand in for it: a device that has sent only the secondary one has
     // not yet described itself.
     if rx.frame.opcode() == op::SYS_BAY_CONFIG {
-        device.note_bay_config(ev);
+        device.note_bay_config(rx.timestamp, ev);
     }
 }
 
@@ -652,12 +652,12 @@ pub(super) fn links(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         .collect();
     for (port, linked_serial, linked_bay, features) in records {
         let origin = BayUid::new(sender, port);
-        if state.bay(origin).is_none() {
-            continue;
-        }
         // A record naming a bay this client has not seen is dropped rather
         // than held, matching what a device does with the same frame, and the
         // device re-sends.
+        if state.bay(origin).is_none() {
+            continue;
+        }
         state.update_link(origin, linked_serial, linked_bay, features, ev);
     }
     // The page counts as the list having been reported whatever landed, which
@@ -665,7 +665,7 @@ pub(super) fn links(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     // device's bays own no record, so a record per bay is a total no device
     // reaches.
     if let Some(device) = state.device_mut(sender) {
-        device.note_link_config(ev);
+        device.note_link_config(rx.timestamp, ev);
     }
 }
 

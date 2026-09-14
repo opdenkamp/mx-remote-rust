@@ -24,7 +24,7 @@ use crate::event::Event;
 use crate::wire::{BayFeatures, BayUid, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
-pub(crate) use device::{Device, HelloInfo};
+pub(crate) use device::{Device, HelloInfo, CONFIG_GRACE};
 pub(crate) use links::{BayLink, BayLinks};
 
 /// Every device this client has heard from, and the links between their bays.

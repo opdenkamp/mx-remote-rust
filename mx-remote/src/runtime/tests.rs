@@ -8,11 +8,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::testing::{fixed_str, uid_n};
-use crate::wire::{op, protocol_for, DeviceFeature, HEADER_LEN};
+use crate::testing::{bay_config_rec, datagram, fixed_str, uid_n};
+use crate::wire::{
+    op, protocol_for, BayFeatures, BayStatus, DeviceFeature, DeviceUid, HEADER_LEN,
+    PROTOCOL_VERSION,
+};
 
 use super::schedule::{next_hello_interval, HELLO_BASE, HELLO_JITTER};
 use super::*;
+
+/// The address every fixture datagram appears to come from.
+const FROM: Ipv4Addr = Ipv4Addr::new(10, 8, 8, 9);
 
 /// Records every frame that passes the protocol gate.
 ///
@@ -350,5 +356,90 @@ fn starting_announces_and_solicits_before_it_returns() {
     assert!(
         opcodes.contains(&op::SYS_DISCOVER.0),
         "start returned without asking the network to describe itself"
+    );
+}
+
+/// Collects the device events a probe pass produces.
+#[derive(Default)]
+struct Watching {
+    completed: Mutex<Vec<DeviceUid>>,
+    offline: Mutex<Vec<DeviceUid>>,
+}
+
+impl EventHandler for Watching {
+    fn on_device_config_complete(&self, device: DeviceUid) {
+        self.completed.lock().expect("test handler").push(device);
+    }
+
+    fn on_device_online_changed(&self, device: DeviceUid, online: bool) {
+        if !online {
+            self.offline.lock().expect("test handler").push(device);
+        }
+    }
+}
+
+/// Announces `peer` to `remote` as a video matrix, and gives it one bay.
+///
+/// A matrix is behind the link-configuration gate, so what it still owes after
+/// this is its links and nothing else.
+fn matrix_with_one_bay(remote: &Remote, peer: DeviceUid) {
+    remote
+        .shared
+        .process_datagram(&hello_datagram(peer, "FF88", "PB0001"), FROM);
+    remote.shared.process_datagram(
+        &datagram(
+            peer,
+            op::SYS_BAY_CONFIG,
+            PROTOCOL_VERSION,
+            &bay_config_rec(
+                1,
+                1,
+                0,
+                "Output 1",
+                "TV",
+                BayStatus::NONE,
+                BayFeatures::HDMI_OUT,
+            ),
+        ),
+        FROM,
+    );
+}
+
+/// Moves `peer`'s registration `age` into the past.
+fn age(remote: &Remote, peer: DeviceUid, age: Duration) {
+    remote.shared.mutate(|state, _| {
+        let device = state.device_mut(peer).expect("peer not registered");
+        device.first_seen = device
+            .first_seen
+            .checked_sub(age)
+            .expect("the test clock cannot predate the process");
+    });
+}
+
+/// A device that stops waiting for its links is announced from the probe pass.
+///
+/// Nothing arrives when a window closes, so no frame can carry the news: the
+/// pass that re-tests completion is the whole of the announcement path. Driven
+/// through that pass rather than through the device method, so the two cannot
+/// come apart.
+#[test]
+fn the_probe_pass_announces_a_device_its_window_completed() {
+    let seen = Arc::new(Watching::default());
+    let (remote, _) = client_with(210, Arc::clone(&seen) as Arc<dyn EventHandler>);
+    let peer = uid_n(211);
+    matrix_with_one_bay(&remote, peer);
+
+    remote.shared.probe_once(Instant::now());
+    assert!(
+        seen.completed.lock().expect("test handler").is_empty(),
+        "inside the window the pass announced a device still owing its links"
+    );
+
+    age(&remote, peer, CONFIG_GRACE + Duration::from_secs(1));
+    remote.shared.probe_once(Instant::now());
+    assert_eq!(
+        *seen.completed.lock().expect("test handler"),
+        vec![peer],
+        "the pass did not announce a device no further frame will complete"
     );
 }

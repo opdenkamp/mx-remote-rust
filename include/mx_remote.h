@@ -1660,6 +1660,14 @@ typedef struct {
   bool online;
   /**
    * Whether every part of the device's configuration has arrived.
+   *
+   * A device that withholds its link configuration is reported complete
+   * fifteen seconds after it was discovered, and keeps being asked for the
+   * rest: an unreported link reads as no link, which is what a link coming
+   * up later looks like anyway. Its bays, and a V2IP device's source list,
+   * are waited for without limit - a caller names things after a bay, and a
+   * name assigned to a placeholder outlives the frame that would have
+   * corrected it.
    */
   bool configuration_complete;
   /**

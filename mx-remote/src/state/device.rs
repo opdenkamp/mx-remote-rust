@@ -31,6 +31,13 @@ const SILENCE_LIMIT_MODERN: Duration = Duration::from_secs(15);
 /// The version from which the shorter limit applies.
 const MODERN_PROTOCOL: u16 = 0x20;
 
+/// How long a device is given to finish describing itself.
+///
+/// Past this its link configuration stops being waited for, and it keeps being
+/// asked for the rest. It never stands in for the bay configuration - see
+/// [`Device::has_bays`].
+pub(crate) const CONFIG_GRACE: Duration = Duration::from_secs(15);
+
 /// What a device advertises about itself in its hello frame.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct HelloInfo {
@@ -65,7 +72,13 @@ pub(crate) struct Device {
     pub(crate) have_config: bool,
     pub(crate) rebooting: bool,
     pub(crate) last_ping: Instant,
-    pub(crate) hello_received: Instant,
+    /// When this device was first heard from.
+    ///
+    /// What [`CONFIG_GRACE`] is measured against, so it is the moment the
+    /// device entered the registry and not the last hello: a device announces
+    /// every few seconds, and a window restarted by each announcement is one
+    /// that never closes.
+    pub(crate) first_seen: Instant,
     /// Whether the device has reported its link configuration.
     pub(crate) link_config_received: bool,
     /// Whether the device has sent its primary bay configuration.
@@ -120,7 +133,7 @@ impl Device {
             have_config: false,
             rebooting: false,
             last_ping: now,
-            hello_received: now,
+            first_seen: now,
             link_config_received: false,
             bay_config_received: false,
             v2ip_sources: None,
@@ -380,6 +393,13 @@ impl Device {
     /// For a V2IP device this is half the answer by itself: its bays include
     /// ones that live on other devices, and those arrive on a frame of their
     /// own that [`Self::configuration_complete`] requires separately.
+    ///
+    /// Unlike the link configuration, waiting for this never times out. A bay
+    /// is what a caller names things after, and a name it assigns before this
+    /// frame arrives is one it assigned to a placeholder - persisted, reused
+    /// from then on, and undone only by editing whatever holds it. So a device
+    /// that has not sent its bays is reported as undescribed for as long as
+    /// that lasts.
     fn has_bays(&self) -> bool {
         self.bay_config_received
     }
@@ -398,19 +418,34 @@ impl Device {
     /// continued. An 18-bay amplifier reports 17 records in one page and sends
     /// no second one, so even a device whose bays are all its own never
     /// accounts for the last of them.
-    fn needs_link_config(&self) -> bool {
+    ///
+    /// Waiting ends after [`CONFIG_GRACE`], and the device keeps being asked
+    /// for the rest. Nothing a caller has already built needs revising when the
+    /// records do arrive: a link is reported per bay and read on access, so an
+    /// unreported one reads as no link, which is what a link coming up later
+    /// looks like anyway. A withheld frame therefore costs a consumer that
+    /// window rather than leaving the device permanently undescribed, a state
+    /// nothing on the wire distinguishes from a device with no links to offer.
+    fn needs_link_config(&self, now: Instant) -> bool {
         (self.is_amp() || self.is_video_matrix() || self.is_audio_matrix() || self.is_v2ip())
             && !self.link_config_received
+            && now.saturating_duration_since(self.first_seen) <= CONFIG_GRACE
     }
 
-    pub(crate) fn configuration_complete(&self) -> bool {
+    pub(crate) fn configuration_complete(&self, now: Instant) -> bool {
         self.has_bays()
             && !(self.is_v2ip() && self.v2ip_sources.is_none())
-            && !self.needs_link_config()
+            && !self.needs_link_config(now)
     }
 
-    fn check_config_complete(&mut self, ev: &mut Vec<Event>) {
-        if self.have_config || !self.configuration_complete() {
+    /// Announces completion the first time every part has arrived.
+    ///
+    /// Also called on every pass of the probe loop, which is what gives the
+    /// window in [`Self::needs_link_config`] a moment to expire in: no frame
+    /// need arrive for a device to stop waiting for its links, so that pass is
+    /// the only thing that can notice.
+    pub(crate) fn check_config_complete(&mut self, now: Instant, ev: &mut Vec<Event>) {
+        if self.have_config || !self.configuration_complete(now) {
             return;
         }
         self.have_config = true;
@@ -470,7 +505,6 @@ impl Device {
 
     pub(crate) fn apply_hello(&mut self, hello: HelloInfo, now: Instant, ev: &mut Vec<Event>) {
         self.last_ping = now;
-        self.hello_received = now;
         let changed = !self.hello.same_advertisement(&hello);
         self.hello = hello;
         self.rebooting = false;
@@ -521,7 +555,7 @@ impl Device {
             // The audio tree names the bays it runs through, and may have
             // arrived before this one did.
             self.attach_audio_endpoints(ev);
-            self.check_config_complete(ev);
+            self.check_config_complete(now, ev);
         }
     }
 
@@ -531,21 +565,21 @@ impl Device {
     }
 
     /// Notes that the device has sent its primary bay configuration.
-    pub(crate) fn note_bay_config(&mut self, ev: &mut Vec<Event>) {
+    pub(crate) fn note_bay_config(&mut self, now: Instant, ev: &mut Vec<Event>) {
         if self.bay_config_received {
             return;
         }
         self.bay_config_received = true;
-        self.check_config_complete(ev);
+        self.check_config_complete(now, ev);
     }
 
     /// Notes that the device has reported its link configuration.
-    pub(crate) fn note_link_config(&mut self, ev: &mut Vec<Event>) {
+    pub(crate) fn note_link_config(&mut self, now: Instant, ev: &mut Vec<Event>) {
         if self.link_config_received {
             return;
         }
         self.link_config_received = true;
-        self.check_config_complete(ev);
+        self.check_config_complete(now, ev);
     }
 
     pub(crate) fn set_temperatures(&mut self, temperatures: Vec<u8>, ev: &mut Vec<Event>) {
