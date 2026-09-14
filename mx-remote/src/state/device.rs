@@ -3,7 +3,7 @@
 
 //! A discovered device and the bays it owns.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
@@ -66,7 +66,14 @@ pub(crate) struct Device {
     pub(crate) rebooting: bool,
     pub(crate) last_ping: Instant,
     pub(crate) hello_received: Instant,
-    pub(crate) link_config_received: bool,
+    /// The ports that have reported a link record.
+    ///
+    /// A device sends one record per bay and pages them across frames, with no
+    /// marker on the last, so the only sound test for a complete set is
+    /// counting one per bay - the same model-based rule the bays themselves
+    /// use. A set rather than a counter because a device re-sends its
+    /// configuration, and a repeat must not count twice.
+    pub(crate) link_records: BTreeSet<u16>,
 
     pub(crate) v2ip_sources: Option<Vec<V2ipStreamSources>>,
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
@@ -103,7 +110,7 @@ impl Device {
             rebooting: false,
             last_ping: now,
             hello_received: now,
-            link_config_received: false,
+            link_records: BTreeSet::new(),
             v2ip_sources: None,
             v2ip_details: None,
             v2ip_sink: None,
@@ -356,9 +363,15 @@ impl Device {
         self.bays.len() >= self.inputs().count() + self.outputs().count()
     }
 
+    /// Whether the device owes link records this client has not seen.
+    ///
+    /// One record per bay, so a set covering every bay is the whole list. The
+    /// frame carries no count and no end marker, and a short page is not the
+    /// last one - a sender shrinks a page under memory pressure, and an evenly
+    /// divided list ends on a full one.
     fn needs_link_config(&self) -> bool {
         (self.is_amp() || self.is_video_matrix() || self.is_audio_matrix() || self.is_v2ip())
-            && !self.link_config_received
+            && self.link_records.len() < self.inputs().count() + self.outputs().count()
     }
 
     pub(crate) fn configuration_complete(&self) -> bool {
@@ -488,8 +501,15 @@ impl Device {
         self.bays.get(&u16::from(port)).map(Bay::uid)
     }
 
-    pub(crate) fn on_link_config_received(&mut self, ev: &mut Vec<Event>) {
-        self.link_config_received = true;
+    /// Notes that `port` has reported its link record.
+    ///
+    /// Only a record that landed on a known bay counts. A record naming a bay
+    /// this client has not seen yet is dropped rather than held, matching what
+    /// a device does with the same frame, and the device re-sends.
+    pub(crate) fn note_link_record(&mut self, port: u16, ev: &mut Vec<Event>) {
+        if !self.link_records.insert(port) {
+            return;
+        }
         self.check_config_complete(ev);
     }
 

@@ -115,6 +115,20 @@ pub(crate) fn stream_rec(
     rec
 }
 
+/// One `SYS_LINKS` record: the port it is about, the serial and bay name it
+/// links to, and the link's feature word.
+///
+/// A device sends one of these per bay, so a full set is one record for every
+/// input and output it has.
+pub(crate) fn link_rec(port: u8, serial: &str, bay: &str, features: u32) -> Vec<u8> {
+    let mut rec = poisoned(38);
+    rec[0] = port;
+    field(&mut rec, 2, 16, serial);
+    field(&mut rec, 18, 16, bay);
+    rec[34..38].copy_from_slice(&features.to_le_bytes());
+    rec
+}
+
 /// A `v2ip_device_config_update` payload builder.
 ///
 /// Every field goes in verbatim, so a caller can send the zeroed blocks and

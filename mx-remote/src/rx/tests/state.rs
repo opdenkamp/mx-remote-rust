@@ -6,7 +6,7 @@
 use crate::event::Event;
 use crate::wire::{op, BayFeatures, BayStatus, BayUid, DeviceFeature, V2IP_PORT_VIDEO};
 
-use crate::testing::{bay_config_rec, poisoned, stream_rec, uid_n};
+use crate::testing::{bay_config_rec, link_rec, poisoned, stream_rec, uid_n};
 
 use super::Harness;
 
@@ -99,9 +99,18 @@ fn discovery_builds_a_device_from_its_configuration() {
         Some(BayUid::new(source, 0))
     );
 
-    // A V2IP device is not fully configured until its links have arrived.
+    // A V2IP device is not fully configured until its links have arrived, and
+    // that means one record per bay. There is no end-of-list marker on the
+    // wire, so a frame that carries no record for a bay leaves it outstanding
+    // rather than standing for the whole list.
     assert!(!h.device().configuration_complete());
-    h.feed(op::SYS_LINKS, &[]);
+    h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 1", 0));
+    assert!(
+        !h.device().configuration_complete(),
+        "one page of links was read as the whole set"
+    );
+
+    h.feed(op::SYS_LINKS, &link_rec(1, "AMP00001", "Zone 2", 0));
     assert!(h.device().configuration_complete());
     assert!(h.saw(|e| matches!(e, Event::DeviceConfigComplete { .. })));
 }

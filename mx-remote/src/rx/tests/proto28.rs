@@ -15,7 +15,7 @@ use crate::wire::{
     V2IP_PORT_VIDEO,
 };
 
-use crate::testing::{bay_config_rec, field, hello_payload, poisoned, uid_n, Cfg};
+use crate::testing::{bay_config_rec, hello_payload, link_rec, poisoned, uid_n, Cfg};
 
 use super::Harness;
 
@@ -300,20 +300,13 @@ fn link_pages_merge() {
     }
     h.feed(op::SYS_BAY_CONFIG, &cfg);
 
-    let link_rec = |port: u8, serial: &str, bay: &str| {
-        let mut rec = poisoned(38);
-        rec[0] = port;
-        field(&mut rec, 2, 16, serial);
-        field(&mut rec, 18, 16, bay);
-        rec
-    };
     // The first page carries two records, so a stride read at anything but the
     // record width shifts the second one's fields; the second page is what
     // proves the first is not replaced.
-    let mut page = link_rec(1, "AMP00001", "Zone 1");
-    page.extend(link_rec(2, "AMP00001", "Zone 2"));
+    let mut page = link_rec(1, "AMP00001", "Zone 1", 0);
+    page.extend(link_rec(2, "AMP00001", "Zone 2", 0));
     h.feed(op::SYS_LINKS, &page);
-    h.feed(op::SYS_LINKS, &link_rec(3, "AMP00001", "Zone 3"));
+    h.feed(op::SYS_LINKS, &link_rec(3, "AMP00001", "Zone 3", 0));
 
     let sender = h.sender;
     for (port, want) in [(1u16, "Zone 1"), (2, "Zone 2"), (3, "Zone 3")] {
@@ -328,6 +321,54 @@ fn link_pages_merge() {
             .expect("link lost after a second page");
         assert_eq!(link.linked_bay, want, "port {port}");
     }
+}
+
+/// A re-sent page does not stand in for the pages behind it.
+///
+/// A device re-sends its configuration, so counting records rather than the
+/// bays they are about lets one page repeated enough times satisfy a total it
+/// never covered - and the list would be declared complete with bays in it that
+/// have never reported a link at all.
+#[test]
+fn a_repeated_link_page_does_not_complete_the_set() {
+    let mut h = Harness::new(28);
+    h.hello(0x28, "FF88", "PG0003", DeviceFeature::VIDEO_ROUTING);
+    let mut cfg = bay_config_rec(
+        1,
+        0,
+        0,
+        "Input 1",
+        "Apple TV",
+        BayStatus::NONE,
+        BayFeatures::HDMI_IN,
+    );
+    for (port, name) in [(2u8, "Output 1"), (3, "Output 2")] {
+        cfg.extend(bay_config_rec(
+            port,
+            1,
+            0,
+            name,
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ));
+    }
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+
+    let page = link_rec(1, "AMP00001", "Zone 1", 0);
+    for _ in 0..4 {
+        h.feed(op::SYS_LINKS, &page);
+    }
+    assert!(
+        !h.device().configuration_complete(),
+        "one bay's record, repeated, was counted as three bays' worth"
+    );
+
+    // The bays that had not reported still have to.
+    h.feed(op::SYS_LINKS, &link_rec(2, "AMP00001", "Zone 2", 0));
+    assert!(!h.device().configuration_complete());
+    h.feed(op::SYS_LINKS, &link_rec(3, "AMP00001", "Zone 3", 0));
+    assert!(h.device().configuration_complete());
 }
 
 #[test]

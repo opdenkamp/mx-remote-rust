@@ -528,12 +528,13 @@ pub(super) fn links(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         .collect();
     for (port, linked_serial, linked_bay, features) in records {
         let origin = BayUid::new(sender, port);
-        if state.bay(origin).is_some() {
-            state.update_link(origin, linked_serial, linked_bay, features, ev);
+        if state.bay(origin).is_none() {
+            continue;
         }
-    }
-    if let Some(device) = state.device_mut(sender) {
-        device.on_link_config_received(ev);
+        state.update_link(origin, linked_serial, linked_bay, features, ev);
+        if let Some(device) = state.device_mut(sender) {
+            device.note_link_record(port, ev);
+        }
     }
 }
 
