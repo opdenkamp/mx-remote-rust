@@ -134,9 +134,6 @@ const IR_DATA_SIZE: usize = 24;
 /// second one arrives.
 const IR_TIMING_SIZE: usize = 2;
 
-/// The protocol version from which infrared captures are reported.
-const IR_CAPTURE_PROTOCOL: u16 = 0x19;
-
 /// Decodes a captured infrared burst.
 ///
 /// `mxr_ir_data` is not packed, so its `u32` timestamp aligns to 4 and the
@@ -146,15 +143,34 @@ pub(super) fn ir_capture(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         return;
     }
     let p = rx.frame.payload();
-    if p.len() < IR_DATA_SIZE + IR_TIMING_SIZE || rx.frame.protocol() < IR_CAPTURE_PROTOCOL {
+    if p.len() < IR_DATA_SIZE + IR_TIMING_SIZE {
         return;
     }
+    let meta = ir_meta(&p[12..21]);
+    // The header counts the timings, so the tail is what says how wide they
+    // are: a sender from before they were widened describes the same count in
+    // half the bytes and falls short of this, which is what keeps its list from
+    // reaching a caller as if it were the current width. There is no width to
+    // report alongside the blob, so a narrow list read as a wide one would be
+    // wrong with nothing able to say so.
+    //
+    // Taking the counted bytes rather than the rest of the payload also stops
+    // anything appended behind the list from arriving as extra timings.
+    if meta.nb_timings == 0 {
+        return;
+    }
+    let Some(timings) = usize::from(meta.nb_timings)
+        .checked_mul(IR_TIMING_SIZE)
+        .and_then(|len| p.get(IR_DATA_SIZE..IR_DATA_SIZE + len))
+    else {
+        return;
+    };
     let capture = IrCapture {
         port: u16_at(p, 0),
         timestamp: u32_at(p, 4),
         last_change: u32_at(p, 8),
-        meta: ir_meta(&p[12..21]),
-        timings: p[IR_DATA_SIZE..].to_vec(),
+        meta,
+        timings: timings.to_vec(),
     };
     let bay = BayUid::new(rx.sender(), capture.port);
     if state.bay(bay).is_some() {

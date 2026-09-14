@@ -12,6 +12,15 @@ use super::handlers::{byte, ipv4_at, u32_at};
 use super::Rx;
 
 /// The protocol version from which the report uses the current layout.
+///
+/// This selects a layout rather than gating one, so getting it wrong loses no
+/// frame - it decodes one at the other form's offsets and yields a complete,
+/// plausible, wrong port status.
+///
+/// It is also the only version here that anything could move. The forms below
+/// it are told apart by versions that shipped long ago and cannot now change,
+/// whereas this names the row senders stamp today: if that row is ever lowered,
+/// this is where it is felt. See [`parse_legacy`] for the three earlier forms.
 const MODERN_LAYOUT: u16 = 0x22;
 
 /// Reads the four cable-pair warnings packed into one byte.

@@ -375,6 +375,25 @@ fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid
     manages.then_some(subject)
 }
 
+/// The configuration block as it was before the tiling window was appended to
+/// it, which is the shortest whole one any sender emits.
+///
+/// Every field ahead of the window sits at the same offset in both forms, so a
+/// sender of this one is decoded in full rather than refused: it is a complete
+/// configuration, just an older one.
+const V2IP_CONFIG_SIZE_BASE: usize = 64;
+
+/// The configuration block with the tiling window on the end.
+const V2IP_CONFIG_SIZE: usize = 88;
+
+/// The sink block the options extension opens with.
+const V2IP_SINK_SIZE: usize = 32;
+
+/// Where the processor's feature word sits, behind the sink block at the end of
+/// the options extension.
+const V2IP_CODEC_AT: usize = V2IP_CONFIG_SIZE + V2IP_SINK_SIZE;
+const V2IP_CODEC_SIZE: usize = 8;
+
 /// Applies a device's V2IP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
 ///
@@ -382,7 +401,10 @@ fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid
 /// when the sender is describing itself.
 pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
-    if p.len() < 61 {
+    // A whole configuration or nothing. Shorter than the oldest complete form is
+    // a frame no device anywhere acts on, and the fields it does carry are not
+    // worth holding a configuration nothing else believes in.
+    if p.len() < V2IP_CONFIG_SIZE_BASE {
         return;
     }
     let Some(subject) = v2ip_config_subject(state, rx, p) else {
@@ -415,27 +437,38 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
         device.set_v2ip_details(details, ev);
     }
 
-    // The tiling block carries no validity flag of its own; its uid is the
-    // marker. Every path that produces a real window stamps it, and a
-    // controller writing any other field sends the block zeroed - so a zero uid
-    // means "not carried" while a set uid with zero geometry is a real clear.
-    if p.len() >= 88 {
-        let target = uid_at(p, 64);
-        if !target.is_zero() {
-            let tiling = V2ipTilingConfig {
-                target,
-                pos_x: u16_at(p, 80),
-                pos_y: u16_at(p, 82),
-                width: u16_at(p, 84),
-                height: u16_at(p, 86),
-            };
-            if let Some(device) = state.device_mut(subject) {
-                device.set_tiling(tiling, ev);
-            }
+    // The tiling window was appended to the configuration, so a sender that
+    // predates it stops in front of it and the length is what says it is there.
+    // It carries no validity flag of its own; its uid is the marker. Every path
+    // that produces a real window stamps it, and a controller writing any other
+    // field sends the block zeroed - so a zero uid means "not carried" while a
+    // set uid with zero geometry is a real clear.
+    //
+    // As with the processor word below, the length test cannot be observed to
+    // fail: a window that is not there reads as a zero uid through a
+    // bounds-checked accessor, which is already the marker for absent. It stays
+    // because whether the block is present is a question about the frame's
+    // shape, and leaving it to the marker would make that depend on the
+    // accessor's out-of-range value rather than on the length.
+    let target = uid_at(p, 64);
+    if p.len() >= V2IP_CONFIG_SIZE && !target.is_zero() {
+        let tiling = V2ipTilingConfig {
+            target,
+            pos_x: u16_at(p, 80),
+            pos_y: u16_at(p, 82),
+            width: u16_at(p, 84),
+            height: u16_at(p, 86),
+        };
+        if let Some(device) = state.device_mut(subject) {
+            device.set_tiling(tiling, ev);
         }
     }
 
-    if p.len() >= 120 {
+    // Everything past the configuration is the options extension, found by
+    // length alone: each block that was appended to it left every offset ahead
+    // of it where it was, so no stamp distinguishes the forms and a sender that
+    // predates a block simply stops short of it.
+    if p.len() >= V2IP_CONFIG_SIZE + V2IP_SINK_SIZE {
         let sink = DeviceV2ipSink {
             addresses: V2ipStreamSources {
                 uid: DeviceUid::ZERO,
@@ -570,6 +603,13 @@ const MESH_OPERATION_SIZE: usize = 40;
 /// read one anyway would take a mesh master from a frame no device acted on.
 /// It is not this opcode's table entry: that is 0x1D, the version its
 /// report-controller operation grew a second parameter at.
+///
+/// This is the one version test on a receive path here that a length cannot
+/// replace. The operation struct is fixed size, and what changed at this
+/// version is what its bytes mean rather than how many there are, so every form
+/// of it measures the same and nothing about the payload distinguishes them.
+/// Senders below this are still on the network, and their operations are
+/// ignored deliberately rather than missed.
 const MESH_OPERATION_PROTOCOL: u16 = 0x1A;
 
 pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {

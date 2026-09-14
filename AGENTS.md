@@ -96,6 +96,14 @@ whose row is known to have moved with it; where that is not established, gate on
 length and say so. Too low costs nothing, and too high is unrecoverable from
 this side.
 
+**A row can go down, which turns a floor into a silent drop.** Rows are not
+monotonic: they have been lowered to bring a family back under a product's
+receive cap, with no layout changing. A floor added while a row was high then
+rejects every frame on that opcode from every sender at once, and what it guards
+simply stops being reported. So a floor is a claim with an expiry date - state
+what it rests on, re-confirm it whenever the opcode is touched, and prefer the
+length, which no stamp change can invalidate.
+
 **A trailing variable array is the one shape no gate protects.** Bytes appended
 past its last element are read as another element. Growing one is a wire break
 its sender has to announce.

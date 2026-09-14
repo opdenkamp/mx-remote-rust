@@ -22,7 +22,7 @@ use crate::wire::{
     V2IP_PORT_VIDEO,
 };
 
-use crate::testing::{bay_config_rec, poisoned, uid_n, Cfg};
+use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, Cfg};
 
 use super::Harness;
 
@@ -150,12 +150,12 @@ fn an_ir_capture_aligns_its_timestamp() {
     p[8..12].copy_from_slice(&0x1122_3344u32.to_le_bytes());
     p[12..14].copy_from_slice(&2u16.to_le_bytes()); // timer resolution
     p[14..16].copy_from_slice(&38000u16.to_le_bytes()); // carrier frequency
-    p[16..18].copy_from_slice(&67u16.to_le_bytes()); // timing count
+                                                        // Four timings, two bytes each, which is the eight that follow.
+    p[16..18].copy_from_slice(&4u16.to_le_bytes()); // timing count
     p[18..20].copy_from_slice(&0u16.to_le_bytes()); // repeat offset
     p[20] = 1; // status
     p[24..].copy_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-    // RC_IR is gated on protocol 0x19 and up.
-    h.feed_proto(op::RC_IR, 0x19, &p);
+    h.feed(op::RC_IR, &p);
 
     let capture = h
         .events
@@ -169,9 +169,69 @@ fn an_ir_capture_aligns_its_timestamp() {
     assert_eq!(capture.timestamp, 0xAABB_CCDD);
     assert_eq!(capture.last_change, 0x1122_3344);
     assert_eq!(capture.meta.frequency, 38000);
-    assert_eq!(capture.meta.nb_timings, 67);
+    assert_eq!(capture.meta.nb_timings, 4);
     assert_eq!(capture.meta.status, 1);
-    assert_eq!(capture.timings.len(), 8);
+    assert_eq!(capture.timings, [1, 2, 3, 4, 5, 6, 7, 8]);
+}
+
+/// The header counts the timings, so a frame that does not carry what it counts
+/// is refused, and one that carries more does not hand the extra to a caller.
+///
+/// A timing is two bytes. A sender from before they were widened describes the
+/// same count in half the bytes, and there is no width to report beside the
+/// blob - so a narrow list handed over as a wide one would be wrong with
+/// nothing able to say so. The count is what separates them.
+#[test]
+fn an_ir_capture_carries_exactly_the_timings_it_counts() {
+    let mut h = command_device(44);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            3,
+            0,
+            0,
+            "Input 1",
+            "Sky",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
+    );
+    let capture_of = |h: &Harness| {
+        h.events.iter().find_map(|e| match e {
+            Event::IrCaptured { capture, .. } => Some(capture.clone()),
+            _ => None,
+        })
+    };
+
+    let frame = |count: u16, tail: &[u8]| {
+        let mut p = poisoned(24 + tail.len());
+        p[0..2].copy_from_slice(&3u16.to_le_bytes());
+        p[16..18].copy_from_slice(&count.to_le_bytes());
+        p[24..].copy_from_slice(tail);
+        p
+    };
+
+    // Four timings' worth of count against one timing's worth of bytes, which
+    // is the width a sender that predates the widening would send.
+    h.feed(op::RC_IR, &frame(4, &[1, 2, 3, 4]));
+    assert!(
+        capture_of(&h).is_none(),
+        "a list shorter than its own count was handed to a caller"
+    );
+
+    // The same count with the bytes to back it, and eight more behind the list
+    // that are not timings.
+    h.events.clear();
+    h.feed(
+        op::RC_IR,
+        &frame(4, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 9, 9, 9, 9, 9]),
+    );
+    let capture = capture_of(&h).expect("a whole list was refused");
+    assert_eq!(
+        capture.timings,
+        [1, 2, 3, 4, 5, 6, 7, 8],
+        "bytes behind the list were read as timings"
+    );
 }
 
 /// A burst with no timings is not a capture.
@@ -1319,29 +1379,25 @@ fn a_video_wall_command_is_read_at_any_stamp() {
     }
 }
 
+/// The decoder block is found by length, at whatever stamp a sender uses.
+///
+/// It was appended behind the counters, so every offset ahead of it is where it
+/// has always been and a sender that predates it stops at the counters. Gating
+/// it on a version drops the block from every sender the moment that version is
+/// not the one being stamped - which is exactly what happened here: this client
+/// floored on a row that was later reverted, and no sender will carry it again.
 #[test]
-fn a_block_sized_tail_is_not_a_decoder_block_at_an_older_stamp() {
-    // Length alone says a payload is long enough to hold the block. It cannot
-    // say those bytes are that block: a sender stamping a version from before
-    // it existed did not append one, so 24 bytes past the counters are some
-    // other growth, and reading them as a decoder report invents a reading with
-    // a reason, a geometry and a fault word in it. The counters ahead of the
-    // tail are unaffected and still read, which is the half a stamp ceiling
-    // would have thrown away.
-    let mut h = command_device(90);
-    let p = stats_with_decoder(1);
-    h.feed_proto(op::V2IP_STATS, 0x28, &p);
+fn a_decoder_block_is_found_by_length_at_any_stamp() {
+    for stamp in [0x01, 0x13, 0x28, PROTOCOL_VERSION, PROTOCOL_VERSION + 1] {
+        let mut h = command_device(90);
+        h.feed_proto(op::V2IP_STATS, stamp, &stats_with_decoder(1));
 
-    let stats = h
-        .device()
-        .v2ip_stats
-        .expect("the counters were lost with it");
-    assert_eq!(stats.tx.video, u32::from_le_bytes([0xA5, 0xA4, 0xA7, 0xA6]));
-    assert_eq!(
-        stats.decoder,
-        V2ipDecoderDetail::Absent,
-        "a tail from before the block existed was read as one"
-    );
+        let stats = h.device().v2ip_stats.expect("the report was lost");
+        assert!(
+            stats.decoder.reading().is_some(),
+            "the block was dropped at stamp {stamp:#06x}"
+        );
+    }
 }
 
 #[test]
@@ -1633,7 +1689,9 @@ fn a_manual_source_switch_and_a_config_sink_block_decode_alike() {
     stream_addr(&mut c, 104, "239.3.3.3", V2IP_PORT_ANC);
     c[112..116].copy_from_slice(&44100u32.to_le_bytes());
     c[116] = 2;
-    h.feed(op::V2IP_DEVICE_CFG, &c);
+    // A 120-byte configuration is the layout from before the codec word, so it
+    // only ever arrives from a sender stamping below the version that added it.
+    h.feed_proto(op::V2IP_DEVICE_CFG, DEVICE_CFG_CAPTURE_PROTOCOL, &c);
 
     let sink = h.device().v2ip_sink.expect("no sink");
     assert_eq!(sink.addresses.video.ip, Ipv4Addr::new(239, 3, 3, 1));
@@ -1708,6 +1766,14 @@ const DEVICE_CFG_CAPTURE: [u8; 120] = [
     0, 0, 0, 0, 0, 0, 0, 0,                         // sink_audio_fmt
 ];
 
+/// The protocol the captured frame was stamped with.
+///
+/// Part of the capture, not a choice: the layout a frame carries is selected by
+/// its stamp, so feeding these bytes under any other one describes a frame no
+/// device has ever sent. A configuration this length is the form from before
+/// the codec word, and every sender of it stamps below that word's version.
+const DEVICE_CFG_CAPTURE_PROTOCOL: u16 = 0x12;
+
 /// The unit the capture came from, as its own payload names it.
 ///
 /// A configuration frame carries its subject in the first sixteen bytes, and a
@@ -1730,7 +1796,11 @@ fn capture_device() -> Harness {
 #[test]
 fn a_captured_device_config_decodes_field_for_field() {
     let mut h = capture_device();
-    h.feed(op::V2IP_DEVICE_CFG, &DEVICE_CFG_CAPTURE);
+    h.feed_proto(
+        op::V2IP_DEVICE_CFG,
+        DEVICE_CFG_CAPTURE_PROTOCOL,
+        &DEVICE_CFG_CAPTURE,
+    );
 
     let details = h.device().v2ip_details.expect("no details");
     // v2ip_stream_source is 8 bytes: the port is a uint_fast16_t, four bytes on
@@ -1772,6 +1842,40 @@ fn a_captured_device_config_decodes_field_for_field() {
     assert_eq!(sink.addresses.anc.port, 50021);
 }
 
+/// A configuration from before the tiling window is decoded, not refused.
+///
+/// The window was appended, so every field ahead of it sits where it always
+/// has and an older sender's frame is complete rather than truncated. Devices
+/// emitting this form are still in the field, and reading it costs nothing:
+/// the window is gated on its own length, so its absence stays absence rather
+/// than becoming a window built from whatever followed the frame.
+#[test]
+fn a_configuration_from_before_the_tiling_window_is_still_read() {
+    let mut h = command_device(102);
+    let cfg = Cfg::addresses(h.sender, "239.4.5.6");
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes()[..64]);
+
+    let details = h
+        .device()
+        .v2ip_details
+        .expect("a complete older configuration was refused");
+    assert_eq!(details.video.ip, Ipv4Addr::new(239, 4, 5, 6));
+    assert_eq!(
+        h.device().tiling,
+        None,
+        "a window came out of a frame that carries none"
+    );
+
+    // One byte short of that oldest whole form is a frame no sender emits.
+    let mut h = command_device(105);
+    let cfg = Cfg::addresses(h.sender, "239.4.5.6");
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes()[..63]);
+    assert!(
+        h.device().v2ip_details.is_none(),
+        "a configuration shorter than any sender emits was read"
+    );
+}
+
 #[test]
 fn a_stamped_tiling_block_is_told_from_an_absent_one() {
     let mut h = capture_device();
@@ -1779,10 +1883,13 @@ fn a_stamped_tiling_block_is_told_from_an_absent_one() {
 
     let mut p = DEVICE_CFG_CAPTURE;
     p[64..80].copy_from_slice(target.as_bytes());
+    let feed = |h: &mut Harness, p: &[u8]| {
+        h.feed_proto(op::V2IP_DEVICE_CFG, DEVICE_CFG_CAPTURE_PROTOCOL, p)
+    };
     p[80..82].copy_from_slice(&1920u16.to_le_bytes());
     p[84..86].copy_from_slice(&3840u16.to_le_bytes());
     p[86..88].copy_from_slice(&2160u16.to_le_bytes());
-    h.feed(op::V2IP_DEVICE_CFG, &p);
+    feed(&mut h, &p);
 
     let tiling = h.device().tiling.expect("no window");
     assert_eq!(tiling.target, target);
@@ -1791,14 +1898,14 @@ fn a_stamped_tiling_block_is_told_from_an_absent_one() {
 
     // A stamped uid with zero geometry is a real clear, and must still cache.
     p[80..88].fill(0);
-    h.feed(op::V2IP_DEVICE_CFG, &p);
+    feed(&mut h, &p);
     let tiling = h.device().tiling.expect("a stamped clear was dropped");
     assert_eq!((tiling.width, tiling.height), (0, 0));
 
     // A zero-uid block must leave that cached clear alone.
     p[64..80].fill(0);
     p[84..86].copy_from_slice(&1234u16.to_le_bytes());
-    h.feed(op::V2IP_DEVICE_CFG, &p);
+    feed(&mut h, &p);
     let tiling = h
         .device()
         .tiling

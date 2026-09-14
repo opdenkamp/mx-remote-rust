@@ -30,15 +30,6 @@ const STATS_SIZE: usize = 2 * TX_STATS_SIZE + 2 * RX_STATS_SIZE;
 /// is what appending the block bought.
 const DECODER_SIZE: usize = 24;
 
-/// The protocol version the decoder block appeared at.
-///
-/// Read with the length rather than instead of it: the length says a payload is
-/// long enough to hold the block, and the version says those bytes are that
-/// block rather than some later growth this client has no name for. A sender
-/// below this stamps a report of the same shape it always did, so its counters
-/// are read and its tail, if any, is not.
-const DECODER_PROTOCOL: u16 = 0x29;
-
 fn tx_stats(p: &[u8]) -> V2ipTxStats {
     V2ipTxStats {
         video: u32_at(p, 0),
@@ -71,8 +62,11 @@ fn rx_stats(p: &[u8]) -> V2ipRxStats {
 /// `valid` follows the sink IP being configured rather than the sink being
 /// enabled, so a sink that is switched off still reports, naming itself idle
 /// or, from an older sender, reporting no packets.
-fn decoder_detail(protocol: u16, p: &[u8]) -> V2ipDecoderDetail {
-    if protocol < DECODER_PROTOCOL || p.len() < DECODER_SIZE {
+fn decoder_detail(p: &[u8]) -> V2ipDecoderDetail {
+    // Length alone: the block was appended behind the counters, leaving every
+    // offset ahead of it where it was, so a sender that predates it stops at
+    // the counters and no stamp separates the two forms.
+    if p.len() < DECODER_SIZE {
         return V2ipDecoderDetail::Absent;
     }
     if byte(p, 0) == 0 {
@@ -107,7 +101,7 @@ pub(super) fn v2ip_stats(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         tx_per_minute: tx_stats(&p[TX_STATS_SIZE..rx_base]),
         rx: rx_stats(&p[rx_base..rx_base + RX_STATS_SIZE]),
         rx_per_minute: rx_stats(&p[rx_base + RX_STATS_SIZE..rx_base + 2 * RX_STATS_SIZE]),
-        decoder: decoder_detail(rx.frame.protocol(), &p[STATS_SIZE..]),
+        decoder: decoder_detail(&p[STATS_SIZE..]),
     };
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_v2ip_stats(stats, ev);
