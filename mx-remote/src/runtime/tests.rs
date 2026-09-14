@@ -443,3 +443,32 @@ fn the_probe_pass_announces_a_device_its_window_completed() {
         "the pass did not announce a device no further frame will complete"
     );
 }
+
+/// A device that drops off is noticed whether or not anything else finished.
+///
+/// Nothing on the wire marks a device gone - it stops pinging, and comparing
+/// its last ping against the clock is the only thing that can tell. A device
+/// drops off in whatever state it reached, including before it ever described
+/// itself, so a client whose devices are all in that state is precisely the one
+/// that must still be checking.
+#[test]
+fn a_device_that_never_described_itself_is_still_reported_gone() {
+    let seen = Arc::new(Watching::default());
+    let (remote, _) = client_with(212, Arc::clone(&seen) as Arc<dyn EventHandler>);
+    let peer = uid_n(213);
+    remote
+        .shared
+        .process_datagram(&hello_datagram(peer, "FF88", "PB0002"), FROM);
+
+    // Long enough for the silence to count, and nothing has completed: the
+    // device sent a hello and never a bay.
+    remote
+        .shared
+        .probe_once(Instant::now() + Duration::from_secs(600));
+
+    assert_eq!(
+        *seen.offline.lock().expect("test handler"),
+        vec![peer],
+        "a device that stopped answering was never reported gone"
+    );
+}
