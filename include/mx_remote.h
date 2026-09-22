@@ -4993,7 +4993,7 @@ mxr_result_t mxr_v2ip_sink(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_s
 /**
  * Fills `out` with what a V2IP device's video processor supports.
  *
- * Reports `MXR_RESULT_NOT_FOUND` while the device has not said: a processor
+ * Reports `MXR_ERR_NOT_REPORTED` while the device has not said: a processor
  * that has yet to answer and one with none of the optional commands send the
  * same empty mask, so neither is reported as a capability set.
  *
