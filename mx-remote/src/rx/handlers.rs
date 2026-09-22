@@ -533,7 +533,12 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
     // length alone: each block that was appended to it left every offset ahead
     // of it where it was, so no stamp distinguishes the forms and a sender that
     // predates a block simply stops short of it.
-    if p.len() >= V2IP_CONFIG_SIZE + V2IP_SINK_SIZE {
+    //
+    // The sink block is a device's own report. A controller writing another
+    // device's configuration sends it zeroed, because it has nothing to say
+    // about that sink's subscription, and caching those zeros would clear
+    // every reader's record of the route on each unrelated write.
+    if p.len() >= V2IP_CONFIG_SIZE + V2IP_SINK_SIZE && subject == rx.sender() {
         let sink = DeviceV2ipSink {
             addresses: V2ipStreamSources {
                 uid: DeviceUid::ZERO,

@@ -574,8 +574,7 @@ impl DeviceV2ipDetails {
 /// addresses are not.
 ///
 /// This is worth expecting rather than guarding against. Any scaling change
-/// makes the device rebuild and rebroadcast this block, and a write aimed at a
-/// remote bay sends it zeroed however it was requested - so the empty reading
+/// makes the device rebuild and rebroadcast this block - so the empty reading
 /// arrives most often during exactly the no-signal troubleshooting that
 /// prompted the change. A device's periodic report puts a real route back
 /// within a minute of it having one.
@@ -584,6 +583,10 @@ impl DeviceV2ipDetails {
 /// genuinely dropped its route sends the same zeros, and so does every report
 /// after it, so refusing them would cache a route that nothing later could ever
 /// clear.
+///
+/// A configuration frame sets this only when the device sent it about itself.
+/// A controller writing another device's configuration sends the block zeroed
+/// because it has nothing to say about that sink, so its frame is ignored here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DeviceV2ipSink {
     /// The streams the sink subscribes to.

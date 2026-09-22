@@ -185,12 +185,14 @@ pub const MXR_SCALING_FLAG_AUTO_SCALING: u8 = 1 << 7;
 /// configuration, or a stream failing its validity check.
 ///
 /// Expect it rather than guard against it. Any scaling change makes the device
-/// rebuild and rebroadcast this block, and a write aimed at a remote bay sends
-/// it zeroed however it was requested - so the empty reading turns up most
+/// rebuild and rebroadcast this block - so the empty reading turns up most
 /// often during exactly the no-signal troubleshooting that prompted the change.
 /// A device's periodic report puts a real route back within a minute of it
 /// having one, so a reader that needs certainty should wait one out rather than
 /// treat the first empty reading as an answer.
+///
+/// Only the device's own report sets this. A controller writing another
+/// device's configuration sends the block zeroed, and that frame is ignored.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_sink_t {

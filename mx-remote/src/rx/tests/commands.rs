@@ -2139,6 +2139,46 @@ fn a_write_from_a_controller_leaves_processor_features_alone() {
     );
 }
 
+/// A controller writing a device's configuration has nothing to say about its
+/// sink, and sends that block zeroed.
+///
+/// Caching those zeros would clear every reader's record of the sink's route on
+/// each unrelated write, such as turning its automatic scaling off.
+#[test]
+fn a_write_from_a_controller_leaves_the_sink_route_alone() {
+    let mut h = command_device(109);
+    let subject = h.sender;
+    let mut own = Cfg::addresses(subject, "239.1.2.3").bytes_with_options();
+    own[88..92].copy_from_slice(&[239, 7, 8, 9]);
+    own[92..96].copy_from_slice(&50020u32.to_le_bytes());
+    h.feed(op::V2IP_DEVICE_CFG, &own);
+    let reported = h.device().v2ip_sink.expect("no sink block");
+    assert_eq!(reported.addresses.video.ip, Ipv4Addr::new(239, 7, 8, 9));
+
+    let controller = uid_n(78);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "CTRL0003", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = SCALING_FLAG_OPTIONS_VALID;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &write.bytes_with_options());
+
+    let subject_record = h.state.device(subject).expect("subject vanished");
+    assert!(
+        subject_record
+            .v2ip_details
+            .is_some_and(|d| d.scaling.auto_scaling() == Some(false)),
+        "the write itself did not land"
+    );
+    assert_eq!(
+        subject_record.v2ip_sink,
+        Some(reported),
+        "a controller's zeroed sink block replaced the device's own report"
+    );
+}
+
 /// An empty mask is "not reported yet", not "supports nothing".
 ///
 /// A processor that has yet to answer after boot and one too old to have any of
