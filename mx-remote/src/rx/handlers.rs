@@ -9,14 +9,15 @@ use crate::event::Event;
 use crate::state::{Device, HelloInfo, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    HiddenStatus, MuteStatus, PowerStatus, StreamKind, TopologyEntry, V2ipDscpConfig,
-    V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus,
-    SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID,
-    SCALING_FLAG_SKIP_420, VOLUME_UNCHANGED,
+    HiddenStatus, MuteStatus, PowerStatus, StreamKind, TopologyEntry, V2ipDeviceSettings,
+    V2ipDscpConfig, V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig,
+    VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE,
+    SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_SKIP_420, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipFpgaFeature, BAY_CONFIG_SIZE, FW_VERSION_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, BAY_CONFIG_SIZE,
+    FW_VERSION_LEN,
 };
 
 use super::Rx;
@@ -450,6 +451,10 @@ const V2IP_SINK_SIZE: usize = 32;
 const V2IP_CODEC_AT: usize = V2IP_CONFIG_SIZE + V2IP_SINK_SIZE;
 const V2IP_CODEC_SIZE: usize = 8;
 
+/// Where the device settings sit, behind the processor's feature word.
+const V2IP_SETTINGS_AT: usize = V2IP_CODEC_AT + V2IP_CODEC_SIZE;
+const V2IP_SETTINGS_SIZE: usize = 16;
+
 /// Applies a device's V2IP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
 ///
@@ -582,6 +587,28 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             if let Some(device) = state.device_mut(subject) {
                 device.set_v2ip_features(features, ev);
             }
+        }
+    }
+
+    // The device reports every setting it has. A controller sends only the
+    // ones it changes, and the device applies only those it has, so a write
+    // is cached as far as the device will take it and no further.
+    if let Some(s) = p.get(V2IP_SETTINGS_AT..V2IP_SETTINGS_AT + V2IP_SETTINGS_SIZE) {
+        let frame = V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::from_bits(u32_at(s, 0)),
+            flags: V2ipDeviceSetting::from_bits(u32_at(s, 4)),
+            ir_profiles: u32_at(s, 8),
+            ir_profile: s[12] as i8,
+            ir_profile_sink: s[13] as i8,
+        };
+        if let Some(device) = state.device_mut(subject) {
+            let frame = if subject == rx.sender() {
+                frame
+            } else {
+                let reported = device.v2ip_settings.unwrap_or_default().valid;
+                frame.as_applied_to(reported)
+            };
+            device.merge_v2ip_settings(frame, ev);
         }
     }
 }

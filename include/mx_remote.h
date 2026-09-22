@@ -1008,6 +1008,61 @@
 #define MXR_MV_SOURCE_INPUT_4 4
 
 /**
+ * Disables the decoder while the display is off.
+ */
+#define MXR_V2IP_SETTING_SINK_CHECK_POWER (1 << 0)
+
+/**
+ * Disables the HDMI output while there is no signal.
+ */
+#define MXR_V2IP_SETTING_SINK_OFF_NO_SIGNAL (1 << 1)
+
+/**
+ * Sends infrared modulated.
+ */
+#define MXR_V2IP_SETTING_IR_TX_MODULATED (1 << 2)
+
+/**
+ * Lights the status LED.
+ */
+#define MXR_V2IP_SETTING_STATUS_LED (1 << 3)
+
+/**
+ * Lights the network port LEDs.
+ */
+#define MXR_V2IP_SETTING_NETWORK_LED (1 << 4)
+
+/**
+ * Runs the fan in quiet mode.
+ */
+#define MXR_V2IP_SETTING_FAN_QUIET (1 << 5)
+
+/**
+ * Accepts CEC combo keys.
+ */
+#define MXR_V2IP_SETTING_CEC_COMBO_KEYS (1 << 6)
+
+/**
+ * Accepts CEC combo keys for the device's own input.
+ */
+#define MXR_V2IP_SETTING_CEC_COMBO_INPUT (1 << 7)
+
+/**
+ * The global infrared port's profile, carried in `ir_profile`.
+ */
+#define MXR_V2IP_SETTING_IR_PROFILE (1 << 8)
+
+/**
+ * The output infrared port's profile, carried in `ir_profile_sink`.
+ */
+#define MXR_V2IP_SETTING_IR_PROFILE_SINK (1 << 9)
+
+/**
+ * The stored infrared profiles, carried in `ir_profiles`. Never written.
+ */
+#define MXR_V2IP_SETTING_IR_PROFILES (1 << 10)
+
+/**
  * The colour space a V2IP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -1154,6 +1209,16 @@
  * Set when the output scales automatically.
  */
 #define MXR_SCALING_FLAG_AUTO_SCALING (1 << 7)
+
+/**
+ * The output infrared port follows the global one.
+ */
+#define MXR_V2IP_IR_PROFILE_NOT_SET -1
+
+/**
+ * One past the highest infrared profile.
+ */
+#define MXR_V2IP_IR_PROFILE_MAX 18
 
 /**
  * The audio return channel a bay is carrying.
@@ -3278,6 +3343,39 @@ typedef struct {
 } mxr_v2ip_sink_t;
 
 /**
+ * A V2IP device's settings.
+ *
+ * A setting is reported only when its `MXR_V2IP_SETTING_*` bit is set in
+ * `valid`, and a device reports every setting it has.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_SETTING_*` bits of the settings reported so far.
+   */
+  uint32_t valid;
+  /**
+   * `MXR_V2IP_SETTING_*` values of the on/off settings among `valid`.
+   */
+  uint32_t flags;
+  /**
+   * The infrared profiles stored on the device, bit n for profile n, when
+   * `valid` has `MXR_V2IP_SETTING_IR_PROFILES`.
+   */
+  uint32_t ir_profiles;
+  /**
+   * The global infrared port's profile, when `valid` has
+   * `MXR_V2IP_SETTING_IR_PROFILE`.
+   */
+  int8_t ir_profile;
+  /**
+   * The output infrared port's profile, when `valid` has
+   * `MXR_V2IP_SETTING_IR_PROFILE_SINK`. `MXR_V2IP_IR_PROFILE_NOT_SET` means
+   * it follows the global one.
+   */
+  int8_t ir_profile_sink;
+} mxr_v2ip_device_settings_t;
+
+/**
  * The window a sink is currently told to show.
  *
  * This is the pollable view of a sink's window, not the persisted video wall
@@ -4153,6 +4251,51 @@ mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
 mxr_result_t mxr_set_v2ip_auto_scaling(const mxr_remote_t *remote, mxr_uid_t device, bool enabled);
 
 /**
+ * Switches on/off settings of a V2IP device, all to the same value.
+ *
+ * `setting` is one or more `MXR_V2IP_SETTING_*` on/off bits, each one the
+ * device has reported. Returns `MXR_ERR_NOT_REPORTED` before the device has
+ * reported its settings, `MXR_ERR_UNSUPPORTED` for a setting it does not have
+ * and `MXR_ERR_INVALID_ARGUMENT` for a bit that is not an on/off setting,
+ * sending nothing in each case: the device ignores such a write. Until the
+ * device reports back, `mxr_v2ip_device_settings()` reads what was written.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_device_setting(const mxr_remote_t *remote,
+                                         mxr_uid_t device,
+                                         uint32_t setting,
+                                         bool enabled);
+
+/**
+ * Sets the infrared profile of a V2IP device's global infrared port.
+ *
+ * `profile` is from 0 up to, not including, `MXR_V2IP_IR_PROFILE_MAX`.
+ * Otherwise as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_ir_profile(const mxr_remote_t *remote, mxr_uid_t device, int8_t profile);
+
+/**
+ * Sets the infrared profile of a V2IP device's output infrared port.
+ *
+ * `MXR_V2IP_IR_PROFILE_NOT_SET` makes the port follow the global one.
+ * Otherwise as `mxr_set_v2ip_ir_profile()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_sink_ir_profile(const mxr_remote_t *remote,
+                                          mxr_uid_t device,
+                                          int8_t profile);
+
+/**
  * Sets the output format a V2IP sink scales to.
  *
  * The mode is checked here and `MXR_ERR_INVALID_ARGUMENT` returned without
@@ -4860,6 +5003,21 @@ mxr_result_t mxr_v2ip_sink(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_s
  * `uint64_t`.
  */
 mxr_result_t mxr_v2ip_features(const mxr_remote_t *remote, mxr_uid_t uid, uint64_t *out);
+
+/**
+ * Fills `out` with a V2IP device's settings.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any. A change
+ * is announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_device_settings_t`.
+ */
+mxr_result_t mxr_v2ip_device_settings(const mxr_remote_t *remote,
+                                      mxr_uid_t uid,
+                                      mxr_v2ip_device_settings_t *out);
 
 /**
  * Fills `out` with the window a sink is told to show.

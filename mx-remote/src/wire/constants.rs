@@ -55,6 +55,14 @@ pub const V2IP_SOURCE_RATE_MIN: u8 = 5;
 /// Highest valid encoder TX rate, in units of 10Mb/s. See [`V2IP_SOURCE_RATE_MIN`].
 pub const V2IP_SOURCE_RATE_MAX: u8 = 100;
 
+/// The infrared profile an output's port reports when it follows the device's
+/// global one.
+pub const V2IP_IR_PROFILE_NOT_SET: i8 = -1;
+
+/// One past the highest infrared profile: the default profile is 0, the Atlona
+/// profile 1, and user-defined profiles 1 to 16 are 2 to 17.
+pub const V2IP_IR_PROFILE_MAX: i8 = 18;
+
 /// Marks a DSCP byte as carrying a value.
 ///
 /// DSCP 0 (CS0) is a legal marking, so the byte needs a bit of its own to

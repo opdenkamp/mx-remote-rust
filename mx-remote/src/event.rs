@@ -175,6 +175,8 @@ events! {
         TilingChanged => on_tiling_changed(tiling: V2ipTilingConfig);
         /// The device reported what its video processor supports.
         V2ipFeaturesChanged => on_v2ip_features_changed(features: V2ipFpgaFeature);
+        /// The device's settings changed.
+        V2ipDeviceSettingsChanged => on_v2ip_device_settings_changed(settings: V2ipDeviceSettings);
         /// A source bay's remote-control configuration changed.
         RcSettingsChanged => on_rc_settings_changed(settings: RcSettings);
         /// A V2IP device was linked to a remote peer.

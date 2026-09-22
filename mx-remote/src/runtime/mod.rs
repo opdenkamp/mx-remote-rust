@@ -350,6 +350,15 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_features)
     }
 
+    /// A V2IP device's settings, `None` until it has reported any.
+    ///
+    /// A device reports only the settings it has, so one missing from
+    /// [`V2ipDeviceSettings::valid`] once the rest have arrived is one the
+    /// device does not have.
+    pub fn v2ip_device_settings(&self, uid: DeviceUid) -> Option<V2ipDeviceSettings> {
+        self.shared.read(|state| state.device(uid)?.v2ip_settings)
+    }
+
     /// The video-wall tiling a V2IP device is configured for.
     pub fn v2ip_tiling(&self, uid: DeviceUid) -> Option<V2ipTilingConfig> {
         self.shared.read(|state| state.device(uid)?.tiling)

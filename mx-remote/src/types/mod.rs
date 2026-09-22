@@ -33,9 +33,9 @@ pub use status::{
 };
 pub use v2ip::{
     DeviceV2ipDetails, DeviceV2ipSink, StreamKind, V2ipAudioFormat, V2ipDecoderDetail,
-    V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderReport, V2ipDecoderState, V2ipDeviceStats,
-    V2ipDscpConfig, V2ipOutputMode, V2ipRoute, V2ipRouteTarget, V2ipRxStats, V2ipScalingSettings,
-    V2ipStreamSource, V2ipStreamSources, V2ipTxStats, SCALING_FLAGS_DEFINED,
+    V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderReport, V2ipDecoderState, V2ipDeviceSettings,
+    V2ipDeviceStats, V2ipDscpConfig, V2ipOutputMode, V2ipRoute, V2ipRouteTarget, V2ipRxStats,
+    V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTxStats, SCALING_FLAGS_DEFINED,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID,
     SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
     V2IP_SCALING_REFRESH_MAX, V2IP_SCALING_REFRESH_MIN,

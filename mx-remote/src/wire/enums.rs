@@ -215,6 +215,52 @@ bitmask! {
 }
 
 bitmask! {
+    /// The device settings a V2IP configuration can carry, each on its own bit.
+    ///
+    /// The same bits serve as the settings a frame carries and as the values
+    /// of the on/off ones among them. The last three carry a value elsewhere in
+    /// the block and have no on/off value of their own.
+    ///
+    /// A device reports every setting it has, so one it never reports is one
+    /// it does not have.
+    V2ipDeviceSetting {
+        /// Disables the decoder while the display is off.
+        SINK_CHECK_POWER = 1 << 0;
+        /// Disables the HDMI output while there is no signal.
+        SINK_OFF_NO_SIGNAL = 1 << 1;
+        /// Sends infrared modulated.
+        IR_TX_MODULATED = 1 << 2;
+        /// Lights the status LED.
+        STATUS_LED = 1 << 3;
+        /// Lights the network port LEDs.
+        NETWORK_LED = 1 << 4;
+        /// Runs the fan in quiet mode.
+        FAN_QUIET = 1 << 5;
+        /// Accepts CEC combo keys.
+        CEC_COMBO_KEYS = 1 << 6;
+        /// Accepts CEC combo keys for the device's own input.
+        CEC_COMBO_INPUT = 1 << 7;
+        /// The infrared profile of the device's global infrared port.
+        IR_PROFILE = 1 << 8;
+        /// The infrared profile of the output's infrared port.
+        IR_PROFILE_SINK = 1 << 9;
+        /// The infrared profiles stored on the device. Reported by the device
+        /// itself and never written.
+        IR_PROFILES = 1 << 10;
+    }
+}
+
+impl V2ipDeviceSetting {
+    /// The settings that are on or off, as opposed to carrying a value.
+    pub const SWITCHES: Self = Self(0xFF);
+
+    /// These bits with every bit of `other` cleared.
+    pub(crate) const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+}
+
+bitmask! {
     /// Capabilities of a single bay.
     BayFeatures {
         /// HDMI output.

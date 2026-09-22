@@ -11,8 +11,8 @@ use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    RcSettings, TopologyEntry, V2ipDeviceStats, V2ipScalingSettings, V2ipStreamSources,
-    V2ipTilingConfig, VolumeMuteStatus,
+    RcSettings, TopologyEntry, V2ipDeviceSettings, V2ipDeviceStats, V2ipScalingSettings,
+    V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
 
@@ -109,6 +109,8 @@ pub(crate) struct Device {
     /// mask: a device leaves the field zero when configuring someone else, and
     /// reports zero of its own while its processor has yet to answer.
     pub(crate) v2ip_features: Option<V2ipFpgaFeature>,
+    /// The device settings, once any has been reported.
+    pub(crate) v2ip_settings: Option<V2ipDeviceSettings>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
     pub(crate) setup_done: Option<bool>,
     pub(crate) installer_id: Option<u16>,
@@ -149,6 +151,7 @@ impl Device {
             v2ip_details: None,
             v2ip_sink: None,
             v2ip_features: None,
+            v2ip_settings: None,
             v2ip_stats: None,
             setup_done: None,
             installer_id: None,
@@ -935,6 +938,26 @@ impl Device {
         ev.push(Event::V2ipFeaturesChanged {
             device: self.uid,
             features,
+        });
+    }
+
+    /// Folds a settings block onto the cached one.
+    ///
+    /// The caller has already limited a write about this device to what the
+    /// device takes from one; a block that carries no setting leaves the cache
+    /// as it was.
+    pub(crate) fn merge_v2ip_settings(&mut self, frame: V2ipDeviceSettings, ev: &mut Vec<Event>) {
+        if frame.valid.is_empty() {
+            return;
+        }
+        let merged = frame.merge(self.v2ip_settings.unwrap_or_default());
+        if self.v2ip_settings == Some(merged) {
+            return;
+        }
+        self.v2ip_settings = Some(merged);
+        ev.push(Event::V2ipDeviceSettingsChanged {
+            device: self.uid,
+            settings: merged,
         });
     }
 

@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 15] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 16] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 27),
         (
             "MXR_BAY_",
@@ -491,6 +491,12 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             3,
         ),
         ("MXR_MV_BOOL_", core_bits(&enums, "MultiviewerBool"), &[], 3),
+        (
+            "MXR_V2IP_SETTING_",
+            core_bits(&enums, "V2ipDeviceSetting"),
+            &[],
+            11,
+        ),
         (
             "MXR_MV_SOURCE_",
             core_bits(&enums, "MultiviewerSource"),
@@ -587,6 +593,43 @@ fn the_new_entry_points_refuse_a_null_handle() {
         assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "call {n}");
     }
     assert!(!last_error().is_empty(), "the failure said nothing");
+}
+
+/// The device settings calls answer a caller's mistake as an argument error
+/// and a device never heard from as not found, before anything is sent.
+#[test]
+fn the_device_settings_calls_check_their_arguments_first() {
+    let remote = client(c"abi-settings", c"00000022.00000000.00000000.000000a5");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_device_settings(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_device_settings_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_device_settings(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // A bit that is not an on/off setting, and profiles out of range, are the
+    // caller's to fix whatever the device.
+    // SAFETY: a live handle for each call.
+    let calls = unsafe {
+        [
+            mxr_set_v2ip_device_setting(remote, uid_n(9), MXR_V2IP_SETTING_IR_PROFILE, true),
+            mxr_set_v2ip_ir_profile(remote, uid_n(9), MXR_V2IP_IR_PROFILE_NOT_SET),
+            mxr_set_v2ip_sink_ir_profile(remote, uid_n(9), MXR_V2IP_IR_PROFILE_MAX),
+        ]
+    };
+    for (n, rc) in calls.into_iter().enumerate() {
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "call {n}");
+    }
+    // SAFETY: a live handle.
+    let rc =
+        unsafe { mxr_set_v2ip_device_setting(remote, uid_n(9), MXR_V2IP_SETTING_STATUS_LED, true) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
 }
 
 /// What the new reads answer on a client that has heard from nothing.

@@ -30,21 +30,23 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat, V2ipOutputMode,
-    V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, VideoWallOp,
-    VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat,
+    V2ipDeviceSettings, V2ipOutputMode, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings,
+    V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
     build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
-    build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_source_switch,
-    build_video_wall, mv_cmd_payload, mv_sub, op, Addressee, BayUid, DeviceUid, EdidProfile,
-    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
-    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
-    V2ipStreams, DEVICE_NAME_LEN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_device_settings, build_v2ip_manual_source_switch, build_v2ip_scaling,
+    build_v2ip_source_switch, build_video_wall, mv_cmd_payload, mv_sub, op, Addressee, BayUid,
+    DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
+    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
+    MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError,
+    StreamAddr, V2ipDeviceSetting, V2ipStreams, DEVICE_NAME_LEN, V2IP_IR_PROFILE_MAX,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -954,6 +956,113 @@ impl Remote {
                 if let Some(d) = state.device_mut(device) {
                     let cached = d.v2ip_scaling();
                     d.set_v2ip_scaling(applied(cached), ev);
+                }
+            }))
+        })
+    }
+
+    // ---- V2IP device settings ----
+
+    /// Switches on/off settings of a V2IP device, all to the same value.
+    ///
+    /// `setting` names one or more of [`V2ipDeviceSetting::SWITCHES`], and
+    /// each must be one the device has reported: a device ignores a setting it
+    /// does not have, so a write for one would read back as applied here and
+    /// change nothing there.
+    ///
+    /// Nothing acknowledges the frame. The device answers by reporting its
+    /// settings, and until then [`Remote::v2ip_device_settings`] reads back
+    /// what was written.
+    pub fn set_v2ip_device_setting(
+        &self,
+        device: DeviceUid,
+        setting: V2ipDeviceSetting,
+        enabled: bool,
+    ) -> Result<(), ControlError> {
+        if setting.is_empty() || !setting.without(V2ipDeviceSetting::SWITCHES).is_empty() {
+            return Err(ControlError::InvalidRequest(
+                "only on/off device settings are switched",
+            ));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: setting,
+                flags: if enabled {
+                    setting
+                } else {
+                    V2ipDeviceSetting::NONE
+                },
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
+    /// Sets the infrared profile of a V2IP device's global infrared port.
+    ///
+    /// `profile` is below [`V2IP_IR_PROFILE_MAX`], and is checked here because
+    /// a device ignores one out of range. The terms of
+    /// [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_ir_profile(&self, device: DeviceUid, profile: i8) -> Result<(), ControlError> {
+        if !(0..V2IP_IR_PROFILE_MAX).contains(&profile) {
+            return Err(ControlError::InvalidRequest("no such infrared profile"));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::IR_PROFILE,
+                ir_profile: profile,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
+    /// Sets the infrared profile of a V2IP device's output infrared port.
+    ///
+    /// [`V2IP_IR_PROFILE_NOT_SET`] makes the port follow the global one.
+    /// Otherwise as [`Remote::set_v2ip_ir_profile`].
+    pub fn set_v2ip_sink_ir_profile(
+        &self,
+        device: DeviceUid,
+        profile: i8,
+    ) -> Result<(), ControlError> {
+        if !(V2IP_IR_PROFILE_NOT_SET..V2IP_IR_PROFILE_MAX).contains(&profile) {
+            return Err(ControlError::InvalidRequest("no such infrared profile"));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::IR_PROFILE_SINK,
+                ir_profile_sink: profile,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
+    /// The one send behind the device settings methods.
+    fn set_v2ip_device_settings(
+        &self,
+        device: DeviceUid,
+        settings: V2ipDeviceSettings,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            let Some(reported) = d.v2ip_settings else {
+                return Err(ControlError::NotReported("the device's settings"));
+            };
+            if !reported.valid.has(settings.valid) {
+                return Err(ControlError::Unsupported(
+                    "the device does not have this setting",
+                ));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_DEVICE_CFG,
+                build_v2ip_device_settings(d.uid, &settings),
+            )
+            .then(move |state, ev| {
+                if let Some(d) = state.device_mut(device) {
+                    d.merge_v2ip_settings(settings, ev);
                 }
             }))
         })

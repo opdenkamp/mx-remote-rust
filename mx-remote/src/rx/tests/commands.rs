@@ -19,8 +19,8 @@ use crate::types::{
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, V2ipFpgaFeature, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, Cfg};
@@ -2227,6 +2227,188 @@ fn a_write_from_a_controller_leaves_the_sink_route_alone() {
         Some(reported),
         "a controller's zeroed sink block replaced the device's own report"
     );
+}
+
+/// Every device setting a unit has, as it reports them.
+const ALL_SETTINGS: u32 = 0x7FF;
+
+/// The device settings sit behind the processor word, each field at its own
+/// offset.
+///
+/// Every field carries a distinct value, so one read at a neighbour's offset
+/// shows, and the reserved bytes behind them are poisoned.
+#[test]
+fn device_settings_are_read_behind_the_processor_word() {
+    let mut h = command_device(110);
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    cfg.codec = 0x3F;
+    let on = V2ipDeviceSetting::SINK_CHECK_POWER
+        | V2ipDeviceSetting::STATUS_LED
+        | V2ipDeviceSetting::CEC_COMBO_INPUT;
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &cfg.bytes_with_settings(ALL_SETTINGS, on.bits(), 0b101, 3, -1),
+    );
+
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.valid.bits(), ALL_SETTINGS);
+    assert_eq!(s.get(V2ipDeviceSetting::SINK_CHECK_POWER), Some(true));
+    assert_eq!(s.get(V2ipDeviceSetting::SINK_OFF_NO_SIGNAL), Some(false));
+    assert_eq!(s.get(V2ipDeviceSetting::STATUS_LED), Some(true));
+    assert_eq!(s.get(V2ipDeviceSetting::NETWORK_LED), Some(false));
+    assert_eq!(s.get(V2ipDeviceSetting::CEC_COMBO_INPUT), Some(true));
+    assert_eq!(s.stored_ir_profiles(), Some(0b101));
+    assert_eq!(s.ir_profile(), Some(3));
+    assert_eq!(s.ir_profile_sink(), Some(-1), "the sign was lost");
+    assert_eq!(
+        h.device().v2ip_features.map(V2ipFpgaFeature::bits),
+        Some(0x3F),
+        "the block moved the processor word"
+    );
+}
+
+/// The settings were appended, so a sender that predates them stops short of
+/// them and one byte short of the block is not the block.
+#[test]
+fn device_settings_are_read_only_from_a_frame_long_enough_to_hold_them() {
+    let mut h = command_device(111);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let whole = cfg.bytes_with_settings(ALL_SETTINGS, 0, 0, 0, 0);
+    assert_eq!(whole.len(), 144);
+
+    // A block that carries no setting says nothing, which is not a device
+    // reporting that it has none.
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes_with_settings(0, 0, 0, 0, 0));
+    assert_eq!(h.device().v2ip_settings, None);
+
+    h.feed(op::V2IP_DEVICE_CFG, &whole[..143]);
+    assert!(h.device().v2ip_details.is_some(), "the frame was dropped");
+    assert_eq!(h.device().v2ip_settings, None);
+
+    h.feed(op::V2IP_DEVICE_CFG, &whole);
+    assert!(h.device().v2ip_settings.is_some());
+}
+
+/// A frame carrying some settings leaves the others as they were.
+#[test]
+fn a_frame_carrying_one_setting_keeps_the_rest() {
+    let mut h = command_device(112);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let fan = V2ipDeviceSetting::FAN_QUIET;
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &cfg.bytes_with_settings(ALL_SETTINGS, fan.bits(), 0b11, 2, 4),
+    );
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &cfg.bytes_with_settings(V2ipDeviceSetting::STATUS_LED.bits(), 0, 0, 0, 0),
+    );
+
+    let s = h.device().v2ip_settings.expect("no settings");
+    assert_eq!(s.get(V2ipDeviceSetting::STATUS_LED), Some(false));
+    assert_eq!(
+        s.get(fan),
+        Some(true),
+        "a setting the frame did not carry was changed"
+    );
+    assert_eq!(s.ir_profile(), Some(2));
+    assert_eq!(s.ir_profile_sink(), Some(4));
+    assert_eq!(s.stored_ir_profiles(), Some(0b11));
+    assert_eq!(s.valid.bits(), ALL_SETTINGS);
+}
+
+/// A controller's write is cached as far as the device takes it.
+///
+/// The device applies a setting only if it has it and a profile only within
+/// its range, and the list of stored profiles is its own. Caching more would
+/// report a change the device never made.
+#[test]
+fn a_controller_write_is_cached_only_as_far_as_the_device_takes_it() {
+    let mut h = command_device(113);
+    let subject = h.sender;
+    let cfg = Cfg::addresses(subject, "239.1.2.3");
+    let has = V2ipDeviceSetting::SWITCHES
+        | V2ipDeviceSetting::IR_PROFILE
+        | V2ipDeviceSetting::IR_PROFILES;
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &cfg.bytes_with_settings(has.bits(), 0, 0b101, 1, 0),
+    );
+
+    let controller = uid_n(81);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "CTRL0005", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = 0;
+    let carried = V2ipDeviceSetting::STATUS_LED
+        | V2ipDeviceSetting::IR_PROFILE
+        | V2ipDeviceSetting::IR_PROFILE_SINK
+        | V2ipDeviceSetting::IR_PROFILES;
+    h.feed_as(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &write.bytes_with_settings(
+            carried.bits(),
+            V2ipDeviceSetting::STATUS_LED.bits(),
+            0xFFFF,
+            40,
+            2,
+        ),
+    );
+
+    let s = h
+        .state
+        .device(subject)
+        .and_then(|d| d.v2ip_settings)
+        .expect("the subject's settings are gone");
+    assert_eq!(
+        s.get(V2ipDeviceSetting::STATUS_LED),
+        Some(true),
+        "the write itself did not land"
+    );
+    assert_eq!(
+        s.ir_profile(),
+        Some(1),
+        "an out-of-range profile was cached"
+    );
+    assert_eq!(
+        s.ir_profile_sink(),
+        None,
+        "a setting the device does not have was cached"
+    );
+    assert_eq!(
+        s.stored_ir_profiles(),
+        Some(0b101),
+        "a third party rewrote the profiles only the device knows"
+    );
+    assert_eq!(
+        h.state.device(controller).and_then(|d| d.v2ip_settings),
+        None,
+        "the settings landed on the sender instead"
+    );
+
+    // The output port's range starts one lower, at "follow the global one".
+    let sink_port = V2ipDeviceSetting::IR_PROFILE_SINK;
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &cfg.bytes_with_settings(sink_port.bits(), 0, 0, 0, 5),
+    );
+    for (profile, cached) in [(-2, 5), (-1, -1)] {
+        h.feed_as(
+            controller,
+            op::V2IP_DEVICE_CFG,
+            &write.bytes_with_settings(sink_port.bits(), 0, 0, 0, profile),
+        );
+        let s = h.state.device(subject).and_then(|d| d.v2ip_settings);
+        assert_eq!(
+            s.and_then(|s| s.ir_profile_sink()),
+            Some(cached),
+            "a write of {profile} to the output port"
+        );
+    }
 }
 
 /// An empty mask is "not reported yet", not "supports nothing".

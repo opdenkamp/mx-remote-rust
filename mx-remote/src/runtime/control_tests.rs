@@ -15,7 +15,7 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 
 use crate::event::EventHandler;
-use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n};
+use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n, Cfg};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, BayNameChange, EdidProfileChange,
     EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute, V2ipRouteTarget,
@@ -28,9 +28,9 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
-    V2ipStreams, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
-    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
-    V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
+    V2ipDeviceSetting, V2ipStreams, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -2122,6 +2122,187 @@ fn an_auto_scaling_write_leaves_a_configured_mode_alone() {
         cached.scaling.configured_mode().map(|(m, _)| m.svd()),
         Some(4)
     );
+}
+
+/// Has `uid` report the device settings in `valid`, all of them off.
+fn report_settings(f: &Fixture, uid: DeviceUid, valid: V2ipDeviceSetting) {
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    f.feed(
+        uid,
+        op::V2IP_DEVICE_CFG,
+        &cfg.bytes_with_settings(valid.bits(), 0, 0, 0, 0),
+    );
+}
+
+/// A settings write carries nothing but the settings block.
+///
+/// Everything ahead of the block is a field a receiver would otherwise apply:
+/// a source address repoints the encoder, a rate in range replaces the
+/// device's, and a scaling validity bit rewrites its scaling. The zeros and
+/// the out-of-range rate are the assertion.
+#[test]
+fn a_settings_write_carries_nothing_but_the_settings_block() {
+    let f = Fixture::new();
+    let uid = uid_n(223);
+    f.everything(uid, 0x28, "ST0001");
+    report_settings(&f, uid, V2ipDeviceSetting::SWITCHES);
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_device_setting(uid, V2ipDeviceSetting::STATUS_LED, true)
+        .expect("the device has reported the setting");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+
+    assert_eq!(p.len(), 144, "the payload stops short of the settings");
+    assert_eq!(&p[..16], uid.as_bytes(), "the frame names another device");
+    assert!(
+        p[16..40].iter().all(|b| *b == 0),
+        "a source address would repoint the encoder"
+    );
+    assert!(
+        !(V2IP_SOURCE_RATE_MIN..=V2IP_SOURCE_RATE_MAX).contains(&p[40]),
+        "the rate is inside the valid range, so it would replace the device's"
+    );
+    assert!(
+        p[41..128].iter().all(|b| *b == 0),
+        "a field between the rate and the settings block is set"
+    );
+    assert_eq!(
+        &p[128..144],
+        &[8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        "the settings block"
+    );
+
+    let cached = f.remote.v2ip_device_settings(uid).expect("no settings");
+    assert_eq!(
+        cached.get(V2ipDeviceSetting::STATUS_LED),
+        Some(true),
+        "reading back before the device reports shows the old value"
+    );
+    assert_eq!(cached.get(V2ipDeviceSetting::FAN_QUIET), Some(false));
+}
+
+/// A write the device would ignore, refused before it is sent.
+#[test]
+fn a_settings_write_the_device_would_ignore_is_refused() {
+    let f = Fixture::new();
+    let uid = uid_n(224);
+    f.everything(uid, 0x28, "ST0002");
+    f.connect();
+
+    assert!(
+        matches!(
+            f.remote
+                .set_v2ip_device_setting(uid, V2ipDeviceSetting::STATUS_LED, true),
+            Err(ControlError::NotReported(_))
+        ),
+        "a device that has reported no settings"
+    );
+
+    report_settings(
+        &f,
+        uid,
+        V2ipDeviceSetting::STATUS_LED | V2ipDeviceSetting::IR_PROFILE_SINK,
+    );
+    assert!(
+        matches!(
+            f.remote
+                .set_v2ip_device_setting(uid, V2ipDeviceSetting::FAN_QUIET, true),
+            Err(ControlError::Unsupported(_))
+        ),
+        "a setting the device does not have"
+    );
+    assert!(
+        matches!(
+            f.remote.set_v2ip_ir_profile(uid, 1),
+            Err(ControlError::Unsupported(_))
+        ),
+        "a port the device does not have"
+    );
+    for setting in [
+        V2ipDeviceSetting::NONE,
+        V2ipDeviceSetting::IR_PROFILE_SINK,
+        V2ipDeviceSetting::STATUS_LED | V2ipDeviceSetting::IR_PROFILES,
+    ] {
+        assert!(
+            matches!(
+                f.remote.set_v2ip_device_setting(uid, setting, true),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{setting} is not a set of on/off settings"
+        );
+    }
+    for profile in [-1, V2IP_IR_PROFILE_MAX] {
+        assert!(
+            matches!(
+                f.remote.set_v2ip_ir_profile(uid, profile),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "global profile {profile}"
+        );
+    }
+    for profile in [V2IP_IR_PROFILE_NOT_SET - 1, V2IP_IR_PROFILE_MAX] {
+        assert!(
+            matches!(
+                f.remote.set_v2ip_sink_ir_profile(uid, profile),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "output profile {profile}"
+        );
+    }
+    f.remote
+        .set_v2ip_sink_ir_profile(uid, V2IP_IR_PROFILE_NOT_SET)
+        .expect("following the global profile is a profile");
+    assert_eq!(
+        f.remote
+            .v2ip_device_settings(uid)
+            .and_then(|s| s.ir_profile_sink()),
+        Some(V2IP_IR_PROFILE_NOT_SET)
+    );
+}
+
+/// What the builder writes, the decoder reads back as the same settings.
+#[test]
+fn a_built_settings_frame_decodes_to_what_was_built() {
+    let f = Fixture::new();
+    let uid = uid_n(225);
+    f.everything(uid, 0x28, "ST0003");
+    let has = V2ipDeviceSetting::SWITCHES
+        | V2ipDeviceSetting::IR_PROFILE
+        | V2ipDeviceSetting::IR_PROFILE_SINK;
+    report_settings(&f, uid, has);
+    f.tap.clear();
+
+    f.round_trip(
+        "the global profile",
+        uid,
+        f.remote.set_v2ip_ir_profile(uid, 7),
+    );
+    f.round_trip(
+        "the output profile",
+        uid,
+        f.remote
+            .set_v2ip_sink_ir_profile(uid, V2IP_IR_PROFILE_NOT_SET),
+    );
+    f.round_trip(
+        "two switches",
+        uid,
+        f.remote.set_v2ip_device_setting(
+            uid,
+            V2ipDeviceSetting::SINK_OFF_NO_SIGNAL | V2ipDeviceSetting::CEC_COMBO_KEYS,
+            true,
+        ),
+    );
+
+    let s = f.remote.v2ip_device_settings(uid).expect("no settings");
+    assert_eq!(s.ir_profile(), Some(7));
+    assert_eq!(s.ir_profile_sink(), Some(V2IP_IR_PROFILE_NOT_SET));
+    assert_eq!(s.get(V2ipDeviceSetting::SINK_OFF_NO_SIGNAL), Some(true));
+    assert_eq!(s.get(V2ipDeviceSetting::CEC_COMBO_KEYS), Some(true));
+    assert_eq!(s.get(V2ipDeviceSetting::SINK_CHECK_POWER), Some(false));
+    assert_eq!(s.valid, has, "the round trip changed what the device has");
 }
 
 /// Every mode a sink refuses, refused here instead.

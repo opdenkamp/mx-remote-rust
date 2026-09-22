@@ -645,6 +645,41 @@ pub const MXR_MV_SOURCE_INPUT_3: u8 = 3;
 /// Input 4.
 pub const MXR_MV_SOURCE_INPUT_4: u8 = 4;
 
+// ---- V2IP device settings, in `mxr_v2ip_device_settings_t` ----
+
+/// Disables the decoder while the display is off.
+pub const MXR_V2IP_SETTING_SINK_CHECK_POWER: u32 = 1 << 0;
+
+/// Disables the HDMI output while there is no signal.
+pub const MXR_V2IP_SETTING_SINK_OFF_NO_SIGNAL: u32 = 1 << 1;
+
+/// Sends infrared modulated.
+pub const MXR_V2IP_SETTING_IR_TX_MODULATED: u32 = 1 << 2;
+
+/// Lights the status LED.
+pub const MXR_V2IP_SETTING_STATUS_LED: u32 = 1 << 3;
+
+/// Lights the network port LEDs.
+pub const MXR_V2IP_SETTING_NETWORK_LED: u32 = 1 << 4;
+
+/// Runs the fan in quiet mode.
+pub const MXR_V2IP_SETTING_FAN_QUIET: u32 = 1 << 5;
+
+/// Accepts CEC combo keys.
+pub const MXR_V2IP_SETTING_CEC_COMBO_KEYS: u32 = 1 << 6;
+
+/// Accepts CEC combo keys for the device's own input.
+pub const MXR_V2IP_SETTING_CEC_COMBO_INPUT: u32 = 1 << 7;
+
+/// The global infrared port's profile, carried in `ir_profile`.
+pub const MXR_V2IP_SETTING_IR_PROFILE: u32 = 1 << 8;
+
+/// The output infrared port's profile, carried in `ir_profile_sink`.
+pub const MXR_V2IP_SETTING_IR_PROFILE_SINK: u32 = 1 << 9;
+
+/// The stored infrared profiles, carried in `ir_profiles`. Never written.
+pub const MXR_V2IP_SETTING_IR_PROFILES: u32 = 1 << 10;
+
 // ---- reading the packed words ----
 
 /// The remote-control type a bay status word carries in bits 16-19.

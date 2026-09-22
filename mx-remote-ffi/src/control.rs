@@ -20,7 +20,7 @@ use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
-    V2ipOutputMode, V2ipRoute, V2ipRouteTarget, VideoWallWindow,
+    V2ipDeviceSetting, V2ipOutputMode, V2ipRoute, V2ipRouteTarget, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -853,6 +853,78 @@ pub unsafe extern "C" fn mxr_set_v2ip_auto_scaling(
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
         from_control(r.remote.set_v2ip_auto_scaling(device.into(), enabled))
+    })
+}
+
+/// Switches on/off settings of a V2IP device, all to the same value.
+///
+/// `setting` is one or more `MXR_V2IP_SETTING_*` on/off bits, each one the
+/// device has reported. Returns `MXR_ERR_NOT_REPORTED` before the device has
+/// reported its settings, `MXR_ERR_UNSUPPORTED` for a setting it does not have
+/// and `MXR_ERR_INVALID_ARGUMENT` for a bit that is not an on/off setting,
+/// sending nothing in each case: the device ignores such a write. Until the
+/// device reports back, `mxr_v2ip_device_settings()` reads what was written.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_device_setting(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    setting: u32,
+    enabled: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_device_setting(
+            device.into(),
+            V2ipDeviceSetting::from_bits(setting),
+            enabled,
+        ))
+    })
+}
+
+/// Sets the infrared profile of a V2IP device's global infrared port.
+///
+/// `profile` is from 0 up to, not including, `MXR_V2IP_IR_PROFILE_MAX`.
+/// Otherwise as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_ir_profile(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    profile: i8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_ir_profile(device.into(), profile))
+    })
+}
+
+/// Sets the infrared profile of a V2IP device's output infrared port.
+///
+/// `MXR_V2IP_IR_PROFILE_NOT_SET` makes the port follow the global one.
+/// Otherwise as `mxr_set_v2ip_ir_profile()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_sink_ir_profile(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    profile: i8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_sink_ir_profile(device.into(), profile))
     })
 }
 

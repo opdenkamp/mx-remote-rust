@@ -210,6 +210,27 @@ impl Cfg {
         p.extend_from_slice(&self.codec.to_le_bytes());
         p
     }
+
+    /// The whole frame with the device settings block behind the processor
+    /// word: `valid` at 128, `flags` at 132, the stored profiles at 136, the
+    /// two profiles at 140 and 141, and two reserved bytes left poisoned.
+    pub(crate) fn bytes_with_settings(
+        &self,
+        valid: u32,
+        flags: u32,
+        ir_profiles: u32,
+        ir_profile: i8,
+        ir_profile_sink: i8,
+    ) -> Vec<u8> {
+        let mut p = self.bytes_with_options();
+        p.extend_from_slice(&valid.to_le_bytes());
+        p.extend_from_slice(&flags.to_le_bytes());
+        p.extend_from_slice(&ir_profiles.to_le_bytes());
+        p.extend_from_slice(&ir_profile.to_le_bytes());
+        p.extend_from_slice(&ir_profile_sink.to_le_bytes());
+        p.extend_from_slice(&poisoned(2));
+        p
+    }
 }
 
 /// Assembles a datagram the way a device does, header bytes included.

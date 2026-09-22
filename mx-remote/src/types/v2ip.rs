@@ -7,8 +7,9 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2ipColourSpace, V2IP_AUDIO_DEFAULT_CHANNELS,
-    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX,
+    V2IP_IR_PROFILE_NOT_SET,
 };
 
 /// Which of a V2IP device's streams an address describes.
@@ -593,6 +594,104 @@ pub struct DeviceV2ipSink {
     pub addresses: V2ipStreamSources,
     /// The resolved audio format, when the sender reported one.
     pub audio_fmt: Option<V2ipAudioFormat>,
+}
+
+/// The device settings of a V2IP unit, as it reports them and as its
+/// controller changes them.
+///
+/// Each setting is carried only behind its bit in [`valid`](Self::valid), so a
+/// frame changes one setting without restating the others, and a device
+/// reports only the settings it has. Read a setting through the accessors,
+/// which answer `None` for one the device has not reported.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipDeviceSettings {
+    /// The settings reported so far.
+    pub valid: V2ipDeviceSetting,
+    /// The values of the on/off settings among [`valid`](Self::valid).
+    pub flags: V2ipDeviceSetting,
+    /// The infrared profiles stored on the device, bit n for profile n.
+    pub ir_profiles: u32,
+    /// The infrared profile of the global infrared port.
+    pub ir_profile: i8,
+    /// The infrared profile of the output's infrared port, or
+    /// [`V2IP_IR_PROFILE_NOT_SET`] when it follows the global one.
+    pub ir_profile_sink: i8,
+}
+
+impl V2ipDeviceSettings {
+    /// Whether an on/off setting is on, `None` while the device has not
+    /// reported it.
+    pub const fn get(&self, setting: V2ipDeviceSetting) -> Option<bool> {
+        if !self.valid.has(setting) {
+            return None;
+        }
+        Some(self.flags.has(setting))
+    }
+
+    /// The global infrared port's profile, `None` while it is not reported.
+    pub const fn ir_profile(&self) -> Option<i8> {
+        if !self.valid.has(V2ipDeviceSetting::IR_PROFILE) {
+            return None;
+        }
+        Some(self.ir_profile)
+    }
+
+    /// The output infrared port's profile, `None` while it is not reported.
+    /// [`V2IP_IR_PROFILE_NOT_SET`] means the port follows the global one.
+    pub const fn ir_profile_sink(&self) -> Option<i8> {
+        if !self.valid.has(V2ipDeviceSetting::IR_PROFILE_SINK) {
+            return None;
+        }
+        Some(self.ir_profile_sink)
+    }
+
+    /// The infrared profiles stored on the device, bit n for profile n, `None`
+    /// while it is not reported.
+    pub const fn stored_ir_profiles(&self) -> Option<u32> {
+        if !self.valid.has(V2ipDeviceSetting::IR_PROFILES) {
+            return None;
+        }
+        Some(self.ir_profiles)
+    }
+
+    /// Folds a received settings block onto the cached one.
+    ///
+    /// Each bit in the frame's [`valid`](Self::valid) replaces its own setting
+    /// and leaves the others alone, so a write about one setting does not
+    /// clear what was known about the rest.
+    #[must_use]
+    pub(crate) fn merge(self, previous: Self) -> Self {
+        let valid = self.valid;
+        let mut out = previous;
+        out.valid |= valid;
+        out.flags = previous.flags.without(valid) | (self.flags & valid);
+        if valid.has(V2ipDeviceSetting::IR_PROFILE) {
+            out.ir_profile = self.ir_profile;
+        }
+        if valid.has(V2ipDeviceSetting::IR_PROFILE_SINK) {
+            out.ir_profile_sink = self.ir_profile_sink;
+        }
+        if valid.has(V2ipDeviceSetting::IR_PROFILES) {
+            out.ir_profiles = self.ir_profiles;
+        }
+        out
+    }
+
+    /// This block limited to what a device takes from a write about it.
+    ///
+    /// A device applies a setting only if it has it, a profile only within
+    /// its range, and never the list of stored profiles, which only it knows.
+    #[must_use]
+    pub(crate) fn as_applied_to(self, reported: V2ipDeviceSetting) -> Self {
+        let mut valid = (self.valid & reported).without(V2ipDeviceSetting::IR_PROFILES);
+        if !(0..V2IP_IR_PROFILE_MAX).contains(&self.ir_profile) {
+            valid = valid.without(V2ipDeviceSetting::IR_PROFILE);
+        }
+        if !(V2IP_IR_PROFILE_NOT_SET..V2IP_IR_PROFILE_MAX).contains(&self.ir_profile_sink) {
+            valid = valid.without(V2ipDeviceSetting::IR_PROFILE_SINK);
+        }
+        Self { valid, ..self }
+    }
 }
 
 /// Transmitter stream statistics.

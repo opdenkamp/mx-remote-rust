@@ -19,8 +19,9 @@ use std::net::Ipv4Addr;
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UtpCableStatus,
-    V2ipDecoderDetail, V2ipDeviceStats, V2ipFpgaFeature, V2ipRxStats, V2ipStreamSource,
-    V2ipStreamSources, V2ipTilingConfig, V2ipTxStats, VctStatus, MULTIVIEWER_INPUTS,
+    V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature, V2ipRxStats,
+    V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig, V2ipTxStats, VctStatus,
+    MULTIVIEWER_INPUTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -909,6 +910,71 @@ pub unsafe extern "C" fn mxr_v2ip_features(
             .map(V2ipFpgaFeature::bits);
         // SAFETY: the caller guarantees a writable uint64_t or null.
         unsafe { fill(r, uid, out, "processor features", value) }
+    })
+}
+
+/// A V2IP device's settings.
+///
+/// A setting is reported only when its `MXR_V2IP_SETTING_*` bit is set in
+/// `valid`, and a device reports every setting it has.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_device_settings_t {
+    /// `MXR_V2IP_SETTING_*` bits of the settings reported so far.
+    pub valid: u32,
+    /// `MXR_V2IP_SETTING_*` values of the on/off settings among `valid`.
+    pub flags: u32,
+    /// The infrared profiles stored on the device, bit n for profile n, when
+    /// `valid` has `MXR_V2IP_SETTING_IR_PROFILES`.
+    pub ir_profiles: u32,
+    /// The global infrared port's profile, when `valid` has
+    /// `MXR_V2IP_SETTING_IR_PROFILE`.
+    pub ir_profile: i8,
+    /// The output infrared port's profile, when `valid` has
+    /// `MXR_V2IP_SETTING_IR_PROFILE_SINK`. `MXR_V2IP_IR_PROFILE_NOT_SET` means
+    /// it follows the global one.
+    pub ir_profile_sink: i8,
+}
+
+/// The output infrared port follows the global one.
+pub const MXR_V2IP_IR_PROFILE_NOT_SET: i8 = -1;
+/// One past the highest infrared profile.
+pub const MXR_V2IP_IR_PROFILE_MAX: i8 = 18;
+
+// The header carries these as literals, so they are held to the core's here.
+const _: () = assert!(MXR_V2IP_IR_PROFILE_NOT_SET == mx_remote::V2IP_IR_PROFILE_NOT_SET);
+const _: () = assert!(MXR_V2IP_IR_PROFILE_MAX == mx_remote::V2IP_IR_PROFILE_MAX);
+
+/// Fills `out` with a V2IP device's settings.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any. A change
+/// is announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_device_settings_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_device_settings(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_device_settings_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_device_settings(uid.into())
+            .map(|s: V2ipDeviceSettings| mxr_v2ip_device_settings_t {
+                valid: s.valid.bits(),
+                flags: s.flags.bits(),
+                ir_profiles: s.ir_profiles,
+                ir_profile: s.ir_profile,
+                ir_profile_sink: s.ir_profile_sink,
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "device settings", value) }
     })
 }
 
