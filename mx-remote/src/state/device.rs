@@ -94,6 +94,13 @@ pub(crate) struct Device {
     /// records are held by position and `v2ip_sources` is the run of them that
     /// has arrived from the start.
     pub(crate) v2ip_source_pages: BTreeMap<u16, V2ipStreamSources>,
+    /// The source device behind each of this device's V2IP bays, by bay mode
+    /// and number.
+    ///
+    /// Held here as well as on the bays because a device may send them before
+    /// the bay configuration that creates those bays, and a bay that arrives
+    /// later picks its mapping up from here.
+    pub(crate) v2ip_bay_mappings: BTreeMap<(&'static str, u8), DeviceUid>,
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
     pub(crate) v2ip_sink: Option<DeviceV2ipSink>,
     /// What the device's video processor supports, once it has reported it.
@@ -138,6 +145,7 @@ impl Device {
             bay_config_received: false,
             v2ip_sources: None,
             v2ip_source_pages: BTreeMap::new(),
+            v2ip_bay_mappings: BTreeMap::new(),
             v2ip_details: None,
             v2ip_sink: None,
             v2ip_features: None,
@@ -532,6 +540,9 @@ impl Device {
         bay.set_user_name(cfg.user_name.clone(), ev);
         if bay.mbay_id.is_none() {
             bay.mbay_id = Some(cfg.bay);
+        }
+        if let Some(uid) = self.v2ip_bay_mappings.get(&(bay.mode_str(), bay.bay_num())) {
+            bay.v2ip_uid = *uid;
         }
         bay.apply_bay_status(cfg.status, ev);
         bay.signal_mode = cfg.signal_mode;

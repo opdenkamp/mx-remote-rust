@@ -748,7 +748,9 @@ pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]
     let mode = if header & 1 == 1 { "Input" } else { "Output" };
     let sender = rx.sender();
 
-    let mut mappings: Vec<(u16, DeviceUid)> = Vec::new();
+    let Some(device) = state.device_mut(sender) else {
+        return;
+    };
     for i in 0..count {
         let Some(uid) = f.uid(8 + 16 * usize::from(i)) else {
             break;
@@ -756,15 +758,11 @@ pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]
         let Some(number) = first.checked_add(i).and_then(|n| u8::try_from(n).ok()) else {
             break;
         };
-        let Some(device) = state.device(sender) else {
-            return;
-        };
-        if let Some(bay) = device.bay_by_mode_num(mode, number) {
-            mappings.push((bay.port, uid));
-        }
-    }
-    for (port, uid) in mappings {
-        if let Some(bay) = state.bay_mut(BayUid::new(sender, port)) {
+        // Kept for a bay not configured yet as well: a device may send its
+        // mappings ahead of the bay configuration that creates the bays.
+        device.v2ip_bay_mappings.insert((mode, number), uid);
+        let port = device.bay_by_mode_num(mode, number).map(|bay| bay.port);
+        if let Some(bay) = port.and_then(|port| device.bays.get_mut(&port)) {
             bay.v2ip_uid = uid;
         }
     }

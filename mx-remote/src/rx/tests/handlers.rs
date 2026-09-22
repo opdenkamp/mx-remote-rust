@@ -526,6 +526,43 @@ fn v2ip_source_switch_resolves_the_advertising_bay() {
     );
 }
 
+/// A mapping that arrives before the bay it names is kept for that bay.
+///
+/// A device may send its bay mappings ahead of the bay configuration that
+/// creates the bays, and a mapping dropped then stays lost until the device's
+/// next full broadcast.
+#[test]
+fn a_bay_mapping_sent_before_its_bay_is_applied_when_the_bay_arrives() {
+    let mut h = Harness::new(122);
+    h.hello(0x28, "ONEIP-RX", "RX10", DeviceFeature::V2IP_SINK);
+
+    // 0x44 V2IP_BAY_MAPPINGS: count<<1|is_input, first bay, then uids from 8
+    let mapped = uid_n(123);
+    let mut bm = poisoned(24);
+    bm[0..2].copy_from_slice(&((1u16 << 1) | 1).to_le_bytes());
+    bm[2..4].copy_from_slice(&0u16.to_le_bytes());
+    bm[8..24].copy_from_slice(mapped.as_bytes());
+    h.feed(op::V2IP_BAY_MAPPINGS, &bm);
+
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            0,
+            0,
+            "Input 1",
+            "Apple TV",
+            BayStatus::NONE,
+            BayFeatures::V2IP_SOURCE_REMOTE,
+        ),
+    );
+    assert_eq!(
+        h.bay(1).v2ip_uid,
+        mapped,
+        "the mapping sent ahead of its bay was lost"
+    );
+}
+
 /// The bay descriptor underpins most of the read API - names, ports, sources,
 /// EDID profile, remote-control target, status and features all come from this
 /// one record. Every field gets a distinct value, so reading any of them at a
