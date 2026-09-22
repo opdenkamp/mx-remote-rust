@@ -391,21 +391,26 @@ fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid
     // to move, and inventing one from a third party's description would create
     // a device nothing has been heard from.
     state.device(subject)?;
-    // Management standing, or the subject naming this sender as its mesh
-    // controller. The second is asked of the subject rather than the sender
-    // because it closes the window where a controller has been promoted but has
-    // no bays mapped yet, and so announces neither bit while still being the
-    // controller its mesh obeys.
-    //
-    // A subject that has named no controller contributes nothing here rather
-    // than refusing: not knowing who a device follows is not knowing that it
-    // follows nobody, and a client that has just started knows nothing about
-    // anyone for as long as a broadcast period.
-    let manages = state.device(rx.sender()).is_some_and(Device::is_management)
+    manages(state, rx.sender(), subject).then_some(subject)
+}
+
+/// Whether a device takes a write about `subject` from `sender`.
+///
+/// Management standing, or the subject naming this sender as its mesh
+/// controller. The second is asked of the subject rather than the sender
+/// because it closes the window where a controller has been promoted but has
+/// no bays mapped yet, and so announces neither bit while still being the
+/// controller its mesh obeys.
+///
+/// A subject that has named no controller contributes nothing here rather than
+/// refusing: not knowing who a device follows is not knowing that it follows
+/// nobody, and a client that has just started knows nothing about anyone for as
+/// long as a broadcast period.
+pub(super) fn manages(state: &State, sender: DeviceUid, subject: DeviceUid) -> bool {
+    state.device(sender).is_some_and(Device::is_management)
         || state
             .device(subject)
-            .is_some_and(|d| !d.mesh_master.is_zero() && d.mesh_master == rx.sender());
-    manages.then_some(subject)
+            .is_some_and(|d| !d.mesh_master.is_zero() && d.mesh_master == sender)
 }
 
 /// Which scaling flag bits may be believed from this sender.

@@ -517,10 +517,16 @@ pub(super) fn rc_settings(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     if p.len() < 28 {
         return;
     }
+    // A device reports its own settings and only management changes them, so
+    // a frame from anyone else is one no device acts on.
+    let target = uid_at(p, 0);
+    if target != device && !super::handlers::manages(state, device, target) {
+        return;
+    }
     let flags = p[24];
     let ip = ipv4_at(p, 20);
     let settings = RcSettings {
-        target: uid_at(p, 0),
+        target,
         rc_target: p[16],
         ip: (ip != Ipv4Addr::UNSPECIFIED).then_some(ip),
         cec_enabled: flags & (1 << 0) != 0,

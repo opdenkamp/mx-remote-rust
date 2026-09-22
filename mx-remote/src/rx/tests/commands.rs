@@ -534,6 +534,56 @@ fn rc_settings_read_one_flag_byte() {
     assert_eq!(s.rc_status, 3);
 }
 
+/// A device reports its own remote-control settings and only management
+/// changes them, so another peer's frame about it moves nothing.
+#[test]
+fn rc_settings_about_another_device_need_management_standing() {
+    let mut h = command_device(54);
+    let subject = h.sender;
+    let settings_for = |forward_rc: bool| {
+        let mut p = vec![0u8; 48];
+        p[0..16].copy_from_slice(subject.as_bytes());
+        p[16] = 1; // RC_TARGET_CEC
+        p[24] = if forward_rc { 1 << 2 } else { 0 };
+        p
+    };
+    h.feed(op::RC_SETTINGS, &settings_for(false));
+
+    let peer = uid_n(79);
+    h.feed_as(
+        peer,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x28,
+            "ONEIP",
+            "CM0005",
+            "4.8.0",
+            DeviceFeature::VIDEO_ROUTING,
+        ),
+    );
+    h.feed_as(peer, op::RC_SETTINGS, &settings_for(true));
+    let s = h.state.device(subject).and_then(|d| d.rc_settings.clone());
+    assert_eq!(
+        s.map(|s| s.forward_rc),
+        Some(false),
+        "a peer without standing rewrote another device's settings"
+    );
+
+    let controller = uid_n(80);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "CTRL0004", "4.8.0", DeviceFeature::MANAGER),
+    );
+    h.feed_as(controller, op::RC_SETTINGS, &settings_for(true));
+    let s = h.state.device(subject).and_then(|d| d.rc_settings.clone());
+    assert_eq!(
+        s.map(|s| s.forward_rc),
+        Some(true),
+        "management's write was dropped"
+    );
+}
+
 #[test]
 fn an_rc_status_name_starts_past_the_reserved_bits() {
     let mut h = command_device(72);
