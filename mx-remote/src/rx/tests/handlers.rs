@@ -390,6 +390,57 @@ fn bay_targeted_handlers_reach_the_bay_they_name() {
     );
 }
 
+/// A unit with the bays the captured 0x08 frames name: inputs on 6 and 8, an
+/// output on 16.
+fn captured_route_unit(n: u8) -> Harness {
+    let mut h = Harness::new(n);
+    h.hello(0x28, "V2IP", "CAP0008", DeviceFeature::V2IP_SINK);
+    let mut cfg = Vec::new();
+    for (port, mode, name, features) in [
+        (6, 0, "In 6", BayFeatures::HDMI_IN),
+        (8, 0, "In 8", BayFeatures::HDMI_IN),
+        (16, 1, "Out 16", BayFeatures::HDMI_OUT),
+    ] {
+        cfg.extend(bay_config_rec(
+            port,
+            mode,
+            0,
+            name,
+            name,
+            BayStatus::NONE,
+            features,
+        ));
+    }
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+    h
+}
+
+/// 0x08 MX_ROUTE as a unit sent it: a local sink switched to source 8, then a
+/// split route taking video from 6 and audio from 8. The expected ports are the
+/// unit's own report of what it sent, not this decoder's reading.
+///
+/// The split frame is the one that pins anything: packed as bytes rather than
+/// u16s, its audio reads 6 instead of 8. Video is not pinned - it equals the
+/// selected input in both frames, so a read from 2 or 4 agrees - and neither is
+/// any width, since every port here is below 256.
+#[test]
+fn a_captured_route_decodes_to_the_bays_it_names() {
+    for (raw, video, audio) in [
+        ([0x10, 0x00, 0x08, 0x00, 0x08, 0x00, 0x00, 0x08, 0x00], 8, 8),
+        ([0x10, 0x00, 0x06, 0x00, 0x06, 0x00, 0x00, 0x08, 0x00], 6, 8),
+    ] {
+        let mut h = captured_route_unit(117);
+        h.feed(op::MX_ROUTE, &raw);
+        let sink = h.bay(16);
+        assert_eq!(sink.video_source.map(|b| b.port), Some(video), "{raw:02X?}");
+        assert_eq!(
+            sink.effective_audio_source().map(|b| b.port),
+            Some(audio),
+            "{raw:02X?}"
+        );
+    }
+}
+
 #[test]
 fn routing_and_device_handlers() {
     let mut h = bay_state(111);
