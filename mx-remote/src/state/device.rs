@@ -31,6 +31,15 @@ const SILENCE_LIMIT_MODERN: Duration = Duration::from_secs(15);
 /// The version from which the shorter limit applies.
 const MODERN_PROTOCOL: u16 = 0x20;
 
+/// How long a device at [`SLOW_HELLO_PROTOCOL`] or above may stay silent.
+///
+/// That version announces only every 20 to 30 seconds once every device it
+/// knows is on it too.
+const SILENCE_LIMIT_SLOW_HELLO: Duration = Duration::from_secs(60);
+
+/// The version from which [`SILENCE_LIMIT_SLOW_HELLO`] applies.
+const SLOW_HELLO_PROTOCOL: u16 = 0x2A;
+
 /// How long a device is given to finish describing itself.
 ///
 /// Past this its link configuration stops being waited for, and it keeps being
@@ -285,7 +294,9 @@ impl Device {
     // ---- status ----
 
     pub(crate) fn is_online(&self, now: Instant) -> bool {
-        let limit = if self.hello.supported_protocol >= MODERN_PROTOCOL {
+        let limit = if self.hello.supported_protocol >= SLOW_HELLO_PROTOCOL {
+            SILENCE_LIMIT_SLOW_HELLO
+        } else if self.hello.supported_protocol >= MODERN_PROTOCOL {
             SILENCE_LIMIT_MODERN
         } else {
             SILENCE_LIMIT

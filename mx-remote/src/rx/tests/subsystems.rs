@@ -11,7 +11,7 @@ use crate::rx::lookup_svd;
 use crate::types::{AudioFeatures, MacAddress, V2ipDecoderState};
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, FirmwareType, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, UtpLinkSpeed,
+    MultiviewerViewMode, UtpLinkSpeed, PROTOCOL_VERSION,
 };
 
 use crate::testing::{bay_config_rec, field, poisoned, uid_n};
@@ -325,6 +325,57 @@ fn amp_stats_and_network() {
     assert_eq!(
         port.mac_address,
         Some(MacAddress([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]))
+    );
+}
+
+/// A device on 0x2A may announce itself only every 20 to 30 seconds, so it is
+/// given a minute of silence rather than fifteen seconds.
+#[test]
+fn a_slow_hello_device_is_given_a_minute() {
+    let now = Instant::now();
+    let hello = |protocol| {
+        super::hello_payload(
+            protocol,
+            "ONEIP",
+            "LV0002",
+            "4.7.9",
+            DeviceFeature::V2IP_SINK,
+        )
+    };
+
+    let mut h = Harness::new(12);
+    h.feed_at(op::SYS_HELLO, &hello(0x2A), now - Duration::from_secs(45));
+    assert!(
+        h.device().is_online(now),
+        "a 0x2A device went offline inside its minute"
+    );
+
+    let mut h = Harness::new(13);
+    h.feed_at(op::SYS_HELLO, &hello(0x2A), now - Duration::from_secs(61));
+    assert!(
+        !h.device().is_online(now),
+        "a 0x2A device outlived its minute"
+    );
+
+    let mut h = Harness::new(14);
+    h.feed_at(op::SYS_HELLO, &hello(0x29), now - Duration::from_secs(20));
+    assert!(
+        !h.device().is_online(now),
+        "a device below 0x2A was given the longer window"
+    );
+
+    // This client announces its own version, and a peer that sees every device
+    // on 0x2A slows its hello to match - so a peer on this client's version has
+    // to outlast the slowest of those intervals.
+    let mut h = Harness::new(15);
+    h.feed_at(
+        op::SYS_HELLO,
+        &hello(PROTOCOL_VERSION),
+        now - Duration::from_secs(30),
+    );
+    assert!(
+        h.device().is_online(now),
+        "a peer on this client's version went offline between two of its hellos"
     );
 }
 

@@ -17,6 +17,10 @@ use super::DISCOVER_INTERVAL;
 /// than a continuous 2.5 to 5. Coarser than the firmware, and left that way:
 /// the jitter exists to stop announcers colliding, and three values across
 /// clients whose ticks start at different moments is enough for that.
+///
+/// A device on 0x2A stretches its own interval to 20-30s once every device it
+/// knows is on 0x2A. This client keeps the short one: a peer below 0x2A takes
+/// it offline 15s after its last hello.
 pub(super) const HELLO_BASE: Duration = Duration::from_millis(2500);
 
 /// The width of the announcement jitter. See [`HELLO_BASE`].
