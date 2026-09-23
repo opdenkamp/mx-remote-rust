@@ -472,3 +472,41 @@ fn a_device_that_never_described_itself_is_still_reported_gone() {
         "a device that stopped answering was never reported gone"
     );
 }
+
+/// A management client on the mesh does not keep this client discovering.
+///
+/// A manager - another controller, or a second instance of this library - sends
+/// a hello and nothing else: it has no bays or links to report. Waiting for
+/// them never ends, and a pass that finds a device still undescribed past its
+/// window asks the whole network to describe itself again, every few seconds
+/// for as long as the manager is there.
+#[test]
+fn a_management_client_does_not_keep_discovery_going() {
+    let (remote, tap) = client(214);
+    let matrix = uid_n(215);
+    matrix_with_one_bay(&remote, matrix);
+
+    let manager = uid_n(216);
+    let hello = crate::testing::hello_payload(
+        0x2A,
+        "Controller",
+        "CTRL0001",
+        "1.0.0",
+        DeviceFeature::MANAGER,
+    );
+    remote.shared.process_datagram(
+        &datagram(manager, op::SYS_HELLO, protocol_for(op::SYS_HELLO), &hello),
+        FROM,
+    );
+
+    let past_window = CONFIG_GRACE + Duration::from_secs(1);
+    age(&remote, matrix, past_window);
+    age(&remote, manager, past_window);
+    tap.clear();
+    remote.shared.probe_once(Instant::now());
+
+    assert!(
+        !tap.opcodes().contains(&op::SYS_DISCOVER.0),
+        "a manager that has nothing more to send kept discovery going"
+    );
+}

@@ -54,7 +54,8 @@ pub struct DeviceInfo {
     /// up later looks like anyway. Its bays, and a V2IP device's source list,
     /// are waited for without limit - a caller names things after a bay, and a
     /// name assigned to a placeholder outlives the frame that would have
-    /// corrected it.
+    /// corrected it. A management client has none of these to send and is
+    /// complete from its hello.
     pub configuration_complete: bool,
     /// Whether the device's firmware initialises the configuration it
     /// broadcasts.

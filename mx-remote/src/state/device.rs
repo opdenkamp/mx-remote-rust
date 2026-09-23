@@ -443,7 +443,16 @@ impl Device {
             && now.saturating_duration_since(self.first_seen) <= CONFIG_GRACE
     }
 
+    /// Whether the device has described itself fully.
+    ///
+    /// A management client is described by its hello alone: it has no bays or
+    /// links to send. That is [`DeviceFeature::MANAGER`] and not
+    /// [`Self::is_management`], whose other bit is set by a device that does
+    /// have bays.
     pub(crate) fn configuration_complete(&self, now: Instant) -> bool {
+        if self.hello.features.has(DeviceFeature::MANAGER) {
+            return true;
+        }
         self.has_bays()
             && !(self.is_v2ip() && self.v2ip_sources.is_none())
             && !self.needs_link_config(now)
