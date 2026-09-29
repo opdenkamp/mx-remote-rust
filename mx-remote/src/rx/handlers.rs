@@ -765,33 +765,18 @@ pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
 /// Records which source device each V2IP bay stands in for.
 ///
 /// The first `u16` packs the record count above a direction bit, and the
-/// second is the bay number the run starts at.
+/// second is the port of the bay the page starts at. A device may split its
+/// list over several pages, so each is filed on its own and none replaces what
+/// another said.
 pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]) {
     let f = &rx.frame;
-    let (Some(header), Some(first)) = (f.u16(0), f.u16(2)) else {
+    let (Some(header), Some(first_port)) = (f.u16(0), f.u16(2)) else {
         return;
     };
-    let count = header >> 1;
-    let mode = if header & 1 == 1 { "Input" } else { "Output" };
-    let sender = rx.sender();
-
-    let Some(device) = state.device_mut(sender) else {
-        return;
-    };
-    for i in 0..count {
-        let Some(uid) = f.uid(8 + 16 * usize::from(i)) else {
-            break;
-        };
-        let Some(number) = first.checked_add(i).and_then(|n| u8::try_from(n).ok()) else {
-            break;
-        };
-        // Kept for a bay not configured yet as well: a device may send its
-        // mappings ahead of the bay configuration that creates the bays.
-        device.v2ip_bay_mappings.insert((mode, number), uid);
-        let port = device.bay_by_mode_num(mode, number).map(|bay| bay.port);
-        if let Some(bay) = port.and_then(|port| device.bays.get_mut(&port)) {
-            bay.v2ip_uid = uid;
-        }
+    let count = usize::from(header >> 1);
+    let page: Vec<DeviceUid> = (0..count).map_while(|i| f.uid(8 + 16 * i)).collect();
+    if let Some(device) = state.device_mut(rx.sender()) {
+        device.set_v2ip_bay_mapping_page(first_port, page);
     }
 }
 

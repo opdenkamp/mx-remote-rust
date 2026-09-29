@@ -110,6 +110,11 @@ pub(crate) struct Device {
     /// the bay configuration that creates those bays, and a bay that arrives
     /// later picks its mapping up from here.
     pub(crate) v2ip_bay_mappings: BTreeMap<(&'static str, u8), DeviceUid>,
+    /// Bay mapping pages whose first port names no bay yet, by that port.
+    ///
+    /// A page runs on by bay number from the bay at its first port, so it
+    /// cannot be filed until that bay's configuration says which one it is.
+    pub(crate) v2ip_bay_mapping_pages: BTreeMap<u16, Vec<DeviceUid>>,
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
     pub(crate) v2ip_sink: Option<DeviceV2ipSink>,
     /// What the device's video processor supports, once it has reported it.
@@ -157,6 +162,7 @@ impl Device {
             v2ip_sources: None,
             v2ip_source_pages: BTreeMap::new(),
             v2ip_bay_mappings: BTreeMap::new(),
+            v2ip_bay_mapping_pages: BTreeMap::new(),
             v2ip_details: None,
             v2ip_sink: None,
             v2ip_features: None,
@@ -564,6 +570,10 @@ impl Device {
         if bay.mbay_id.is_none() {
             bay.mbay_id = Some(cfg.bay);
         }
+        let page = self.v2ip_bay_mapping_pages.remove(&bay.port);
+        if let Some(page) = &page {
+            file_v2ip_bay_mappings(&mut self.v2ip_bay_mappings, bay, page);
+        }
         if let Some(uid) = self.v2ip_bay_mappings.get(&(bay.mode_str(), bay.bay_num())) {
             bay.v2ip_uid = *uid;
         }
@@ -582,6 +592,11 @@ impl Device {
             bay.set_edid_profile(cfg.edid_profile, ev);
         }
 
+        // The page this bay starts also names the bays after it.
+        if page.is_some() {
+            self.apply_v2ip_bay_mappings();
+        }
+
         if is_new {
             ev.push(Event::BayRegistered {
                 bay: BayUid::new(self.uid, u16::from(cfg.port)),
@@ -590,6 +605,31 @@ impl Device {
             // arrived before this one did.
             self.attach_audio_endpoints(ev);
             self.check_config_complete(now, ev);
+        }
+    }
+
+    /// Takes one page of the device's V2IP bay mappings.
+    ///
+    /// `first_port` is the port of the bay the page starts at, and the entries
+    /// run on from it by bay number rather than by port: inputs and outputs
+    /// share one port space, so a run of bays need not be a run of ports. A
+    /// page whose first port names no bay yet waits for that bay's
+    /// configuration.
+    pub(crate) fn set_v2ip_bay_mapping_page(&mut self, first_port: u16, page: Vec<DeviceUid>) {
+        let Some(first) = self.bays.get(&first_port) else {
+            self.v2ip_bay_mapping_pages.insert(first_port, page);
+            return;
+        };
+        file_v2ip_bay_mappings(&mut self.v2ip_bay_mappings, first, &page);
+        self.apply_v2ip_bay_mappings();
+    }
+
+    /// Hands every filed bay mapping to the bay it names.
+    fn apply_v2ip_bay_mappings(&mut self) {
+        for bay in self.bays.values_mut() {
+            if let Some(uid) = self.v2ip_bay_mappings.get(&(bay.mode_str(), bay.bay_num())) {
+                bay.v2ip_uid = *uid;
+            }
         }
     }
 
@@ -1077,5 +1117,18 @@ impl Device {
         for link in links {
             audio.apply_link(link);
         }
+    }
+}
+
+/// Files a bay mapping page under the bays it names: `first` and then the
+/// bays numbered on from it in the same direction.
+fn file_v2ip_bay_mappings(
+    mappings: &mut BTreeMap<(&'static str, u8), DeviceUid>,
+    first: &Bay,
+    page: &[DeviceUid],
+) {
+    let mode = first.mode_str();
+    for (number, uid) in (first.bay_num()..=u8::MAX).zip(page) {
+        mappings.insert((mode, number), *uid);
     }
 }

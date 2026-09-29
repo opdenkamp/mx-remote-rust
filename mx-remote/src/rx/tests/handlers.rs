@@ -12,8 +12,8 @@ use crate::types::{
     ArcStatus, PowerStatus, AMP_TONE_HTTP_MAX, AMP_TONE_HTTP_MIN, VOLUME_UNCHANGED,
 };
 use crate::wire::{
-    op, parse_bay_config, BayFeatures, BayStatus, DeviceFeature, EdidProfile, MxrSignalType,
-    Opcode, RcAction, RcKey, RcType, PROTOCOL_VERSION, V2IP_PORT_VIDEO,
+    op, parse_bay_config, BayFeatures, BayStatus, DeviceFeature, DeviceUid, EdidProfile,
+    MxrSignalType, Opcode, RcAction, RcKey, RcType, PROTOCOL_VERSION, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, field, hello_payload, poisoned, stream_rec, uid_n};
@@ -462,11 +462,11 @@ fn routing_and_device_handlers() {
     h.feed(op::SYS_TEMPERATURE, &[2, 41, 43]);
     assert_eq!(h.device().temperatures, vec![41, 43]);
 
-    // 0x44 V2IP_BAY_MAPPINGS: count<<1|is_input, first bay, then uids from 8
+    // 0x44 V2IP_BAY_MAPPINGS: count<<1|is_input, first port, then uids from 8
     let mapped = uid_n(112);
     let mut bm = poisoned(24);
     bm[0..2].copy_from_slice(&((1u16 << 1) | 1).to_le_bytes());
-    bm[2..4].copy_from_slice(&0u16.to_le_bytes()); // first bay number
+    bm[2..4].copy_from_slice(&1u16.to_le_bytes()); // Input 1's port
     bm[8..24].copy_from_slice(mapped.as_bytes());
     h.feed(op::V2IP_BAY_MAPPINGS, &bm);
     assert_eq!(h.bay(1).v2ip_uid, mapped);
@@ -587,11 +587,11 @@ fn a_bay_mapping_sent_before_its_bay_is_applied_when_the_bay_arrives() {
     let mut h = Harness::new(122);
     h.hello(0x28, "ONEIP-RX", "RX10", DeviceFeature::V2IP_SINK);
 
-    // 0x44 V2IP_BAY_MAPPINGS: count<<1|is_input, first bay, then uids from 8
+    // 0x44 V2IP_BAY_MAPPINGS: count<<1|is_input, first port, then uids from 8
     let mapped = uid_n(123);
     let mut bm = poisoned(24);
     bm[0..2].copy_from_slice(&((1u16 << 1) | 1).to_le_bytes());
-    bm[2..4].copy_from_slice(&0u16.to_le_bytes());
+    bm[2..4].copy_from_slice(&1u16.to_le_bytes());
     bm[8..24].copy_from_slice(mapped.as_bytes());
     h.feed(op::V2IP_BAY_MAPPINGS, &bm);
 
@@ -612,6 +612,123 @@ fn a_bay_mapping_sent_before_its_bay_is_applied_when_the_bay_arrives() {
         mapped,
         "the mapping sent ahead of its bay was lost"
     );
+}
+
+/// A 0x44 page as a unit sends it: the count above the direction bit, the
+/// first port, four bytes of padding, then one uid per bay.
+fn bay_mapping_page(is_input: bool, first_port: u16, uids: &[DeviceUid]) -> Vec<u8> {
+    let count = u16::try_from(uids.len()).expect("a page holds fewer than 2^15 bays");
+    let mut page = poisoned(8);
+    page[0..2].copy_from_slice(&((count << 1) | u16::from(is_input)).to_le_bytes());
+    page[2..4].copy_from_slice(&first_port.to_le_bytes());
+    for uid in uids {
+        page.extend_from_slice(uid.as_bytes());
+    }
+    page
+}
+
+/// A transceiver laid out as the units on a mesh report themselves: Input 1
+/// to 3 on ports 0 to 2, and Output 1 and 2 on ports 16 and 17.
+fn mapped_transceiver(n: u8) -> Harness {
+    let mut h = Harness::new(n);
+    h.hello(0x2A, "ONEIP", "TRX1", DeviceFeature::V2IP_SINK);
+    let mut cfg = Vec::new();
+    for (port, bay) in [(0, 0), (1, 1), (2, 2)] {
+        cfg.extend(bay_config_rec(
+            port,
+            0,
+            bay,
+            &format!("Input {}", bay + 1),
+            "",
+            BayStatus::NONE,
+            BayFeatures::V2IP_SOURCE_REMOTE,
+        ));
+    }
+    for (port, bay) in [(16, 0), (17, 1)] {
+        cfg.extend(bay_config_rec(
+            port,
+            1,
+            bay,
+            &format!("Output {}", bay + 1),
+            "",
+            BayStatus::NONE,
+            BayFeatures::V2IP_SINK_REMOTE,
+        ));
+    }
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+    h
+}
+
+/// Units send one 0x44 page per direction, and name the bay a page starts at
+/// by its port: a captured output page starts at 16, the port of Output 1. Read
+/// as a bay number, 16 names an output this unit does not have, and every
+/// output mapping is lost.
+#[test]
+fn a_bay_mapping_page_starts_at_the_bay_on_its_first_port() {
+    let mut h = mapped_transceiver(124);
+    let inputs = [uid_n(125), uid_n(126), uid_n(127)];
+    let outputs = [uid_n(128), uid_n(129)];
+    h.feed(op::V2IP_BAY_MAPPINGS, &bay_mapping_page(true, 0, &inputs));
+    h.feed(
+        op::V2IP_BAY_MAPPINGS,
+        &bay_mapping_page(false, 16, &outputs),
+    );
+
+    for (port, uid) in [(0, inputs[0]), (1, inputs[1]), (2, inputs[2])] {
+        assert_eq!(h.bay(port).v2ip_uid, uid, "input on port {port}");
+    }
+    for (port, uid) in [(16, outputs[0]), (17, outputs[1])] {
+        assert_eq!(h.bay(port).v2ip_uid, uid, "output on port {port}");
+    }
+}
+
+/// A page that starts past the first bay covers only the bays from there, and
+/// leaves what an earlier page said about the others alone.
+#[test]
+fn a_bay_mapping_page_leaves_the_bays_before_it_alone() {
+    let mut h = mapped_transceiver(130);
+    let first = [uid_n(131), uid_n(132), uid_n(133)];
+    h.feed(op::V2IP_BAY_MAPPINGS, &bay_mapping_page(true, 0, &first));
+    let later = [uid_n(134), uid_n(135)];
+    h.feed(op::V2IP_BAY_MAPPINGS, &bay_mapping_page(true, 1, &later));
+
+    assert_eq!(h.bay(0).v2ip_uid, first[0]);
+    assert_eq!(h.bay(1).v2ip_uid, later[0]);
+    assert_eq!(h.bay(2).v2ip_uid, later[1]);
+}
+
+/// A page whose first bay has not been configured yet is filed once that bay
+/// arrives - including for the bays after it, which may have arrived first.
+#[test]
+fn a_bay_mapping_page_waits_for_the_bay_it_starts_at() {
+    let mut h = Harness::new(136);
+    h.hello(0x2A, "ONEIP", "TRX2", DeviceFeature::V2IP_SINK);
+    let output = |port, bay| {
+        bay_config_rec(
+            port,
+            1,
+            bay,
+            &format!("Output {}", bay + 1),
+            "",
+            BayStatus::NONE,
+            BayFeatures::V2IP_SINK_REMOTE,
+        )
+    };
+    h.feed(op::SYS_BAY_CONFIG, &output(18, 2));
+    let outputs = [uid_n(137), uid_n(138)];
+    h.feed(
+        op::V2IP_BAY_MAPPINGS,
+        &bay_mapping_page(false, 17, &outputs),
+    );
+    assert_eq!(
+        h.bay(18).v2ip_uid,
+        DeviceUid::ZERO,
+        "filed before its first bay"
+    );
+
+    h.feed(op::SYS_BAY_CONFIG, &output(17, 1));
+    assert_eq!(h.bay(17).v2ip_uid, outputs[0]);
+    assert_eq!(h.bay(18).v2ip_uid, outputs[1]);
 }
 
 /// The bay descriptor underpins most of the read API - names, ports, sources,
