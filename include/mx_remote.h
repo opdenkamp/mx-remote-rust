@@ -1063,6 +1063,23 @@
 #define MXR_V2IP_SETTING_IR_PROFILES (1 << 10)
 
 /**
+ * The idle minutes before the device powers down, carried in
+ * `mxr_v2ip_power_save_t.auto_minutes`.
+ */
+#define MXR_V2IP_SETTING_AUTO_POWER_SAVE (1 << 11)
+
+/**
+ * The daily power save windows, carried in `mxr_v2ip_power_save_t`'s `start`
+ * and `end`.
+ */
+#define MXR_V2IP_SETTING_POWER_SAVE_SCHEDULE (1 << 12)
+
+/**
+ * The device's clock has been set, on/off. Never written.
+ */
+#define MXR_V2IP_SETTING_CLOCK_SET (1 << 13)
+
+/**
  * The colour space a V2IP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -1219,6 +1236,11 @@
  * One past the highest infrared profile.
  */
 #define MXR_V2IP_IR_PROFILE_MAX 18
+
+/**
+ * Minutes in a day: every power save time is below this.
+ */
+#define MXR_V2IP_MINUTES_PER_DAY 1440
 
 /**
  * The audio return channel a bay is carrying.
@@ -1607,6 +1629,31 @@ typedef struct {
    */
   uint8_t eq_right[MXR_AMP_EQ_BANDS];
 } mxr_amp_zone_settings_t;
+
+/**
+ * A V2IP device's power save settings, beside `mxr_v2ip_device_settings_t`
+ * rather than in it so that struct keeps its size.
+ *
+ * Which of them the device has reported is in that struct's `valid`.
+ */
+typedef struct {
+  /**
+   * The idle minutes before the device powers down by itself, 0 for never,
+   * when `valid` has `MXR_V2IP_SETTING_AUTO_POWER_SAVE`.
+   */
+  uint16_t auto_minutes;
+  /**
+   * When each day's power save window starts, Monday first, in minutes
+   * after midnight in the device's time zone, when `valid` has
+   * `MXR_V2IP_SETTING_POWER_SAVE_SCHEDULE`.
+   */
+  uint16_t start[7];
+  /**
+   * When each day's window ends. A window ending before it starts runs
+   * past midnight, and one ending where it starts means none that day.
+   */
+  uint16_t end[7];
+} mxr_v2ip_power_save_t;
 
 /**
  * The output format to scale a V2IP sink to.
@@ -4296,6 +4343,34 @@ mxr_result_t mxr_set_v2ip_device_setting(const mxr_remote_t *remote,
 mxr_result_t mxr_set_v2ip_ir_profile(const mxr_remote_t *remote, mxr_uid_t device, int8_t profile);
 
 /**
+ * Sets how many idle minutes a V2IP device waits before it powers down by
+ * itself, 0 for never. Otherwise as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_auto_power_save(const mxr_remote_t *remote,
+                                          mxr_uid_t device,
+                                          uint16_t minutes);
+
+/**
+ * Sets a V2IP device's daily power save windows from `schedule`'s `start`
+ * and `end`; its `auto_minutes` is not sent.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a time not below
+ * `MXR_V2IP_MINUTES_PER_DAY`. Otherwise as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `schedule`
+ * is null or points at an initialised `mxr_v2ip_power_save_t`.
+ */
+mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
+                                              mxr_uid_t device,
+                                              const mxr_v2ip_power_save_t *schedule);
+
+/**
  * Sets the infrared profile of a V2IP device's output infrared port.
  *
  * `MXR_V2IP_IR_PROFILE_NOT_SET` makes the port follow the global one.
@@ -5032,6 +5107,21 @@ mxr_result_t mxr_v2ip_features(const mxr_remote_t *remote, mxr_uid_t uid, uint64
 mxr_result_t mxr_v2ip_device_settings(const mxr_remote_t *remote,
                                       mxr_uid_t uid,
                                       mxr_v2ip_device_settings_t *out);
+
+/**
+ * Fills `out` with a V2IP device's power save settings.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+ * `mxr_v2ip_device_settings()` says which of these it has.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_power_save_t`.
+ */
+mxr_result_t mxr_v2ip_power_save(const mxr_remote_t *remote,
+                                 mxr_uid_t uid,
+                                 mxr_v2ip_power_save_t *out);
 
 /**
  * Fills `out` with the window a sink is told to show.

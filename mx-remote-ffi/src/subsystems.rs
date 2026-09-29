@@ -978,6 +978,61 @@ pub unsafe extern "C" fn mxr_v2ip_device_settings(
     })
 }
 
+/// A V2IP device's power save settings, beside `mxr_v2ip_device_settings_t`
+/// rather than in it so that struct keeps its size.
+///
+/// Which of them the device has reported is in that struct's `valid`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_power_save_t {
+    /// The idle minutes before the device powers down by itself, 0 for never,
+    /// when `valid` has `MXR_V2IP_SETTING_AUTO_POWER_SAVE`.
+    pub auto_minutes: u16,
+    /// When each day's power save window starts, Monday first, in minutes
+    /// after midnight in the device's time zone, when `valid` has
+    /// `MXR_V2IP_SETTING_POWER_SAVE_SCHEDULE`.
+    pub start: [u16; 7],
+    /// When each day's window ends. A window ending before it starts runs
+    /// past midnight, and one ending where it starts means none that day.
+    pub end: [u16; 7],
+}
+
+/// Minutes in a day: every power save time is below this.
+pub const MXR_V2IP_MINUTES_PER_DAY: u16 = 1440;
+
+const _: () = assert!(MXR_V2IP_MINUTES_PER_DAY == mx_remote::V2IP_MINUTES_PER_DAY);
+
+/// Fills `out` with a V2IP device's power save settings.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+/// `mxr_v2ip_device_settings()` says which of these it has.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_power_save_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_power_save(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_power_save_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_device_settings(uid.into())
+            .map(|s: V2ipDeviceSettings| mxr_v2ip_power_save_t {
+                auto_minutes: s.auto_power_save,
+                start: s.power_save.start,
+                end: s.power_save.end,
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "device settings", value) }
+    })
+}
+
 /// Fills `out` with the window a sink is told to show.
 ///
 /// # Safety

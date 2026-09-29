@@ -680,6 +680,17 @@ pub const MXR_V2IP_SETTING_IR_PROFILE_SINK: u32 = 1 << 9;
 /// The stored infrared profiles, carried in `ir_profiles`. Never written.
 pub const MXR_V2IP_SETTING_IR_PROFILES: u32 = 1 << 10;
 
+/// The idle minutes before the device powers down, carried in
+/// `mxr_v2ip_power_save_t.auto_minutes`.
+pub const MXR_V2IP_SETTING_AUTO_POWER_SAVE: u32 = 1 << 11;
+
+/// The daily power save windows, carried in `mxr_v2ip_power_save_t`'s `start`
+/// and `end`.
+pub const MXR_V2IP_SETTING_POWER_SAVE_SCHEDULE: u32 = 1 << 12;
+
+/// The device's clock has been set, on/off. Never written.
+pub const MXR_V2IP_SETTING_CLOCK_SET: u32 = 1 << 13;
+
 // ---- reading the packed words ----
 
 /// The remote-control type a bay status word carries in bits 16-19.

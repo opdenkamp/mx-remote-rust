@@ -628,6 +628,33 @@ fn the_device_settings_calls_check_their_arguments_first() {
         unsafe { mxr_set_v2ip_device_setting(remote, uid_n(9), MXR_V2IP_SETTING_STATUS_LED, true) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_power_save(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle; a null schedule is what is under test.
+    let rc = unsafe { mxr_set_v2ip_power_save_schedule(remote, uid_n(9), ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut schedule = mxr_v2ip_power_save_t {
+        auto_minutes: 0,
+        start: [0; 7],
+        end: [0; 7],
+    };
+    schedule.end[6] = MXR_V2IP_MINUTES_PER_DAY;
+    // SAFETY: a live handle and an initialised schedule.
+    let rc = unsafe { mxr_set_v2ip_power_save_schedule(remote, uid_n(9), &schedule) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a time past the day"
+    );
+    schedule.end[6] = 0;
+    // SAFETY: a live handle and an initialised schedule.
+    let rc = unsafe { mxr_set_v2ip_power_save_schedule(remote, uid_n(9), &schedule) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_auto_power_save(remote, uid_n(9), 30) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };
 }

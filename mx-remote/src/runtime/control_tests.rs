@@ -20,7 +20,7 @@ use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, BayNameChange, EdidProfileChange,
     EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute, V2ipRouteTarget,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    VOLUME_UNCHANGED,
+    V2IP_MINUTES_PER_DAY, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -2130,7 +2130,7 @@ fn report_settings(f: &Fixture, uid: DeviceUid, valid: V2ipDeviceSetting) {
     f.feed(
         uid,
         op::V2IP_DEVICE_CFG,
-        &cfg.bytes_with_settings(valid.bits(), 0, 0, 0, 0),
+        &cfg.bytes_with_power_save(valid.bits(), 0, 0, &V2ipPowerSaveSchedule::default()),
     );
 }
 
@@ -2155,7 +2155,7 @@ fn a_settings_write_carries_nothing_but_the_settings_block() {
     let frame = f.tap.frames().pop().expect("nothing reached the gate");
     let p = &frame[HEADER_LEN..];
 
-    assert_eq!(p.len(), 144, "the payload stops short of the settings");
+    assert_eq!(p.len(), 176, "the payload stops short of the settings");
     assert_eq!(&p[..16], uid.as_bytes(), "the frame names another device");
     assert!(
         p[16..40].iter().all(|b| *b == 0),
@@ -2173,6 +2173,10 @@ fn a_settings_write_carries_nothing_but_the_settings_block() {
         &p[128..144],
         &[8, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         "the settings block"
+    );
+    assert!(
+        p[144..].iter().all(|b| *b == 0),
+        "the schedule and reserved bytes"
     );
 
     let cached = f.remote.v2ip_device_settings(uid).expect("no settings");
@@ -2419,4 +2423,71 @@ fn a_ping_names_its_device_and_needs_a_device_that_answers() {
     let old = uid_n(226);
     f.everything(old, 0x29, "PG0002");
     assert!(refused(&f.remote.ping(old)));
+}
+
+/// The power save writes put each value at its offset in the settings block,
+/// behind its own bit.
+#[test]
+fn a_power_save_write_carries_its_value_behind_its_bit() {
+    let f = Fixture::new();
+    let uid = uid_n(227);
+    f.everything(uid, 0x2A, "PS0001");
+    report_settings(
+        &f,
+        uid,
+        V2ipDeviceSetting::AUTO_POWER_SAVE | V2ipDeviceSetting::POWER_SAVE_SCHEDULE,
+    );
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_auto_power_save(uid, 0x0102)
+        .expect("the device has reported the setting");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let block = &frame[HEADER_LEN + 128..];
+    assert_eq!(&block[..4], &(1u32 << 11).to_le_bytes(), "valid");
+    assert_eq!(&block[14..16], &[0x02, 0x01], "the idle minutes");
+
+    let schedule = V2ipPowerSaveSchedule {
+        start: [1, 2, 3, 4, 5, 6, 7],
+        end: [8, 9, 10, 11, 12, 13, 1439],
+    };
+    f.tap.clear();
+    f.remote
+        .set_v2ip_power_save_schedule(uid, schedule)
+        .expect("the device has reported the setting");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let block = &frame[HEADER_LEN + 128..];
+    assert_eq!(&block[..4], &(1u32 << 12).to_le_bytes(), "valid");
+    let times: Vec<u16> = block[16..44]
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
+    assert_eq!(times, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 1439]);
+
+    let cached = f.remote.v2ip_device_settings(uid).expect("no settings");
+    assert_eq!(cached.auto_power_save(), Some(0x0102));
+    assert_eq!(cached.power_save_schedule(), Some(schedule));
+}
+
+/// A schedule with a time that is not a time of day is refused, and so is a
+/// power save write to a device that has not reported having it.
+#[test]
+fn a_power_save_write_the_device_would_not_take_is_refused() {
+    let f = Fixture::new();
+    let uid = uid_n(228);
+    f.everything(uid, 0x2A, "PS0002");
+    report_settings(&f, uid, V2ipDeviceSetting::POWER_SAVE_SCHEDULE);
+    f.connect();
+
+    let mut late = V2ipPowerSaveSchedule::default();
+    late.end[3] = V2IP_MINUTES_PER_DAY;
+    assert!(matches!(
+        f.remote.set_v2ip_power_save_schedule(uid, late),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        f.remote.set_v2ip_auto_power_save(uid, 5),
+        Err(ControlError::Unsupported(_))
+    ));
 }

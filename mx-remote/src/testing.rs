@@ -231,6 +231,27 @@ impl Cfg {
         p.extend_from_slice(&poisoned(2));
         p
     }
+
+    /// The whole frame with the settings block of a sender that has the power
+    /// save schedule: as [`Cfg::bytes_with_settings`] with no profiles, then
+    /// the idle minutes at 142, the start times at 144, the end times at 158
+    /// and four reserved bytes left poisoned.
+    pub(crate) fn bytes_with_power_save(
+        &self,
+        valid: u32,
+        flags: u32,
+        minutes: u16,
+        schedule: &crate::types::V2ipPowerSaveSchedule,
+    ) -> Vec<u8> {
+        let mut p = self.bytes_with_settings(valid, flags, 0, 0, 0);
+        p.truncate(142);
+        p.extend_from_slice(&minutes.to_le_bytes());
+        for m in schedule.start.iter().chain(&schedule.end) {
+            p.extend_from_slice(&m.to_le_bytes());
+        }
+        p.extend_from_slice(&poisoned(4));
+        p
+    }
 }
 
 /// Assembles a datagram the way a device does, header bytes included.

@@ -31,10 +31,10 @@ use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat,
-    V2ipDeviceSettings, V2ipOutputMode, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings,
-    V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    VIDEO_WALL_CLEARED,
+    V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
+    V2ipScalingSettings, V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+    MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
+    SCALING_FLAG_OPTIONS_VALID, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -1051,6 +1051,50 @@ impl Remote {
             V2ipDeviceSettings {
                 valid: V2ipDeviceSetting::IR_PROFILE_SINK,
                 ir_profile_sink: profile,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
+    /// Sets how many idle minutes a V2IP device waits before it powers down by
+    /// itself, 0 for never. The terms of [`Remote::set_v2ip_device_setting`]
+    /// apply.
+    pub fn set_v2ip_auto_power_save(
+        &self,
+        device: DeviceUid,
+        minutes: u16,
+    ) -> Result<(), ControlError> {
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::AUTO_POWER_SAVE,
+                auto_power_save: minutes,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
+    /// Sets a V2IP device's daily power save windows.
+    ///
+    /// Every time is below [`V2IP_MINUTES_PER_DAY`](crate::V2IP_MINUTES_PER_DAY),
+    /// and is checked here.
+    /// The windows are kept in the device's own time zone. The terms of
+    /// [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_power_save_schedule(
+        &self,
+        device: DeviceUid,
+        schedule: V2ipPowerSaveSchedule,
+    ) -> Result<(), ControlError> {
+        if !schedule.is_valid() {
+            return Err(ControlError::InvalidRequest(
+                "a power save time is not a time of day",
+            ));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::POWER_SAVE_SCHEDULE,
+                power_save: schedule,
                 ..V2ipDeviceSettings::default()
             },
         )

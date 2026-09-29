@@ -20,7 +20,8 @@ use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipOutputMode, V2ipRoute, V2ipRouteTarget, VideoWallWindow,
+    V2ipDeviceSetting, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
+    VideoWallWindow,
 };
 
 use crate::abi::{
@@ -28,6 +29,7 @@ use crate::abi::{
 };
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
+use crate::subsystems::mxr_v2ip_power_save_t;
 
 /// A stream's sample rate and channel count.
 #[repr(C)]
@@ -920,6 +922,61 @@ pub unsafe extern "C" fn mxr_set_v2ip_ir_profile(
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
         from_control(r.remote.set_v2ip_ir_profile(device.into(), profile))
+    })
+}
+
+/// Sets how many idle minutes a V2IP device waits before it powers down by
+/// itself, 0 for never. Otherwise as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_auto_power_save(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    minutes: u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_auto_power_save(device.into(), minutes))
+    })
+}
+
+/// Sets a V2IP device's daily power save windows from `schedule`'s `start`
+/// and `end`; its `auto_minutes` is not sent.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a time not below
+/// `MXR_V2IP_MINUTES_PER_DAY`. Otherwise as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `schedule`
+/// is null or points at an initialised `mxr_v2ip_power_save_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_power_save_schedule(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    schedule: *const mxr_v2ip_power_save_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(schedule) = (unsafe { schedule.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the schedule pointer is null",
+            );
+        };
+        from_control(r.remote.set_v2ip_power_save_schedule(
+            device.into(),
+            V2ipPowerSaveSchedule {
+                start: schedule.start,
+                end: schedule.end,
+            },
+        ))
     })
 }
 

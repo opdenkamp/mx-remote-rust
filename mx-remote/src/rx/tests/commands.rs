@@ -13,14 +13,14 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::types::{
     AudioChangeSource, MultiviewerCommand, V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason,
-    V2ipDecoderState, VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
-    SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
+    V2ipDecoderState, V2ipPowerSaveSchedule, VideoWallCommand, VideoWallOp,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID,
+    SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
     RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT,
-    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, Cfg};
@@ -2315,6 +2315,129 @@ fn a_frame_carrying_one_setting_keeps_the_rest() {
     assert_eq!(s.ir_profile_sink(), Some(4));
     assert_eq!(s.stored_ir_profiles(), Some(0b11));
     assert_eq!(s.valid.bits(), ALL_SETTINGS);
+}
+
+/// The settings block of a 0x3C a unit sent about itself: every setting up
+/// to the clock bit, the clock set, 15 idle minutes and no power save window.
+const CAPTURED_SETTINGS: [u8; 48] = [
+    0xFF, 0x3F, 0x00, 0x00, 0x1C, 0x20, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x0F, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// A captured settings block reads as the unit reported it. The zero
+/// schedule leaves the schedule's offsets unpinned; the next test covers them.
+#[test]
+fn a_captured_settings_block_reads_as_the_unit_reported_it() {
+    let mut h = command_device(114);
+    let mut frame = Cfg::addresses(h.sender, "239.1.2.3").bytes_with_options();
+    frame.extend_from_slice(&CAPTURED_SETTINGS);
+    h.feed(op::V2IP_DEVICE_CFG, &frame);
+
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.valid.bits(), 0x3FFF);
+    assert_eq!(s.get(V2ipDeviceSetting::CLOCK_SET), Some(true));
+    assert_eq!(s.get(V2ipDeviceSetting::STATUS_LED), Some(true));
+    assert_eq!(s.get(V2ipDeviceSetting::SINK_CHECK_POWER), Some(false));
+    assert_eq!(s.stored_ir_profiles(), Some(7));
+    assert_eq!(s.ir_profile(), Some(0));
+    assert_eq!(s.ir_profile_sink(), Some(V2IP_IR_PROFILE_NOT_SET));
+    assert_eq!(s.auto_power_save(), Some(15));
+    let schedule = s.power_save_schedule().expect("the schedule was not read");
+    assert_eq!((0..7).find_map(|d| schedule.window(d)), None);
+}
+
+/// Each day's start and end time sit at their own offset. Every time is
+/// distinct, so one read from a neighbour's offset shows, and the reserved
+/// bytes behind them are poisoned.
+#[test]
+fn the_power_save_schedule_is_read_day_by_day() {
+    let mut h = command_device(115);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let schedule = V2ipPowerSaveSchedule {
+        start: [1320, 1321, 1322, 1323, 1324, 60, 0],
+        end: [420, 421, 422, 423, 424, 600, 0],
+    };
+    let valid = V2ipDeviceSetting::AUTO_POWER_SAVE | V2ipDeviceSetting::POWER_SAVE_SCHEDULE;
+    let frame = cfg.bytes_with_power_save(valid.bits(), 0, 300, &schedule);
+    assert_eq!(frame.len(), 176);
+    h.feed(op::V2IP_DEVICE_CFG, &frame);
+
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.auto_power_save(), Some(300));
+    assert_eq!(s.power_save_schedule(), Some(schedule));
+    let read = s.power_save_schedule().expect("read above");
+    assert_eq!(read.window(0), Some((1320, 420)), "past midnight");
+    assert_eq!(read.window(6), None, "a day without a window");
+    assert_eq!(read.window(7), None, "past Sunday");
+}
+
+/// A sender whose block ends at the idle minutes reports those, and a bit
+/// claiming a schedule its frame is too short to hold is not a schedule.
+#[test]
+fn a_schedule_is_read_only_from_a_frame_long_enough_to_hold_it() {
+    let mut h = command_device(116);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let valid = V2ipDeviceSetting::AUTO_POWER_SAVE | V2ipDeviceSetting::POWER_SAVE_SCHEDULE;
+    let whole = cfg.bytes_with_power_save(
+        valid.bits(),
+        0,
+        45,
+        &V2ipPowerSaveSchedule {
+            start: [60; 7],
+            end: [120; 7],
+        },
+    );
+    h.feed(op::V2IP_DEVICE_CFG, &whole[..171]);
+
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.auto_power_save(), Some(45));
+    assert_eq!(s.power_save_schedule(), None);
+}
+
+/// Whether a device's clock is set is only the device's to say: a
+/// controller's frame about it carrying the bit changes nothing.
+#[test]
+fn a_controller_write_does_not_set_a_device_clock() {
+    let mut h = command_device(117);
+    let subject = h.sender;
+    let cfg = Cfg::addresses(subject, "239.1.2.3");
+    let has = V2ipDeviceSetting::CLOCK_SET | V2ipDeviceSetting::AUTO_POWER_SAVE;
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &cfg.bytes_with_power_save(has.bits(), 0, 10, &V2ipPowerSaveSchedule::default()),
+    );
+
+    let controller = uid_n(82);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2A, "Ctrl", "CTRL0006", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = 0;
+    h.feed_as(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &write.bytes_with_power_save(
+            has.bits(),
+            has.bits(),
+            20,
+            &V2ipPowerSaveSchedule::default(),
+        ),
+    );
+
+    let s = h
+        .state
+        .device(subject)
+        .and_then(|d| d.v2ip_settings)
+        .expect("the subject's settings are gone");
+    assert_eq!(
+        s.auto_power_save(),
+        Some(20),
+        "the write itself did not land"
+    );
+    assert_eq!(s.get(V2ipDeviceSetting::CLOCK_SET), Some(false));
 }
 
 /// A controller's write is cached as far as the device takes it.

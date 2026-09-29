@@ -413,10 +413,10 @@ pub(crate) fn build_v2ip_scaling(
 /// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's
 /// settings, leaving every other field of the configuration alone.
 ///
-/// 144 bytes: the configuration as [`build_v2ip_scaling`] lays it out but with
+/// 176 bytes: the configuration as [`build_v2ip_scaling`] lays it out but with
 /// no scaling validity bit, then the options extension - the sink block at
 /// 88..120, the processor's feature word at 120..128 and the settings at
-/// 128..144. The settings are the last block, so a frame that carries them
+/// 128..176. The settings are the last block, so a frame that carries them
 /// carries the two before them too.
 ///
 /// **Both of those go out zeroed.** A device leaves the feature word zero on a
@@ -425,14 +425,14 @@ pub(crate) fn build_v2ip_scaling(
 /// block, which copies it into its record of the target until the target next
 /// reports. That is the frame a controlling device sends for the same change.
 ///
-/// The settings block is `valid` u32 at 0, `flags` u32 at 4, `ir_profiles` u32
-/// at 8, then the two profiles as one signed byte each at 12 and 13, and two
-/// reserved bytes.
+/// The settings go out whole. A receiver whose block ends at the idle minutes
+/// takes a frame of 144 bytes or more; one with the schedule ignores the
+/// settings of a frame shorter than 176.
 pub(crate) fn build_v2ip_device_settings(
     target: DeviceUid,
     settings: &V2ipDeviceSettings,
 ) -> Vec<u8> {
-    let mut p = Vec::with_capacity(144);
+    let mut p = Vec::with_capacity(176);
     p.extend_from_slice(target.as_bytes());
     // source: three stream slots, left zeroed so the encoder keeps its own.
     p.resize(40, 0);
@@ -441,11 +441,32 @@ pub(crate) fn build_v2ip_device_settings(
     // tiling window whose zero uid says none is carried; then the zeroed sink
     // block and feature word.
     p.resize(128, 0);
+    p.extend_from_slice(&build_v2ip_settings_block(settings));
+    p
+}
+
+/// The 48-byte device settings block.
+///
+/// `valid` u32 at 0, `flags` u32 at 4, `ir_profiles` u32 at 8, the two
+/// profiles as one signed byte each at 12 and 13, the idle minutes u16 at 14,
+/// the schedule's seven start times at 16 and seven end times at 30, all u16,
+/// and four reserved bytes.
+fn build_v2ip_settings_block(settings: &V2ipDeviceSettings) -> Vec<u8> {
+    let mut p = Vec::with_capacity(48);
     p.extend_from_slice(&settings.valid.bits().to_le_bytes());
     p.extend_from_slice(&settings.flags.bits().to_le_bytes());
     p.extend_from_slice(&settings.ir_profiles.to_le_bytes());
     p.extend_from_slice(&settings.ir_profile.to_le_bytes());
     p.extend_from_slice(&settings.ir_profile_sink.to_le_bytes());
-    p.resize(144, 0);
+    p.extend_from_slice(&settings.auto_power_save.to_le_bytes());
+    for minutes in settings
+        .power_save
+        .start
+        .iter()
+        .chain(&settings.power_save.end)
+    {
+        p.extend_from_slice(&minutes.to_le_bytes());
+    }
+    p.resize(48, 0);
     p
 }

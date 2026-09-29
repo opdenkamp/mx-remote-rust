@@ -10,9 +10,10 @@ use crate::state::{Device, HelloInfo, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TopologyEntry, V2ipDeviceSettings,
-    V2ipDscpConfig, V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig,
-    VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE,
-    SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_SKIP_420, VOLUME_UNCHANGED,
+    V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipScalingSettings, V2ipStreamSource,
+    V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
+    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_SKIP_420,
+    VOLUME_UNCHANGED,
 };
 use crate::wire::{
     op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
@@ -453,7 +454,13 @@ const V2IP_CODEC_SIZE: usize = 8;
 
 /// Where the device settings sit, behind the processor's feature word.
 const V2IP_SETTINGS_AT: usize = V2IP_CODEC_AT + V2IP_CODEC_SIZE;
+/// The settings up to the idle minutes, which is all a sender that predates
+/// the power save schedule carries.
 const V2IP_SETTINGS_SIZE: usize = 16;
+/// The power save schedule, behind the idle minutes: seven start times, then
+/// seven end times.
+const V2IP_SCHEDULE_AT: usize = V2IP_SETTINGS_AT + V2IP_SETTINGS_SIZE;
+const V2IP_SCHEDULE_SIZE: usize = 28;
 
 /// Applies a device's V2IP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
@@ -594,13 +601,27 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
     // ones it changes, and the device applies only those it has, so a write
     // is cached as far as the device will take it and no further.
     if let Some(s) = p.get(V2IP_SETTINGS_AT..V2IP_SETTINGS_AT + V2IP_SETTINGS_SIZE) {
-        let frame = V2ipDeviceSettings {
+        let mut frame = V2ipDeviceSettings {
             valid: V2ipDeviceSetting::from_bits(u32_at(s, 0)),
             flags: V2ipDeviceSetting::from_bits(u32_at(s, 4)),
             ir_profiles: u32_at(s, 8),
             ir_profile: s[12] as i8,
             ir_profile_sink: s[13] as i8,
+            auto_power_save: u16_at(s, 14),
+            power_save: V2ipPowerSaveSchedule::default(),
         };
+        match p.get(V2IP_SCHEDULE_AT..V2IP_SCHEDULE_AT + V2IP_SCHEDULE_SIZE) {
+            Some(w) => {
+                for day in 0..7 {
+                    frame.power_save.start[day] = u16_at(w, 2 * day);
+                    frame.power_save.end[day] = u16_at(w, 14 + 2 * day);
+                }
+            }
+            // A bit claiming the schedule in a frame too short to hold it.
+            None => {
+                frame.valid = frame.valid.without(V2ipDeviceSetting::POWER_SAVE_SCHEDULE);
+            }
+        }
         if let Some(device) = state.device_mut(subject) {
             let frame = if subject == rx.sender() {
                 frame

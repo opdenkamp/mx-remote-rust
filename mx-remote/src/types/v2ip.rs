@@ -596,6 +596,41 @@ pub struct DeviceV2ipSink {
     pub audio_fmt: Option<V2ipAudioFormat>,
 }
 
+/// Minutes in a day: every time in a [`V2ipPowerSaveSchedule`] is below this.
+pub const V2IP_MINUTES_PER_DAY: u16 = 24 * 60;
+
+/// A V2IP device's daily power save windows, Monday first, in the device's
+/// time zone.
+///
+/// Day `d` powers down at `start[d]` and up again at `end[d]`, both in minutes
+/// after midnight. A window belongs to the day it starts on and runs past
+/// midnight into the next when it ends before it starts; one that ends where it
+/// starts means no window that day.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipPowerSaveSchedule {
+    /// When each day's window starts.
+    pub start: [u16; 7],
+    /// When each day's window ends.
+    pub end: [u16; 7],
+}
+
+impl V2ipPowerSaveSchedule {
+    /// The window of day `day`, Monday being 0, or `None` for a day without
+    /// one or past Sunday.
+    pub fn window(&self, day: usize) -> Option<(u16, u16)> {
+        let (start, end) = (*self.start.get(day)?, *self.end.get(day)?);
+        (start != end).then_some((start, end))
+    }
+
+    /// Whether every time is a time of day.
+    pub fn is_valid(&self) -> bool {
+        self.start
+            .iter()
+            .chain(&self.end)
+            .all(|m| *m < V2IP_MINUTES_PER_DAY)
+    }
+}
+
 /// The device settings of a V2IP unit, as it reports them and as its
 /// controller changes them.
 ///
@@ -616,6 +651,11 @@ pub struct V2ipDeviceSettings {
     /// The infrared profile of the output's infrared port, or
     /// [`V2IP_IR_PROFILE_NOT_SET`] when it follows the global one.
     pub ir_profile_sink: i8,
+    /// The minutes the device stays idle before it powers down by itself, 0
+    /// for never.
+    pub auto_power_save: u16,
+    /// The daily windows in which the device powers down.
+    pub power_save: V2ipPowerSaveSchedule,
 }
 
 impl V2ipDeviceSettings {
@@ -654,6 +694,23 @@ impl V2ipDeviceSettings {
         Some(self.ir_profiles)
     }
 
+    /// The idle minutes before the device powers down by itself, 0 for never,
+    /// `None` while it is not reported.
+    pub const fn auto_power_save(&self) -> Option<u16> {
+        if !self.valid.has(V2ipDeviceSetting::AUTO_POWER_SAVE) {
+            return None;
+        }
+        Some(self.auto_power_save)
+    }
+
+    /// The daily power save windows, `None` while they are not reported.
+    pub const fn power_save_schedule(&self) -> Option<V2ipPowerSaveSchedule> {
+        if !self.valid.has(V2ipDeviceSetting::POWER_SAVE_SCHEDULE) {
+            return None;
+        }
+        Some(self.power_save)
+    }
+
     /// Folds a received settings block onto the cached one.
     ///
     /// Each bit in the frame's [`valid`](Self::valid) replaces its own setting
@@ -674,16 +731,22 @@ impl V2ipDeviceSettings {
         if valid.has(V2ipDeviceSetting::IR_PROFILES) {
             out.ir_profiles = self.ir_profiles;
         }
+        if valid.has(V2ipDeviceSetting::AUTO_POWER_SAVE) {
+            out.auto_power_save = self.auto_power_save;
+        }
+        if valid.has(V2ipDeviceSetting::POWER_SAVE_SCHEDULE) {
+            out.power_save = self.power_save;
+        }
         out
     }
 
     /// This block limited to what a device takes from a write about it.
     ///
     /// A device applies a setting only if it has it, a profile only within
-    /// its range, and never the list of stored profiles, which only it knows.
+    /// its range, and never what only it can report about itself.
     #[must_use]
     pub(crate) fn as_applied_to(self, reported: V2ipDeviceSetting) -> Self {
-        let mut valid = (self.valid & reported).without(V2ipDeviceSetting::IR_PROFILES);
+        let mut valid = (self.valid & reported).without(V2ipDeviceSetting::REPORTED_ONLY);
         if !(0..V2IP_IR_PROFILE_MAX).contains(&self.ir_profile) {
             valid = valid.without(V2ipDeviceSetting::IR_PROFILE);
         }

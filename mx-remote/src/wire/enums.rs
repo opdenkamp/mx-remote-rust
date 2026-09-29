@@ -218,8 +218,9 @@ bitmask! {
     /// The device settings a V2IP configuration can carry, each on its own bit.
     ///
     /// The same bits serve as the settings a frame carries and as the values
-    /// of the on/off ones among them. The last three carry a value elsewhere in
-    /// the block and have no on/off value of their own.
+    /// of the on/off ones among them. `IR_PROFILE` to `POWER_SAVE_SCHEDULE`
+    /// carry a value elsewhere in the block and have no on/off value of their
+    /// own.
     ///
     /// A device reports every setting it has, so one it never reports is one
     /// it does not have.
@@ -247,12 +248,24 @@ bitmask! {
         /// The infrared profiles stored on the device. Reported by the device
         /// itself and never written.
         IR_PROFILES = 1 << 10;
+        /// The minutes a device stays idle before it powers down by itself.
+        AUTO_POWER_SAVE = 1 << 11;
+        /// The daily windows in which the device powers down.
+        POWER_SAVE_SCHEDULE = 1 << 12;
+        /// The device's clock has been set, on/off. Reported by the device
+        /// itself and never written.
+        CLOCK_SET = 1 << 13;
     }
 }
 
 impl V2ipDeviceSetting {
-    /// The settings that are on or off, as opposed to carrying a value.
+    /// The settings that are on or off, as opposed to carrying a value, and
+    /// that can be written.
     pub const SWITCHES: Self = Self(0xFF);
+
+    /// The settings only a device reports about itself, which no write
+    /// carries.
+    pub const REPORTED_ONLY: Self = Self(Self::IR_PROFILES.0 | Self::CLOCK_SET.0);
 
     /// These bits with every bit of `other` cleared.
     pub(crate) const fn without(self, other: Self) -> Self {
