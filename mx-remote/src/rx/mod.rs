@@ -80,12 +80,12 @@ pub(crate) fn process_frame(
     // window is a device's announcement interval at worst, and this client
     // shortens it by soliciting on connect.
     //
-    // Hello and discover are exempt because they are what closes the window: a
-    // hello is how a sender stops being unknown, and a discover is how a
-    // stranger asks everyone to say so.
+    // Hello, discover and ping are exempt because they are what closes the
+    // window: a hello is how a sender stops being unknown, and a discover or a
+    // ping is how a stranger asks to be told.
     let known = state.device(sender).is_some();
     let opcode = frame.opcode();
-    if !known && opcode != op::SYS_HELLO && opcode != op::SYS_DISCOVER {
+    if !known && opcode != op::SYS_HELLO && opcode != op::SYS_DISCOVER && opcode != op::SYS_PING {
         return Vec::new();
     }
     let rx = Rx {
@@ -109,6 +109,7 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     match rx.frame.opcode() {
         op::SYS_HELLO => handlers::hello(state, rx, ev),
         op::SYS_DISCOVER => commands::discover_request(state, rx, ev),
+        op::SYS_PING => commands::ping(state, rx, ev),
         op::SYS_BAY_CONFIG | op::SYS_BAY_CONFIG_SECONDARY => handlers::bay_config(state, rx, ev),
         op::SYS_LINKS => handlers::links(state, rx, ev),
         op::DEV_CONNECT => handlers::connect_status(state, rx, ev),

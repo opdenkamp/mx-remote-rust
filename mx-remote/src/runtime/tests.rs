@@ -106,7 +106,8 @@ pub(super) fn hello_datagram(sender: DeviceUid, name: &str, serial: &str) -> Vec
 
 /// `process_datagram` is the real receive entry point; every other test enters
 /// one level below it. Testing here is what pins the negative half: hello is
-/// announced on a clock, so no amount of arriving traffic may provoke one.
+/// announced on a clock, so arriving traffic other than a ping addressed to
+/// this client may not provoke one.
 #[test]
 fn a_datagram_is_decoded_and_does_not_provoke_an_announcement() {
     let (remote, tap) = client(200);
@@ -124,6 +125,29 @@ fn a_datagram_is_decoded_and_does_not_provoke_an_announcement() {
         !tap.opcodes().contains(&op::SYS_HELLO.0),
         "a received datagram triggered a hello; announcement is a timer, not a reply"
     );
+}
+
+/// A ping addressed to this client is answered with a hello at once, whoever
+/// sent it: a device that hears nothing back within about 1.5s takes this
+/// client offline, and the scheduled hello can be seconds away.
+#[test]
+fn a_ping_for_this_client_is_answered_with_a_hello() {
+    let (remote, tap) = client(202);
+    let peer = uid_n(203);
+    let ping = |target: DeviceUid| datagram(peer, op::SYS_PING, 0x2A, target.as_bytes());
+
+    remote.shared.process_datagram(&ping(uid_n(202)), FROM);
+    assert_eq!(tap.opcodes(), vec![op::SYS_HELLO.0], "from a stranger");
+
+    tap.clear();
+    remote
+        .shared
+        .process_datagram(&hello_datagram(peer, "Peer", "PR0002"), FROM);
+    remote.shared.process_datagram(&ping(uid_n(204)), FROM);
+    assert!(tap.opcodes().is_empty(), "a ping for another device");
+
+    remote.shared.process_datagram(&ping(uid_n(202)), FROM);
+    assert_eq!(tap.opcodes(), vec![op::SYS_HELLO.0], "from a known device");
 }
 
 /// A client must not decode its own frames back into the registry.

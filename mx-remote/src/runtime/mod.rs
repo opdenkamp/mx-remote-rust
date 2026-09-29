@@ -500,12 +500,19 @@ impl Shared {
     /// Decodes one datagram and delivers what it changed.
     ///
     /// This is the receive entry point. Keeping it distinct from the decode
-    /// below matters even though the wrapper is thin: announcing hello from
-    /// here, driven by arriving traffic rather than by a clock, is a mistake
-    /// this shape makes visible.
+    /// below matters even though the wrapper is thin: announcing is driven by a
+    /// clock, and the one frame that may add a hello here is a ping addressed
+    /// to this client, which asks for exactly that.
     fn process_datagram(&self, data: &[u8], from: Ipv4Addr) {
-        let events = process_frame(&mut lock(&self.state), data, Some(from), Instant::now());
+        let (events, hello_requested) = {
+            let mut state = lock(&self.state);
+            let events = process_frame(&mut state, data, Some(from), Instant::now());
+            (events, std::mem::take(&mut state.hello_requested))
+        };
         self.dispatch(events);
+        if hello_requested {
+            self.announce();
+        }
     }
 
     /// Sends a frame, refusing one the addressee cannot decode.

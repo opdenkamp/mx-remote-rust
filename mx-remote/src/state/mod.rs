@@ -36,6 +36,8 @@ pub(crate) struct State {
     pub(crate) links: BayLinks,
     /// How many frames from other senders have parsed, whatever they carried.
     pub(crate) frames_received: u64,
+    /// A peer asked this client to announce itself, and it has not yet.
+    pub(crate) hello_requested: bool,
 }
 
 impl State {
@@ -45,6 +47,7 @@ impl State {
             devices: HashMap::new(),
             links: BayLinks::default(),
             frames_received: 0,
+            hello_requested: false,
         }
     }
 

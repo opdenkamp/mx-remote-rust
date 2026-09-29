@@ -737,6 +737,9 @@ public:
     mxr_result_t reboot(Uid device) const {
         return mxr_reboot(h_, device);
     }
+    mxr_result_t ping(Uid device) const {
+        return mxr_ping(h_, device);
+    }
     mxr_result_t send_monitoring_pulse() const {
         return mxr_send_monitoring_pulse(h_);
     }

@@ -87,6 +87,7 @@ pub(crate) mod op {
     pub(crate) const DEBUG: Opcode = Opcode(0x47);
     pub(crate) const RC_IR_TX: Opcode = Opcode(0x48);
     pub(crate) const V2IP_VIDEO_WALL: Opcode = Opcode(0x49);
+    pub(crate) const SYS_PING: Opcode = Opcode(0x4A);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -176,6 +177,7 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::DEBUG => 0x1F,
         op::RC_IR_TX => 0x23,
         op::V2IP_VIDEO_WALL => 0x28,
+        op::SYS_PING => 0x2A,
         Opcode(_) => return None,
     })
 }

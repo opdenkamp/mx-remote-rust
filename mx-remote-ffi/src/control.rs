@@ -750,6 +750,22 @@ pub unsafe extern "C" fn mxr_reboot(
     with(handle, |r| from_control(r.remote.reboot(device.into())))
 }
 
+/// Asks a device to announce itself now, so a device suspected to be gone is
+/// confirmed or ruled out within a second or two.
+///
+/// `MXR_ERR_PROTOCOL_TOO_OLD` for a device below protocol 0x2A, which does not
+/// answer one.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_ping(remote: *const mxr_remote_t, device: mxr_uid_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| from_control(r.remote.ping(device.into())))
+}
+
 /// Sends the monitoring pulse that tells devices this client is watching.
 ///
 /// # Safety

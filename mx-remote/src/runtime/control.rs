@@ -793,6 +793,23 @@ impl Remote {
         })
     }
 
+    /// Asks a device to announce itself now.
+    ///
+    /// Its hello marks it online again, so a device suspected to be gone is
+    /// confirmed or ruled out within a second or two rather than at the end of
+    /// its silence window. A device that stays silent is not taken offline
+    /// here: that remains the silence window's call.
+    pub fn ping(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            Ok(Command::new(
+                Addressee::device(d),
+                op::SYS_PING,
+                build_target_only(d.uid),
+            ))
+        })
+    }
+
     /// Asks every peer to report its monitoring data now rather than on its own
     /// schedule.
     pub fn send_monitoring_pulse(&self) -> Result<(), ControlError> {

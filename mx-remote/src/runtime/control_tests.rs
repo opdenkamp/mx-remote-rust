@@ -2400,3 +2400,23 @@ fn a_scaling_write_needs_a_v2ip_sink() {
         "a device with no sink was sent a scaling write"
     );
 }
+
+/// A ping names the device it asks, and goes only to a device that answers
+/// one: a device below 0x2A drops the frame as stamped above its own version.
+#[test]
+fn a_ping_names_its_device_and_needs_a_device_that_answers() {
+    let f = Fixture::new();
+    let uid = uid_n(225);
+    f.everything(uid, 0x2A, "PG0001");
+
+    f.tap.clear();
+    assert!(!refused(&f.remote.ping(uid)));
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::SYS_PING.0.to_le_bytes());
+    assert_eq!(&frame[2..4], &0x2Au16.to_le_bytes(), "the stamp");
+    assert_eq!(&frame[HEADER_LEN..], uid.as_bytes(), "the payload");
+
+    let old = uid_n(226);
+    f.everything(old, 0x29, "PG0002");
+    assert!(refused(&f.remote.ping(old)));
+}

@@ -4221,6 +4221,19 @@ mxr_result_t mxr_subscribe_v2ip_stats(const mxr_remote_t *remote, mxr_uid_t devi
 mxr_result_t mxr_reboot(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
+ * Asks a device to announce itself now, so a device suspected to be gone is
+ * confirmed or ruled out within a second or two.
+ *
+ * `MXR_ERR_PROTOCOL_TOO_OLD` for a device below protocol 0x2A, which does not
+ * answer one.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_ping(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
  * Sends the monitoring pulse that tells devices this client is watching.
  *
  * # Safety
