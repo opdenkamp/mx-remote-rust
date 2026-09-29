@@ -1656,6 +1656,39 @@ typedef struct {
 } mxr_v2ip_power_save_t;
 
 /**
+ * A V2IP device's settings.
+ *
+ * A setting is reported only when its `MXR_V2IP_SETTING_*` bit is set in
+ * `valid`, and a device reports every setting it has.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_SETTING_*` bits of the settings reported so far.
+   */
+  uint32_t valid;
+  /**
+   * `MXR_V2IP_SETTING_*` values of the on/off settings among `valid`.
+   */
+  uint32_t flags;
+  /**
+   * The infrared profiles stored on the device, bit n for profile n, when
+   * `valid` has `MXR_V2IP_SETTING_IR_PROFILES`.
+   */
+  uint32_t ir_profiles;
+  /**
+   * The global infrared port's profile, when `valid` has
+   * `MXR_V2IP_SETTING_IR_PROFILE`.
+   */
+  int8_t ir_profile;
+  /**
+   * The output infrared port's profile, when `valid` has
+   * `MXR_V2IP_SETTING_IR_PROFILE_SINK`. `MXR_V2IP_IR_PROFILE_NOT_SET` means
+   * it follows the global one.
+   */
+  int8_t ir_profile_sink;
+} mxr_v2ip_device_settings_t;
+
+/**
  * The output format to scale a V2IP sink to.
  *
  * Given as a depth and a colour space rather than as a packed signal-type
@@ -3391,39 +3424,6 @@ typedef struct {
 } mxr_v2ip_sink_t;
 
 /**
- * A V2IP device's settings.
- *
- * A setting is reported only when its `MXR_V2IP_SETTING_*` bit is set in
- * `valid`, and a device reports every setting it has.
- */
-typedef struct {
-  /**
-   * `MXR_V2IP_SETTING_*` bits of the settings reported so far.
-   */
-  uint32_t valid;
-  /**
-   * `MXR_V2IP_SETTING_*` values of the on/off settings among `valid`.
-   */
-  uint32_t flags;
-  /**
-   * The infrared profiles stored on the device, bit n for profile n, when
-   * `valid` has `MXR_V2IP_SETTING_IR_PROFILES`.
-   */
-  uint32_t ir_profiles;
-  /**
-   * The global infrared port's profile, when `valid` has
-   * `MXR_V2IP_SETTING_IR_PROFILE`.
-   */
-  int8_t ir_profile;
-  /**
-   * The output infrared port's profile, when `valid` has
-   * `MXR_V2IP_SETTING_IR_PROFILE_SINK`. `MXR_V2IP_IR_PROFILE_NOT_SET` means
-   * it follows the global one.
-   */
-  int8_t ir_profile_sink;
-} mxr_v2ip_device_settings_t;
-
-/**
  * The window a sink is currently told to show.
  *
  * This is the pollable view of a sink's window, not the persisted video wall
@@ -4369,6 +4369,30 @@ mxr_result_t mxr_set_v2ip_auto_power_save(const mxr_remote_t *remote,
 mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
                                               mxr_uid_t device,
                                               const mxr_v2ip_power_save_t *schedule);
+
+/**
+ * Changes settings on every V2IP device of the mesh with one frame.
+ *
+ * `settings` carries the settings behind their `MXR_V2IP_SETTING_*` bits in
+ * `valid`, as `mxr_v2ip_device_settings()` reports them; its `ir_profiles`
+ * is not sent. `power_save` carries the idle minutes and the schedule, and
+ * may be null when `valid` has neither. Each device applies the settings it
+ * has and ignores the rest.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
+ * when one only a device reports is, for a profile out of range or a
+ * schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
+ * device that applies a change reports it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, `settings` is
+ * null or points at an initialised `mxr_v2ip_device_settings_t`, and
+ * `power_save` is null or points at an initialised `mxr_v2ip_power_save_t`.
+ */
+mxr_result_t mxr_set_all_v2ip_device_settings(const mxr_remote_t *remote,
+                                              const mxr_v2ip_device_settings_t *settings,
+                                              const mxr_v2ip_power_save_t *power_save);
 
 /**
  * Sets the infrared profile of a V2IP device's output infrared port.

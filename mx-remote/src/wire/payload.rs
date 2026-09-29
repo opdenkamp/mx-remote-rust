@@ -445,6 +445,12 @@ pub(crate) fn build_v2ip_device_settings(
     p
 }
 
+/// Builds the `V2IP_SETTINGS_ALL` (0x4C) payload, the settings every device of
+/// the mesh applies: the settings block alone.
+pub(crate) fn build_v2ip_settings_all(settings: &V2ipDeviceSettings) -> Vec<u8> {
+    build_v2ip_settings_block(settings)
+}
+
 /// The 48-byte device settings block.
 ///
 /// `valid` u32 at 0, `flags` u32 at 4, `ir_profiles` u32 at 8, the two

@@ -2491,3 +2491,84 @@ fn a_power_save_write_the_device_would_not_take_is_refused() {
         Err(ControlError::Unsupported(_))
     ));
 }
+
+/// Settings for every device go out as the bare settings block, to everyone,
+/// and change nothing here until a device reports them.
+#[test]
+fn settings_for_every_device_go_out_as_the_block_alone() {
+    let f = Fixture::new();
+    let uid = uid_n(229);
+    f.everything(uid, 0x2A, "SA0001");
+    report_settings(&f, uid, V2ipDeviceSetting::AUTO_POWER_SAVE);
+
+    f.tap.clear();
+    let settings = V2ipDeviceSettings {
+        valid: V2ipDeviceSetting::STATUS_LED | V2ipDeviceSetting::AUTO_POWER_SAVE,
+        flags: V2ipDeviceSetting::STATUS_LED,
+        auto_power_save: 0x0304,
+        ..V2ipDeviceSettings::default()
+    };
+    let _ = f.remote.set_all_v2ip_device_settings(settings);
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::V2IP_SETTINGS_ALL.0.to_le_bytes());
+    assert_eq!(&frame[2..4], &0x2Au16.to_le_bytes(), "the stamp");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 48);
+    assert_eq!(&p[..4], &((1u32 << 11) | (1 << 3)).to_le_bytes(), "valid");
+    assert_eq!(&p[4..8], &(1u32 << 3).to_le_bytes(), "flags");
+    assert_eq!(&p[14..16], &[0x04, 0x03], "the idle minutes");
+
+    assert_eq!(
+        f.remote
+            .v2ip_device_settings(uid)
+            .and_then(|s| s.auto_power_save()),
+        Some(0),
+        "a write for everyone was cached before any device took it"
+    );
+}
+
+/// What every device would ignore is refused rather than broadcast.
+#[test]
+fn settings_every_device_would_ignore_are_refused() {
+    let f = Fixture::new();
+    let bad = [
+        V2ipDeviceSettings::default(),
+        V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::CLOCK_SET,
+            ..V2ipDeviceSettings::default()
+        },
+        V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::IR_PROFILES,
+            ..V2ipDeviceSettings::default()
+        },
+        V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::IR_PROFILE,
+            ir_profile: V2IP_IR_PROFILE_MAX,
+            ..V2ipDeviceSettings::default()
+        },
+        V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::IR_PROFILE_SINK,
+            ir_profile_sink: V2IP_IR_PROFILE_NOT_SET - 1,
+            ..V2ipDeviceSettings::default()
+        },
+        V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::POWER_SAVE_SCHEDULE,
+            power_save: V2ipPowerSaveSchedule {
+                start: [V2IP_MINUTES_PER_DAY; 7],
+                end: [0; 7],
+            },
+            ..V2ipDeviceSettings::default()
+        },
+    ];
+    f.tap.clear();
+    for settings in bad {
+        assert!(
+            matches!(
+                f.remote.set_all_v2ip_device_settings(settings),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{settings:?}"
+        );
+    }
+    assert!(f.tap.frames().is_empty(), "a refused write was sent");
+}

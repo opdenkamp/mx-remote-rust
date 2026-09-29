@@ -20,8 +20,8 @@ use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
-    VideoWallWindow,
+    V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute,
+    V2ipRouteTarget, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -29,7 +29,7 @@ use crate::abi::{
 };
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
-use crate::subsystems::mxr_v2ip_power_save_t;
+use crate::subsystems::{mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t};
 
 /// A stream's sample rate and channel count.
 #[repr(C)]
@@ -977,6 +977,73 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_schedule(
                 end: schedule.end,
             },
         ))
+    })
+}
+
+/// Changes settings on every V2IP device of the mesh with one frame.
+///
+/// `settings` carries the settings behind their `MXR_V2IP_SETTING_*` bits in
+/// `valid`, as `mxr_v2ip_device_settings()` reports them; its `ir_profiles`
+/// is not sent. `power_save` carries the idle minutes and the schedule, and
+/// may be null when `valid` has neither. Each device applies the settings it
+/// has and ignores the rest.
+///
+/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
+/// when one only a device reports is, for a profile out of range or a
+/// schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
+/// device that applies a change reports it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, `settings` is
+/// null or points at an initialised `mxr_v2ip_device_settings_t`, and
+/// `power_save` is null or points at an initialised `mxr_v2ip_power_save_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
+    remote: *const mxr_remote_t,
+    settings: *const mxr_v2ip_device_settings_t,
+    power_save: *const mxr_v2ip_power_save_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(settings) = (unsafe { settings.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the settings pointer is null",
+            );
+        };
+        let valid = V2ipDeviceSetting::from_bits(settings.valid);
+        let needs_power_save = valid.has(V2ipDeviceSetting::AUTO_POWER_SAVE)
+            || valid.has(V2ipDeviceSetting::POWER_SAVE_SCHEDULE);
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let power_save = match unsafe { power_save.as_ref() } {
+            Some(p) => *p,
+            None if needs_power_save => {
+                return fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    "the power save pointer is null",
+                )
+            }
+            None => mxr_v2ip_power_save_t {
+                auto_minutes: 0,
+                start: [0; 7],
+                end: [0; 7],
+            },
+        };
+        from_control(r.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+            valid,
+            flags: V2ipDeviceSetting::from_bits(settings.flags),
+            ir_profiles: 0,
+            ir_profile: settings.ir_profile,
+            ir_profile_sink: settings.ir_profile_sink,
+            auto_power_save: power_save.auto_minutes,
+            power_save: V2ipPowerSaveSchedule {
+                start: power_save.start,
+                end: power_save.end,
+            },
+        }))
     })
 }
 

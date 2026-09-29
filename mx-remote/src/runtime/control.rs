@@ -41,12 +41,12 @@ use crate::wire::{
     build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
     build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
     build_v2ip_device_settings, build_v2ip_manual_source_switch, build_v2ip_scaling,
-    build_v2ip_source_switch, build_video_wall, mv_cmd_payload, mv_sub, op, Addressee, BayUid,
-    DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
-    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError,
-    StreamAddr, V2ipDeviceSetting, V2ipStreams, DEVICE_NAME_LEN, V2IP_IR_PROFILE_MAX,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_settings_all, build_v2ip_source_switch, build_video_wall, mv_cmd_payload, mv_sub,
+    op, Addressee, BayUid, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction,
+    RcKey, SendError, StreamAddr, V2ipDeviceSetting, V2ipStreams, DEVICE_NAME_LEN,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1098,6 +1098,53 @@ impl Remote {
                 ..V2ipDeviceSettings::default()
             },
         )
+    }
+
+    /// Changes settings on every V2IP device of the mesh with one frame.
+    ///
+    /// `settings` carries the settings behind their bits in
+    /// [`valid`](V2ipDeviceSettings::valid), as a device reports them. Each
+    /// device applies those it has and ignores the rest, and none that
+    /// predates the frame applies any. A setting only a device reports about
+    /// itself, a profile out of range and a schedule time that is not a time
+    /// of day are refused here, since every device would ignore them.
+    ///
+    /// Nothing is cached: each device that applies a change reports its
+    /// settings, and [`Remote::v2ip_device_settings`] reads that.
+    pub fn set_all_v2ip_device_settings(
+        &self,
+        settings: V2ipDeviceSettings,
+    ) -> Result<(), ControlError> {
+        let valid = settings.valid;
+        if valid.is_empty() {
+            return Err(ControlError::InvalidRequest("no setting is carried"));
+        }
+        if !(valid & V2ipDeviceSetting::REPORTED_ONLY).is_empty() {
+            return Err(ControlError::InvalidRequest(
+                "a setting only a device reports is carried",
+            ));
+        }
+        if valid.has(V2ipDeviceSetting::IR_PROFILE)
+            && !(0..V2IP_IR_PROFILE_MAX).contains(&settings.ir_profile)
+        {
+            return Err(ControlError::InvalidRequest("no such infrared profile"));
+        }
+        if valid.has(V2ipDeviceSetting::IR_PROFILE_SINK)
+            && !(V2IP_IR_PROFILE_NOT_SET..V2IP_IR_PROFILE_MAX).contains(&settings.ir_profile_sink)
+        {
+            return Err(ControlError::InvalidRequest("no such infrared profile"));
+        }
+        if valid.has(V2ipDeviceSetting::POWER_SAVE_SCHEDULE) && !settings.power_save.is_valid() {
+            return Err(ControlError::InvalidRequest(
+                "a power save time is not a time of day",
+            ));
+        }
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::V2IP_SETTINGS_ALL,
+            &build_v2ip_settings_all(&settings),
+        )?;
+        Ok(())
     }
 
     /// The one send behind the device settings methods.
