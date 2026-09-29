@@ -15,6 +15,7 @@
 //! changed nothing.
 
 use std::ffi::c_char;
+use std::time::{Duration, UNIX_EPOCH};
 
 use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
@@ -766,6 +767,58 @@ pub unsafe extern "C" fn mxr_ping(remote: *const mxr_remote_t, device: mxr_uid_t
     // SAFETY: the caller guarantees a live handle or null.
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| from_control(r.remote.ping(device.into())))
+}
+
+/// Sets the time zone of every device that hears it: `zone` an IANA name such
+/// as `Europe/Amsterdam`, `rule` the POSIX TZ rule the devices keep time by.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for an empty string, or one of
+/// `MXR_TIME_ZONE_NAME_LEN` or `MXR_TIME_ZONE_RULE_LEN` bytes or more. The
+/// mesh controller takes it too and announces it from then on.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `zone` and `rule` are
+/// NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_mesh_time_zone(
+    remote: *const mxr_remote_t,
+    zone: *const c_char,
+    rule: *const c_char,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees NUL-terminated strings.
+        match unsafe { (req_str(zone), req_str(rule)) } {
+            (Ok(zone), Ok(rule)) => from_control(r.remote.set_mesh_time_zone(zone, rule)),
+            (Err(code), _) | (_, Err(code)) => code,
+        }
+    })
+}
+
+/// Sets the clock of every device that hears it to `utc`, in seconds since
+/// 1970 UTC. A device keeps its own clock where that is within 2s.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a time past what 32 bits of seconds hold.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_mesh_time(remote: *const mxr_remote_t, utc: u64) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let time = UNIX_EPOCH.checked_add(Duration::from_secs(utc));
+        match time {
+            Some(time) => from_control(r.remote.set_mesh_time(time)),
+            None => fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the time does not fit the frame",
+            ),
+        }
+    })
 }
 
 /// Sends the monitoring pulse that tells devices this client is watching.

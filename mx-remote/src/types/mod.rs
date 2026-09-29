@@ -28,8 +28,8 @@ pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{MacAddress, NetworkPortStatus, UtpCableStatus, UtpLinkErrors, VctStatus};
 pub use status::{
     ArcStatus, BayAudioDetails, BayMirrorStatus, BaySignalDetails, ConnectStatus, DeviceStatus,
-    FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TopologyEntry, VolumeMuteStatus,
-    VOLUME_UNCHANGED,
+    FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TimeZone, TopologyEntry,
+    VolumeMuteStatus, VOLUME_UNCHANGED,
 };
 pub use v2ip::{
     DeviceV2ipDetails, DeviceV2ipSink, StreamKind, V2ipAudioFormat, V2ipDecoderDetail,

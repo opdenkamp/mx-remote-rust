@@ -177,6 +177,8 @@ events! {
         V2ipFeaturesChanged => on_v2ip_features_changed(features: V2ipFpgaFeature);
         /// The device's settings changed.
         V2ipDeviceSettingsChanged => on_v2ip_device_settings_changed(settings: V2ipDeviceSettings);
+        /// The device announced a different time zone for its mesh.
+        TimeZoneChanged => on_time_zone_changed(time_zone: TimeZone);
         /// A source bay's remote-control configuration changed.
         RcSettingsChanged => on_rc_settings_changed(settings: RcSettings);
         /// A V2IP device was linked to a remote peer.

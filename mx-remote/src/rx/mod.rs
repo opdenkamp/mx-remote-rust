@@ -166,6 +166,8 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::SYS_STATUS => handlers::system_status(state, rx, ev),
         op::RC_IR_TX => commands::ir_transmit(state, rx, ev),
         op::V2IP_VIDEO_WALL => commands::video_wall(state, rx, ev),
+        op::TIME_ZONE => handlers::time_zone(state, rx, ev),
+        op::TIME => handlers::time(state, rx, ev),
         Opcode(_) => {}
     }
 }

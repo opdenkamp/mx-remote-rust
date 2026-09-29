@@ -26,6 +26,7 @@
 
 use std::fmt;
 use std::net::Ipv4Addr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
@@ -39,14 +40,15 @@ use crate::types::{
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
-    build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
+    build_set_bay_name, build_set_volume, build_stats_request, build_target_only, build_time_zone,
     build_v2ip_device_settings, build_v2ip_manual_source_switch, build_v2ip_scaling,
     build_v2ip_settings_all, build_v2ip_source_switch, build_video_wall, mv_cmd_payload, mv_sub,
     op, Addressee, BayUid, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
     MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
     MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction,
     RcKey, SendError, StreamAddr, V2ipDeviceSetting, V2ipStreams, DEVICE_NAME_LEN,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -808,6 +810,52 @@ impl Remote {
                 build_target_only(d.uid),
             ))
         })
+    }
+
+    /// Sets the time zone of every device that hears it.
+    ///
+    /// `zone` is an IANA name such as `Europe/Amsterdam` and `rule` the POSIX
+    /// TZ rule the devices keep time by, such as `CET-1CEST,M3.5.0,M10.5.0/3`.
+    /// A device applies the rule and shows the name.
+    /// Neither may be empty, hold a NUL, or be longer than its field on the
+    /// wire leaves room for.
+    ///
+    /// The mesh controller takes it too, and announces it from then on with
+    /// every periodic broadcast. A device takes it only from a management
+    /// application or the controller, and this client announces itself as a
+    /// management application.
+    pub fn set_mesh_time_zone(&self, zone: &str, rule: &str) -> Result<(), ControlError> {
+        let fits = |s: &str, len: usize| !s.is_empty() && s.len() < len && !s.contains('\0');
+        if !fits(zone, TIME_ZONE_NAME_LEN) || !fits(rule, TIME_ZONE_RULE_LEN) {
+            return Err(ControlError::InvalidRequest(
+                "a time zone name or rule is empty, holds a NUL, or is too long",
+            ));
+        }
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::TIME_ZONE,
+            &build_time_zone(zone, rule),
+        )?;
+        Ok(())
+    }
+
+    /// Sets the clock of every device that hears it to `time`.
+    ///
+    /// A device keeps its own clock where that is within 2s of `time`. It takes
+    /// the time only from a management application or the controller; see
+    /// [`Remote::set_mesh_time_zone`]. A time before 1970 or past what 32 bits
+    /// of seconds hold, in 2106, is refused.
+    pub fn set_mesh_time(&self, time: SystemTime) -> Result<(), ControlError> {
+        let utc = time
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|d| u32::try_from(d.as_secs()).ok())
+            .ok_or(ControlError::InvalidRequest(
+                "the time does not fit the frame",
+            ))?;
+        self.shared
+            .send(&Addressee::Broadcast, op::TIME, &utc.to_le_bytes())?;
+        Ok(())
     }
 
     /// Asks every peer to report its monitoring data now rather than on its own

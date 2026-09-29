@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::event::{Event, EventHandler};
 use crate::rx::process_frame;
@@ -357,6 +357,25 @@ impl Remote {
     /// device does not have.
     pub fn v2ip_device_settings(&self, uid: DeviceUid) -> Option<V2ipDeviceSettings> {
         self.shared.read(|state| state.device(uid)?.v2ip_settings)
+    }
+
+    /// The time zone a device announced for its mesh, `None` until it has.
+    ///
+    /// The mesh controller announces it with every periodic broadcast.
+    pub fn time_zone(&self, uid: DeviceUid) -> Option<TimeZone> {
+        self.shared
+            .read(|state| state.device(uid)?.time_zone.clone())
+    }
+
+    /// A device's clock as of now: the time it last announced, advanced by
+    /// how long ago that arrived. `None` until it has announced one.
+    ///
+    /// The mesh controller announces its clock with every periodic broadcast,
+    /// and only once it has been set.
+    pub fn device_clock(&self, uid: DeviceUid) -> Option<SystemTime> {
+        let (utc, at) = self.shared.read(|state| state.device(uid)?.clock)?;
+        let announced = UNIX_EPOCH.checked_add(Duration::from_secs(u64::from(utc)))?;
+        announced.checked_add(at.elapsed())
     }
 
     /// The video-wall tiling a V2IP device is configured for.

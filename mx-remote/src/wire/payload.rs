@@ -14,6 +14,7 @@ use crate::types::{
     VolumeMuteStatus, VIDEO_WALL_CLEARED,
 };
 
+use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN};
 use super::enums::{EdidProfile, MxrSignalType, RcAction, RcKey};
 use super::opcode::audio_sub;
 use super::uid::DeviceUid;
@@ -442,6 +443,18 @@ pub(crate) fn build_v2ip_device_settings(
     // block and feature word.
     p.resize(128, 0);
     p.extend_from_slice(&build_v2ip_settings_block(settings));
+    p
+}
+
+/// Builds the `TIME_ZONE` (0x4B) payload: the IANA name in 48 bytes, then the
+/// POSIX rule in 64, each NUL-padded. The caller has checked both leave room
+/// for their NUL.
+pub(crate) fn build_time_zone(zone: &str, rule: &str) -> Vec<u8> {
+    let mut p = Vec::with_capacity(TIME_ZONE_NAME_LEN + TIME_ZONE_RULE_LEN);
+    p.extend_from_slice(zone.as_bytes());
+    p.resize(TIME_ZONE_NAME_LEN, 0);
+    p.extend_from_slice(rule.as_bytes());
+    p.resize(TIME_ZONE_NAME_LEN + TIME_ZONE_RULE_LEN, 0);
     p
 }
 

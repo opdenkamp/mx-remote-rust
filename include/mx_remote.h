@@ -1243,6 +1243,16 @@
 #define MXR_V2IP_MINUTES_PER_DAY 1440
 
 /**
+ * Bytes in `mxr_time_zone_t.zone`, its NUL included.
+ */
+#define MXR_TIME_ZONE_NAME_LEN 48
+
+/**
+ * Bytes in `mxr_time_zone_t.rule`, its NUL included.
+ */
+#define MXR_TIME_ZONE_RULE_LEN 64
+
+/**
  * The audio return channel a bay is carrying.
  */
 enum mxr_arc_status_t
@@ -3424,6 +3434,20 @@ typedef struct {
 } mxr_v2ip_sink_t;
 
 /**
+ * The time zone a device announces for its mesh.
+ */
+typedef struct {
+  /**
+   * The IANA name, such as `Europe/Amsterdam`.
+   */
+  char zone[MXR_TIME_ZONE_NAME_LEN];
+  /**
+   * The POSIX TZ rule the devices keep time by.
+   */
+  char rule[MXR_TIME_ZONE_RULE_LEN];
+} mxr_time_zone_t;
+
+/**
  * The window a sink is currently told to show.
  *
  * This is the pollable view of a sink's window, not the persisted video wall
@@ -4279,6 +4303,33 @@ mxr_result_t mxr_reboot(const mxr_remote_t *remote, mxr_uid_t device);
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_ping(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Sets the time zone of every device that hears it: `zone` an IANA name such
+ * as `Europe/Amsterdam`, `rule` the POSIX TZ rule the devices keep time by.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for an empty string, or one of
+ * `MXR_TIME_ZONE_NAME_LEN` or `MXR_TIME_ZONE_RULE_LEN` bytes or more. The
+ * mesh controller takes it too and announces it from then on.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `zone` and `rule` are
+ * NUL-terminated strings.
+ */
+mxr_result_t mxr_set_mesh_time_zone(const mxr_remote_t *remote, const char *zone, const char *rule);
+
+/**
+ * Sets the clock of every device that hears it to `utc`, in seconds since
+ * 1970 UTC. A device keeps its own clock where that is within 2s.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a time past what 32 bits of seconds hold.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_mesh_time(const mxr_remote_t *remote, uint64_t utc);
 
 /**
  * Sends the monitoring pulse that tells devices this client is watching.
@@ -5146,6 +5197,34 @@ mxr_result_t mxr_v2ip_device_settings(const mxr_remote_t *remote,
 mxr_result_t mxr_v2ip_power_save(const mxr_remote_t *remote,
                                  mxr_uid_t uid,
                                  mxr_v2ip_power_save_t *out);
+
+/**
+ * Fills `out` with the time zone a device announced for its mesh.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until it has announced one; the mesh
+ * controller does with every periodic broadcast. A change is announced
+ * through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_time_zone_t`.
+ */
+mxr_result_t mxr_time_zone(const mxr_remote_t *remote, mxr_uid_t uid, mxr_time_zone_t *out);
+
+/**
+ * Fills `out` with a device's clock as of now, in seconds since 1970 UTC:
+ * the time it last announced, advanced by how long ago that arrived.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until it has announced one; the mesh
+ * controller does with every periodic broadcast once its clock is set.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `uint64_t`.
+ */
+mxr_result_t mxr_device_clock(const mxr_remote_t *remote, mxr_uid_t uid, uint64_t *out);
 
 /**
  * Fills `out` with the window a sink is told to show.

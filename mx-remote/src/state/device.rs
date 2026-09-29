@@ -11,7 +11,7 @@ use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    RcSettings, TopologyEntry, V2ipDeviceSettings, V2ipDeviceStats, V2ipScalingSettings,
+    RcSettings, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDeviceStats, V2ipScalingSettings,
     V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
@@ -116,6 +116,11 @@ pub(crate) struct Device {
     /// cannot be filed until that bay's configuration says which one it is.
     pub(crate) v2ip_bay_mapping_pages: BTreeMap<u16, Vec<DeviceUid>>,
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
+    /// The time zone the device last announced for its mesh.
+    pub(crate) time_zone: Option<TimeZone>,
+    /// The time the device last announced, in seconds since 1970 UTC, and when
+    /// that frame arrived.
+    pub(crate) clock: Option<(u32, Instant)>,
     pub(crate) v2ip_sink: Option<DeviceV2ipSink>,
     /// What the device's video processor supports, once it has reported it.
     ///
@@ -164,6 +169,8 @@ impl Device {
             v2ip_bay_mappings: BTreeMap::new(),
             v2ip_bay_mapping_pages: BTreeMap::new(),
             v2ip_details: None,
+            time_zone: None,
+            clock: None,
             v2ip_sink: None,
             v2ip_features: None,
             v2ip_settings: None,
@@ -1006,6 +1013,17 @@ impl Device {
     /// The caller has already limited a write about this device to what the
     /// device takes from one; a block that carries no setting leaves the cache
     /// as it was.
+    pub(crate) fn set_time_zone(&mut self, time_zone: TimeZone, ev: &mut Vec<Event>) {
+        if self.time_zone.as_ref() == Some(&time_zone) {
+            return;
+        }
+        self.time_zone = Some(time_zone.clone());
+        ev.push(Event::TimeZoneChanged {
+            device: self.uid,
+            time_zone,
+        });
+    }
+
     pub(crate) fn merge_v2ip_settings(&mut self, frame: V2ipDeviceSettings, ev: &mut Vec<Event>) {
         if frame.valid.is_empty() {
             return;

@@ -338,3 +338,16 @@ impl fmt::Display for ArcStatus {
         })
     }
 }
+
+/// The time zone a device announces for its mesh.
+///
+/// The mesh controller announces it with every periodic broadcast, and each
+/// device of the mesh keeps its clock and its power save windows by it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TimeZone {
+    /// The IANA name, such as `Europe/Amsterdam`.
+    pub zone: String,
+    /// The POSIX TZ rule the devices keep time by, such as
+    /// `CET-1CEST,M3.5.0,M10.5.0/3`.
+    pub rule: String,
+}

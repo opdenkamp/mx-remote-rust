@@ -78,3 +78,11 @@ pub const V2IP_DSCP_MAX: u8 = 63;
 /// CS2, the marking the video processor applies at boot and the value firmware
 /// falls back to when a peer sends none.
 pub const V2IP_DSCP_DEFAULT: u8 = 16;
+
+/// Bytes a time zone's IANA name takes on the wire, its terminating NUL
+/// included.
+pub const TIME_ZONE_NAME_LEN: usize = 48;
+
+/// Bytes a time zone's POSIX rule takes on the wire, its terminating NUL
+/// included.
+pub const TIME_ZONE_RULE_LEN: usize = 64;

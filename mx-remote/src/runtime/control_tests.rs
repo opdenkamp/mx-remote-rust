@@ -2572,3 +2572,102 @@ fn settings_every_device_would_ignore_are_refused() {
     }
     assert!(f.tap.frames().is_empty(), "a refused write was sent");
 }
+
+/// A time zone goes out as two NUL-padded fields, to everyone, and one a
+/// device could not hold is refused.
+#[test]
+fn a_time_zone_goes_out_in_its_two_fields() {
+    let f = Fixture::new();
+    f.tap.clear();
+    let _ = f
+        .remote
+        .set_mesh_time_zone("Europe/Amsterdam", "CET-1CEST,M3.5.0,M10.5.0/3");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::TIME_ZONE.0.to_le_bytes());
+    assert_eq!(&frame[2..4], &0x2Au16.to_le_bytes(), "the stamp");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 112);
+    assert_eq!(&p[..16], b"Europe/Amsterdam");
+    assert!(p[16..48].iter().all(|b| *b == 0));
+    assert_eq!(&p[48..74], b"CET-1CEST,M3.5.0,M10.5.0/3");
+    assert!(p[74..].iter().all(|b| *b == 0));
+
+    f.tap.clear();
+    for (zone, rule) in [
+        ("", "UTC0"),
+        ("UTC", ""),
+        (&*"Z".repeat(48), "UTC0"),
+        ("UTC", &*"R".repeat(64)),
+        ("UT\0C", "UTC0"),
+    ] {
+        assert!(
+            matches!(
+                f.remote.set_mesh_time_zone(zone, rule),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{zone:?} {rule:?}"
+        );
+    }
+    assert!(f.tap.frames().is_empty(), "a refused time zone was sent");
+    let _ = f
+        .remote
+        .set_mesh_time_zone(&"Z".repeat(47), &"R".repeat(63));
+    assert_eq!(f.tap.frames().len(), 1, "the longest names that fit");
+}
+
+/// A time goes out as seconds since 1970 in a u32, and one outside that is
+/// refused.
+#[test]
+fn a_time_goes_out_as_seconds_since_1970() {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let f = Fixture::new();
+    f.tap.clear();
+    let _ = f
+        .remote
+        .set_mesh_time(UNIX_EPOCH + Duration::from_secs(0x6ABB_8FC6));
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::TIME.0.to_le_bytes());
+    assert_eq!(&frame[HEADER_LEN..], &[0xC6, 0x8F, 0xBB, 0x6A]);
+
+    for time in [
+        UNIX_EPOCH - Duration::from_secs(1),
+        UNIX_EPOCH + Duration::from_secs(1 << 32),
+    ] {
+        assert!(matches!(
+            f.remote.set_mesh_time(time),
+            Err(ControlError::InvalidRequest(_))
+        ));
+    }
+}
+
+/// A device's clock reads as the time it announced, moved on by how long ago
+/// that was.
+#[test]
+fn a_device_clock_moves_on_from_what_it_announced() {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let f = Fixture::new();
+    let uid = uid_n(230);
+    f.everything(uid, 0x2A, "CL0001");
+    assert_eq!(f.remote.device_clock(uid), None);
+    f.feed(uid, op::TIME, &0x6ABB_8FC6u32.to_le_bytes());
+
+    // Have the frame arrive a minute ago.
+    {
+        let mut state = lock(&f.remote.shared.state);
+        let clock = &mut state.device_mut(uid).expect("registered above").clock;
+        let (utc, at) = clock.expect("no clock was read");
+        *clock = Some((utc, at - Duration::from_secs(60)));
+    }
+
+    let announced = UNIX_EPOCH + Duration::from_secs(0x6ABB_8FC6);
+    let clock = f.remote.device_clock(uid).expect("no clock was read");
+    let ahead = clock
+        .duration_since(announced)
+        .expect("the clock went backwards");
+    assert!(
+        (Duration::from_secs(60)..Duration::from_secs(65)).contains(&ahead),
+        "{ahead:?}"
+    );
+}

@@ -1047,3 +1047,57 @@ fn network_status_legacy_gating() {
         "a 0x12-length frame passed the 0x21 floor"
     );
 }
+
+/// A 0x4B a mesh controller sent: the IANA name in a 48-byte field, then the
+/// POSIX rule in a 64-byte one.
+const CAPTURED_TIME_ZONE: &str = "4575726f70652f416d7374657264616d0000000000000000000000000000000000000000000000000000000000000000\
+    3c2b30313e2d313c2b30323e2c4d332e352e302c4d31302e352e302f330000000000000000000000000000000000000000000000000000000000000000000000";
+
+fn unhex(s: &str) -> Vec<u8> {
+    let s: String = s.split_whitespace().collect();
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
+        .collect()
+}
+
+/// The time zone a controller announces is read field by field, and a repeat
+/// of the same one is not a change.
+#[test]
+fn a_captured_time_zone_reads_as_the_controller_announced_it() {
+    let mut h = Harness::new(139);
+    h.hello(0x2A, "ONEIP", "TZ0001", DeviceFeature::V2IP_SINK);
+    let frame = unhex(CAPTURED_TIME_ZONE);
+    assert_eq!(frame.len(), 112);
+    h.feed(op::TIME_ZONE, &frame);
+    h.feed(op::TIME_ZONE, &frame);
+
+    let tz = h.device().time_zone.clone().expect("no time zone was read");
+    assert_eq!(tz.zone, "Europe/Amsterdam");
+    assert_eq!(tz.rule, "<+01>-1<+02>,M3.5.0,M10.5.0/3");
+    let changes = h
+        .events
+        .iter()
+        .filter(|e| matches!(e, Event::TimeZoneChanged { .. }))
+        .count();
+    assert_eq!(changes, 1, "a repeat was reported as a change");
+
+    h.feed(op::TIME_ZONE, &frame[..111]);
+    assert_eq!(h.device().time_zone, Some(tz), "a short frame was read");
+}
+
+/// A 0x4D a mesh controller sent: seconds since 1970 as a little-endian u32.
+#[test]
+fn a_captured_time_reads_as_seconds_since_1970() {
+    let mut h = Harness::new(140);
+    h.hello(0x2A, "ONEIP", "TM0001", DeviceFeature::V2IP_SINK);
+    h.feed(op::TIME, &[0xC6, 0x8F, 0xBB, 0x6A]);
+    assert_eq!(h.device().clock.map(|(utc, _)| utc), Some(0x6ABB_8FC6));
+
+    h.feed(op::TIME, &[0xFF, 0x8F, 0xBB]);
+    assert_eq!(
+        h.device().clock.map(|(utc, _)| utc),
+        Some(0x6ABB_8FC6),
+        "a short frame was read"
+    );
+}

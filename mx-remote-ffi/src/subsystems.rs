@@ -15,6 +15,7 @@
 
 use std::ffi::c_char;
 use std::net::Ipv4Addr;
+use std::time::UNIX_EPOCH;
 
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
@@ -1030,6 +1031,86 @@ pub unsafe extern "C" fn mxr_v2ip_power_save(
             });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "device settings", value) }
+    })
+}
+
+/// Bytes in `mxr_time_zone_t.zone`, its NUL included.
+pub const MXR_TIME_ZONE_NAME_LEN: usize = 48;
+/// Bytes in `mxr_time_zone_t.rule`, its NUL included.
+pub const MXR_TIME_ZONE_RULE_LEN: usize = 64;
+
+const _: () = assert!(MXR_TIME_ZONE_NAME_LEN == mx_remote::TIME_ZONE_NAME_LEN);
+const _: () = assert!(MXR_TIME_ZONE_RULE_LEN == mx_remote::TIME_ZONE_RULE_LEN);
+
+/// The time zone a device announces for its mesh.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_time_zone_t {
+    /// The IANA name, such as `Europe/Amsterdam`.
+    pub zone: [c_char; MXR_TIME_ZONE_NAME_LEN],
+    /// The POSIX TZ rule the devices keep time by.
+    pub rule: [c_char; MXR_TIME_ZONE_RULE_LEN],
+}
+
+/// Fills `out` with the time zone a device announced for its mesh.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until it has announced one; the mesh
+/// controller does with every periodic broadcast. A change is announced
+/// through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_time_zone_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_time_zone(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_time_zone_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r.remote.time_zone(uid.into()).map(|tz| {
+            let mut out = mxr_time_zone_t {
+                zone: [0; MXR_TIME_ZONE_NAME_LEN],
+                rule: [0; MXR_TIME_ZONE_RULE_LEN],
+            };
+            put_str(&mut out.zone, &tz.zone);
+            put_str(&mut out.rule, &tz.rule);
+            out
+        });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "time zone", value) }
+    })
+}
+
+/// Fills `out` with a device's clock as of now, in seconds since 1970 UTC:
+/// the time it last announced, advanced by how long ago that arrived.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until it has announced one; the mesh
+/// controller does with every periodic broadcast once its clock is set.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `uint64_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_device_clock(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut u64,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .device_clock(uid.into())
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        // SAFETY: the caller guarantees a writable uint64_t or null.
+        unsafe { fill(r, uid, out, "clock", value) }
     })
 }
 

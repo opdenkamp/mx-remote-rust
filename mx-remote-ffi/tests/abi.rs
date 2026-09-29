@@ -826,3 +826,49 @@ fn only_an_answered_decoder_carries_a_reading() {
         );
     }
 }
+
+/// The time calls check their arguments before anything else.
+#[test]
+fn the_time_calls_check_their_arguments_first() {
+    let remote = client(c"abi-time", c"00000023.00000000.00000000.000000a5");
+
+    // SAFETY: a live handle; null outputs are what is under test.
+    unsafe {
+        assert_eq!(
+            mxr_time_zone(remote, uid_n(9), ptr::null_mut()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            mxr_device_clock(remote, uid_n(9), ptr::null_mut()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+    }
+    let long = CString::new("Z".repeat(MXR_TIME_ZONE_NAME_LEN)).expect("no NUL");
+    // SAFETY: a live handle and NUL-terminated strings, or a null one where
+    // that is what is under test.
+    unsafe {
+        assert_eq!(
+            mxr_set_mesh_time_zone(remote, c"UTC".as_ptr(), ptr::null()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            mxr_set_mesh_time_zone(remote, long.as_ptr(), c"UTC0".as_ptr()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            mxr_set_mesh_time_zone(remote, c"UTC".as_ptr(), c"UTC0".as_ptr()),
+            mxr_result_t::MXR_ERR_NOT_CONNECTED
+        );
+        assert_eq!(
+            mxr_set_mesh_time(remote, 1 << 32),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            mxr_set_mesh_time(remote, 0x6ABB_8FC6),
+            mxr_result_t::MXR_ERR_NOT_CONNECTED
+        );
+    }
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}

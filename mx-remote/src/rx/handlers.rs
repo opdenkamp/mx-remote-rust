@@ -9,16 +9,16 @@ use crate::event::Event;
 use crate::state::{Device, HelloInfo, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    HiddenStatus, MuteStatus, PowerStatus, StreamKind, TopologyEntry, V2ipDeviceSettings,
+    HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
     V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipScalingSettings, V2ipStreamSource,
     V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
     SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_SKIP_420,
     VOLUME_UNCHANGED,
 };
 use crate::wire::{
-    op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
+    cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
     MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, BAY_CONFIG_SIZE,
-    FW_VERSION_LEN,
+    FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
 };
 
 use super::Rx;
@@ -798,6 +798,38 @@ pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]
     let page: Vec<DeviceUid> = (0..count).map_while(|i| f.uid(8 + 16 * i)).collect();
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_v2ip_bay_mapping_page(first_port, page);
+    }
+}
+
+/// Records the time zone a device announces for its mesh: the IANA name, then
+/// the POSIX rule, each a NUL-terminated string in a fixed field.
+pub(super) fn time_zone(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
+    let p = rx.frame.payload();
+    let (Some(zone), Some(rule)) = (
+        p.get(..TIME_ZONE_NAME_LEN),
+        p.get(TIME_ZONE_NAME_LEN..TIME_ZONE_NAME_LEN + TIME_ZONE_RULE_LEN),
+    ) else {
+        return;
+    };
+    let time_zone = TimeZone {
+        zone: cstr(zone),
+        rule: cstr(rule),
+    };
+    if let Some(device) = state.device_mut(rx.sender()) {
+        device.set_time_zone(time_zone, ev);
+    }
+}
+
+/// Records the time a device announces: seconds since 1970 UTC, as a `u32`.
+///
+/// The mesh controller repeats it with every periodic broadcast, so no event
+/// marks it; [`Remote::device_clock`](crate::Remote::device_clock) reads it.
+pub(super) fn time(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]) {
+    let Some(utc) = rx.frame.u32(0) else {
+        return;
+    };
+    if let Some(device) = state.device_mut(rx.sender()) {
+        device.clock = Some((utc, rx.timestamp));
     }
 }
 
