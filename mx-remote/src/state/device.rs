@@ -12,7 +12,7 @@ use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
     RcSettings, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDeviceStats, V2ipScalingSettings,
-    V2ipStreamSources, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
+    V2ipStreamSources, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
 
@@ -957,8 +957,23 @@ impl Device {
 
     /// Merges an encoder configuration report, which carries only the fields
     /// the sender had values for.
-    pub(crate) fn set_v2ip_details(&mut self, details: DeviceV2ipDetails, ev: &mut Vec<Event>) {
-        let merged = details.merge(self.v2ip_details);
+    /// Folds a received configuration onto the cached one.
+    ///
+    /// `whole_scaling` says the frame's scaling block is the sink's whole
+    /// state rather than a write of one half of it, so a mode it does not
+    /// carry is a mode the sink no longer has.
+    pub(crate) fn set_v2ip_details(
+        &mut self,
+        details: DeviceV2ipDetails,
+        whole_scaling: bool,
+        ev: &mut Vec<Event>,
+    ) {
+        let mut merged = details.merge(self.v2ip_details);
+        if whole_scaling && details.scaling.flags & SCALING_FLAG_MODE_VALID == 0 {
+            merged.scaling.mode = details.scaling.mode;
+            merged.scaling.refresh = details.scaling.refresh;
+            merged.scaling.flags &= !SCALING_FLAG_MODE_VALID;
+        }
         if self.v2ip_details == Some(merged) {
             return;
         }

@@ -2749,3 +2749,115 @@ fn a_controller_frame_does_not_change_a_device_vlan() {
         "the write was taken as the controller's own"
     );
 }
+
+/// A sink announcing that it initialises its configuration, as `uid_n(n)`,
+/// with a manual mode configured and auto scaling on.
+fn sink_with_a_mode(n: u8, serial: &str) -> Harness {
+    let mut h = Harness::new(n);
+    h.hello(
+        0x2B,
+        "ONEIP",
+        serial,
+        DeviceFeature::V2IP_SINK | DeviceFeature::CONFIG_INITIALISED,
+    );
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    cfg.mode = 16;
+    cfg.refresh = 60;
+    cfg.flags = SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+    assert_eq!(
+        scaling_of(&h, h.sender).configured_mode().map(|m| m.1),
+        Some(60)
+    );
+    h
+}
+
+fn scaling_of(h: &Harness, uid: DeviceUid) -> crate::types::V2ipScalingSettings {
+    h.state
+        .device(uid)
+        .and_then(|d| d.v2ip_details)
+        .expect("no details")
+        .scaling
+}
+
+/// A sink's own report carries its whole scaling state, so one with the
+/// options and no mode says it no longer scales to a mode of its own.
+#[test]
+fn a_sinks_own_report_without_a_mode_turns_manual_scaling_off() {
+    let mut h = sink_with_a_mode(121, "SC0001");
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    cfg.flags = SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
+    let before = h.events.len();
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+
+    let scaling = scaling_of(&h, h.sender);
+    assert_eq!(
+        scaling.configured_mode(),
+        None,
+        "the old mode is still held"
+    );
+    assert_eq!(scaling.auto_scaling(), Some(true));
+    assert!(
+        h.events[before..]
+            .iter()
+            .any(|e| matches!(e, Event::V2ipDetailsChanged { .. })),
+        "turning the mode off raised no event"
+    );
+}
+
+/// Without the whole state, a frame with no mode says nothing about the mode:
+/// a report without the options bit, a report from a sender whose options bit
+/// may be uninitialised memory, and a controller's options-only write.
+#[test]
+fn a_frame_that_is_not_the_whole_state_keeps_the_mode() {
+    // No options bit.
+    let mut h = sink_with_a_mode(122, "SC0002");
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    cfg.flags = 0;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+    assert_eq!(
+        scaling_of(&h, h.sender).configured_mode().map(|m| m.1),
+        Some(60)
+    );
+
+    // A sender that does not initialise its configuration.
+    let mut h = command_device(123);
+    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    cfg.mode = 16;
+    cfg.refresh = 60;
+    cfg.flags = SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+    cfg.flags = SCALING_FLAG_OPTIONS_VALID;
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
+    assert_eq!(
+        scaling_of(&h, h.sender).configured_mode().map(|m| m.1),
+        Some(60)
+    );
+
+    // A controller's options-only write, which does land: it turns auto
+    // scaling off.
+    let mut h = sink_with_a_mode(124, "SC0003");
+    let subject = h.sender;
+    let controller = uid_n(84);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x2B,
+            "Ctrl",
+            "CTRL0008",
+            "4.8.0",
+            DeviceFeature::MANAGER | DeviceFeature::CONFIG_INITIALISED,
+        ),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = SCALING_FLAG_OPTIONS_VALID;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &write.bytes());
+    let scaling = scaling_of(&h, subject);
+    assert_eq!(
+        scaling.auto_scaling(),
+        Some(false),
+        "the write did not land"
+    );
+    assert_eq!(scaling.configured_mode().map(|m| m.1), Some(60));
+}

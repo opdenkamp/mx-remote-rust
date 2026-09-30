@@ -12,8 +12,8 @@ use crate::types::{
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
     V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipScalingSettings, V2ipStreamSource,
     V2ipStreamSources, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
-    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_SKIP_420,
-    VOLUME_UNCHANGED,
+    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,
+    SCALING_FLAG_SKIP_420, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
@@ -519,8 +519,16 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             flags: byte(p, 60) & scaling_flag_mask(state, rx),
         },
     };
+    // A sink's own report carries its whole scaling state, so one with the
+    // options but no mode says manual scaling is off. Only from a sender that
+    // initialises the block: from any other, the options bit may be junk.
+    let whole_scaling = subject == rx.sender()
+        && state
+            .device(subject)
+            .is_some_and(Device::config_initialised)
+        && details.scaling.flags & SCALING_FLAG_OPTIONS_VALID != 0;
     if let Some(device) = state.device_mut(subject) {
-        device.set_v2ip_details(details, ev);
+        device.set_v2ip_details(details, whole_scaling, ev);
     }
 
     // The tiling window was appended to the configuration, so a sender that
