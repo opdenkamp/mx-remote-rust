@@ -7,9 +7,9 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2IP_AUDIO_DEFAULT_CHANNELS,
-    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX,
-    V2IP_IR_PROFILE_NOT_SET,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipVlanFlag,
+    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
 };
 
 /// Which of a V2IP device's streams an address describes.
@@ -754,6 +754,89 @@ impl V2ipDeviceSettings {
             valid = valid.without(V2ipDeviceSetting::IR_PROFILE_SINK);
         }
         Self { valid, ..self }
+    }
+}
+
+/// The external network ports a [`V2ipVlan`] covers, in the order of
+/// [`V2ipVlan::port`]: the SFP port, the UTP port with PoE, then the UTP port.
+pub const V2IP_VLAN_PORTS: usize = 3;
+
+/// The index of the SFP port in [`V2ipVlan::port`].
+pub const V2IP_VLAN_PORT_SFP: usize = 0;
+
+/// The highest VLAN id: 0 means untagged, and 4095 is reserved by IEEE 802.1Q.
+pub const V2IP_VLAN_ID_MAX: u16 = 4094;
+
+/// VLAN tagging on a V2IP device's uplink.
+///
+/// Only the device knows what it runs, so this is what it reported about
+/// itself. A change written to it is applied at once and stays
+/// [`PENDING`](V2ipVlanFlag::PENDING) until the mesh controller confirms it,
+/// which proves the device still reaches the mesh and the mesh still reaches
+/// it; unconfirmed, the device reverts it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipVlan {
+    /// The block's flags.
+    pub flags: V2ipVlanFlag,
+    /// The VLAN id of the device's own traffic, 0 for untagged.
+    pub device: u16,
+    /// The VLAN id each downlink port carries, 0 to share the device's
+    /// untagged traffic, indexed as [`V2IP_VLAN_PORTS`] orders them.
+    pub port: [u16; V2IP_VLAN_PORTS],
+    /// The port pinned as the uplink as 1 + its index, 0 to detect it.
+    pub uplink: u8,
+    /// Reported by the device: the port in use as the uplink, as 1 + its
+    /// index.
+    pub active_uplink: u8,
+    /// Reported by the device: the seconds before a pending configuration is
+    /// reverted.
+    pub revert_s: u8,
+}
+
+impl V2ipVlan {
+    /// Whether untagged frames arriving on the uplink are dropped.
+    pub const fn trunk(&self) -> bool {
+        self.flags.has(V2ipVlanFlag::TRUNK)
+    }
+
+    /// Whether the device reverts this configuration unless the mesh
+    /// controller confirms it.
+    pub const fn is_pending(&self) -> bool {
+        self.flags.has(V2ipVlanFlag::PENDING)
+    }
+
+    /// Whether the device has an SFP port.
+    pub const fn has_sfp(&self) -> bool {
+        self.flags.has(V2ipVlanFlag::HAS_SFP)
+    }
+
+    /// The index of the port pinned as the uplink, `None` when the device
+    /// detects it.
+    pub const fn pinned_uplink(&self) -> Option<usize> {
+        port_index(self.uplink)
+    }
+
+    /// The index of the port the device uses as its uplink, `None` for a
+    /// value that names no port.
+    pub const fn active_uplink(&self) -> Option<usize> {
+        port_index(self.active_uplink)
+    }
+
+    /// Whether every VLAN id is at most [`V2IP_VLAN_ID_MAX`] and the uplink is
+    /// detected or names a port.
+    pub fn is_valid(&self) -> bool {
+        let ids_ok = core::iter::once(&self.device)
+            .chain(&self.port)
+            .all(|id| *id <= V2IP_VLAN_ID_MAX);
+        ids_ok && (self.uplink == 0 || self.pinned_uplink().is_some())
+    }
+}
+
+/// A port index from its 1-based wire form.
+const fn port_index(wire: u8) -> Option<usize> {
+    match wire {
+        1..=3 => Some(wire as usize - 1),
+        _ => None,
     }
 }
 

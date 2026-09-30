@@ -252,6 +252,39 @@ impl Cfg {
         p.extend_from_slice(&poisoned(4));
         p
     }
+
+    /// The whole frame with a VLAN block behind a settings block that carries
+    /// no setting: `block` lands at 176..192.
+    pub(crate) fn bytes_with_vlan(&self, block: &[u8; 16]) -> Vec<u8> {
+        let mut p =
+            self.bytes_with_power_save(0, 0, 0, &crate::types::V2ipPowerSaveSchedule::default());
+        p.extend_from_slice(block);
+        p
+    }
+}
+
+/// A VLAN block: `flags` at 0, the device's id at 2, the ports' ids at 4, 6
+/// and 8, then the pinned uplink, the uplink in use and the revert seconds,
+/// and three reserved bytes left poisoned.
+pub(crate) fn vlan_block(
+    flags: u16,
+    device: u16,
+    port: [u16; 3],
+    uplink: u8,
+    active_uplink: u8,
+    revert_s: u8,
+) -> [u8; 16] {
+    let mut b = [0u8; 16];
+    b[0..2].copy_from_slice(&flags.to_le_bytes());
+    b[2..4].copy_from_slice(&device.to_le_bytes());
+    for (i, id) in port.iter().enumerate() {
+        b[4 + 2 * i..6 + 2 * i].copy_from_slice(&id.to_le_bytes());
+    }
+    b[10] = uplink;
+    b[11] = active_uplink;
+    b[12] = revert_s;
+    b[13..].copy_from_slice(&poisoned(3));
+    b
 }
 
 /// Assembles a datagram the way a device does, header bytes included.

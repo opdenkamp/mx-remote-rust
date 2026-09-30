@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 16] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 17] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -491,6 +491,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             3,
         ),
         ("MXR_MV_BOOL_", core_bits(&enums, "MultiviewerBool"), &[], 3),
+        ("MXR_V2IP_VLAN_", core_bits(&enums, "V2ipVlanFlag"), &[], 5),
         (
             "MXR_V2IP_SETTING_",
             core_bits(&enums, "V2ipDeviceSetting"),
@@ -686,6 +687,51 @@ fn the_device_settings_calls_check_their_arguments_first() {
         mxr_result_t::MXR_ERR_NOT_CONNECTED,
         "a switch needs no power save"
     );
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// The VLAN calls answer a caller's mistake as an argument error and a device
+/// never heard from as not found, before anything is sent.
+#[test]
+fn the_vlan_calls_check_their_arguments_first() {
+    let remote = client(c"abi-vlan", c"00000022.00000000.00000000.000000a6");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_vlan(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_vlan_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_vlan(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    let vlan = |device, uplink| mxr_v2ip_vlan_t {
+        flags: MXR_V2IP_VLAN_TRUNK,
+        device,
+        port: [0; MXR_V2IP_VLAN_PORTS],
+        uplink,
+        active_uplink: 0,
+        revert_s: 0,
+    };
+    let too_high = vlan(MXR_V2IP_VLAN_ID_MAX + 1, 0);
+    let no_port = vlan(1, MXR_V2IP_VLAN_PORTS as u8 + 1);
+    let fine = vlan(MXR_V2IP_VLAN_ID_MAX, MXR_V2IP_VLAN_PORTS as u8);
+    // SAFETY: a live handle, and each struct null or initialised.
+    let calls = unsafe {
+        [
+            mxr_set_v2ip_vlan(remote, uid_n(9), ptr::null()),
+            mxr_set_v2ip_vlan(remote, uid_n(9), &too_high),
+            mxr_set_v2ip_vlan(remote, uid_n(9), &no_port),
+        ]
+    };
+    for (n, rc) in calls.into_iter().enumerate() {
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "call {n}");
+    }
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_v2ip_vlan(remote, uid_n(9), &fine) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };

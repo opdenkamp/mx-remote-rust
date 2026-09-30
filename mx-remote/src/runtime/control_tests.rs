@@ -15,12 +15,12 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 
 use crate::event::EventHandler;
-use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n, Cfg};
+use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n, vlan_block, Cfg};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, BayNameChange, EdidProfileChange,
     EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute, V2ipRouteTarget,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    V2IP_MINUTES_PER_DAY, VOLUME_UNCHANGED,
+    V2ipVlan, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    V2IP_MINUTES_PER_DAY, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -28,9 +28,10 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipStreams, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
-    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
-    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
+    V2ipDeviceSetting, V2ipStreams, V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION,
+    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -2670,4 +2671,127 @@ fn a_device_clock_moves_on_from_what_it_announced() {
         (Duration::from_secs(60)..Duration::from_secs(65)).contains(&ahead),
         "{ahead:?}"
     );
+}
+
+/// Announces `uid` as a V2IP sink that takes VLANs and has it report `block`.
+fn vlan_device(f: &Fixture, uid: DeviceUid, serial: &str, block: &[u8; 16]) {
+    f.feed(
+        uid,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x2B,
+            "OneIP",
+            serial,
+            "4.8.0",
+            DeviceFeature::V2IP_SINK | DeviceFeature::VLAN,
+        ),
+    );
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    f.feed(uid, op::V2IP_DEVICE_CFG, &cfg.bytes_with_vlan(block));
+}
+
+/// A VLAN write carries nothing but the VLAN block, and of that only what a
+/// writer sets: the flags the device reports or the controller confirms with,
+/// the uplink in use and the revert seconds go out cleared.
+#[test]
+fn a_vlan_write_carries_nothing_but_the_vlan_block() {
+    let f = Fixture::new();
+    let uid = uid_n(229);
+    let has_sfp = (V2ipVlanFlag::VALID | V2ipVlanFlag::HAS_SFP).bits();
+    let reported = vlan_block(has_sfp, 5, [6, 7, 8], 0, 2, 0);
+    vlan_device(&f, uid, "VL0001", &reported);
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_vlan(
+            uid,
+            V2ipVlan {
+                flags: V2ipVlanFlag::from_bits(0xFFFF),
+                device: 0x0123,
+                port: [0x0456, 0x0789, 0x0ABC],
+                uplink: 1,
+                active_uplink: 3,
+                revert_s: 9,
+            },
+        )
+        .expect("the device takes VLANs and has an SFP port");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+
+    assert_eq!(p.len(), 192, "the payload stops short of the VLAN block");
+    assert_eq!(&p[..16], uid.as_bytes(), "the frame names another device");
+    assert!(
+        p[16..40].iter().all(|b| *b == 0),
+        "a source address would repoint the encoder"
+    );
+    assert!(
+        !(V2IP_SOURCE_RATE_MIN..=V2IP_SOURCE_RATE_MAX).contains(&p[40]),
+        "the rate is inside the valid range, so it would replace the device's"
+    );
+    assert!(
+        p[41..176].iter().all(|b| *b == 0),
+        "a field between the rate and the VLAN block is set"
+    );
+    assert_eq!(
+        &p[176..],
+        &[0x03, 0x00, 0x23, 0x01, 0x56, 0x04, 0x89, 0x07, 0xBC, 0x0A, 1, 0, 0, 0, 0, 0],
+        "the VLAN block"
+    );
+
+    let cached = f.remote.v2ip_vlan(uid).expect("no VLAN configuration");
+    assert_eq!(
+        cached.device, 5,
+        "a write was cached before the device ran it"
+    );
+}
+
+/// A write the device would not take is refused before it is sent.
+#[test]
+fn a_vlan_write_the_device_would_not_take_is_refused() {
+    let f = Fixture::new();
+    let valid_only = V2ipVlanFlag::VALID.bits();
+    let no_sfp = uid_n(230);
+    vlan_device(
+        &f,
+        no_sfp,
+        "VL0002",
+        &vlan_block(valid_only, 0, [0; 3], 0, 2, 0),
+    );
+    let unreported = uid_n(231);
+    f.feed(
+        unreported,
+        op::SYS_HELLO,
+        &hello_payload(0x2B, "OneIP", "VL0003", "4.8.0", DeviceFeature::VLAN),
+    );
+    let without = uid_n(232);
+    f.everything(without, 0x2B, "VL0004");
+    f.connect();
+
+    let write = |uplink: u8, device: u16| V2ipVlan {
+        device,
+        uplink,
+        ..V2ipVlan::default()
+    };
+    let invalid = |r| matches!(r, Err(ControlError::InvalidRequest(_)));
+    assert!(invalid(f.remote.set_v2ip_vlan(no_sfp, write(0, 4095))));
+    assert!(invalid(f.remote.set_v2ip_vlan(no_sfp, write(4, 1))));
+    assert!(matches!(
+        f.remote.set_v2ip_vlan(no_sfp, write(1, 1)),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.set_v2ip_vlan(unreported, write(0, 1)),
+        Err(ControlError::NotReported(_))
+    ));
+    assert!(matches!(
+        f.remote.set_v2ip_vlan(without, write(0, 1)),
+        Err(ControlError::Unsupported(_))
+    ));
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_vlan(no_sfp, write(3, V2IP_VLAN_ID_MAX))
+        .expect("the highest id and the last port are taken");
+    assert_eq!(f.tap.frames().len(), 1);
 }

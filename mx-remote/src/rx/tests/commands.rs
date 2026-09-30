@@ -13,17 +13,17 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::types::{
     AudioChangeSource, MultiviewerCommand, V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason,
-    V2ipDecoderState, V2ipPowerSaveSchedule, VideoWallCommand, VideoWallOp,
+    V2ipDecoderState, V2ipPowerSaveSchedule, V2ipVlan, VideoWallCommand, VideoWallOp,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID,
     SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipVlanFlag, PROTOCOL_VERSION,
+    V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
-use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, Cfg};
+use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, vlan_block, Cfg};
 
 use super::Harness;
 
@@ -2632,4 +2632,120 @@ fn a_stamped_tiling_block_is_told_from_an_absent_one() {
         .tiling
         .expect("an uncarried block cleared the cache");
     assert_eq!(tiling.width, 0);
+}
+
+/// Every field of a device's VLAN block is read at its own offset and width.
+///
+/// Composed from the block's declaration, not captured: no unit on hand
+/// reports one yet. Each id has both bytes set and differs from the rest, so a
+/// read at a neighbour's offset or a byte short shows, and the reserved bytes
+/// behind them are poisoned.
+#[test]
+fn a_device_vlan_block_is_read_field_by_field() {
+    let mut h = command_device(118);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let flags =
+        (V2ipVlanFlag::VALID | V2ipVlanFlag::TRUNK | V2ipVlanFlag::PENDING | V2ipVlanFlag::HAS_SFP)
+            .bits();
+    let block = vlan_block(flags, 0x0123, [0x0456, 0x0789, 0x0ABC], 2, 3, 0x2D);
+    let frame = cfg.bytes_with_vlan(&block);
+    assert_eq!(frame.len(), 192);
+    h.feed(op::V2IP_DEVICE_CFG, &frame);
+
+    let vlan = h
+        .device()
+        .v2ip_vlan
+        .expect("no VLAN configuration was read");
+    assert_eq!(
+        vlan,
+        V2ipVlan {
+            flags: V2ipVlanFlag::from_bits(flags),
+            device: 0x0123,
+            port: [0x0456, 0x0789, 0x0ABC],
+            uplink: 2,
+            active_uplink: 3,
+            revert_s: 0x2D,
+        }
+    );
+    assert!(vlan.trunk() && vlan.is_pending() && vlan.has_sfp());
+    assert_eq!(vlan.pinned_uplink(), Some(1));
+    assert_eq!(vlan.active_uplink(), Some(2));
+
+    let changes = |h: &Harness| {
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::V2ipVlanChanged { .. }))
+            .count()
+    };
+    assert_eq!(changes(&h), 1);
+    h.feed(op::V2IP_DEVICE_CFG, &frame);
+    assert_eq!(changes(&h), 1, "an unchanged report raised an event");
+}
+
+/// A block without its valid bit carries nothing, whatever its other bytes,
+/// and neither does a frame too short to hold the whole block.
+#[test]
+fn a_vlan_block_is_read_only_when_valid_and_whole() {
+    let mut h = command_device(119);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let mut junk = [0u8; 16];
+    junk.copy_from_slice(&poisoned(16));
+    junk[0] &= !(V2ipVlanFlag::VALID.bits() as u8);
+    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes_with_vlan(&junk));
+    assert_eq!(h.device().v2ip_vlan, None, "a block without its valid bit");
+
+    let whole = cfg.bytes_with_vlan(&vlan_block(1, 10, [20, 30, 40], 0, 1, 0));
+    h.feed(op::V2IP_DEVICE_CFG, &whole[..191]);
+    assert_eq!(h.device().v2ip_vlan, None, "a block cut short");
+}
+
+/// What a device runs is only the device's to say: a controller's write about
+/// it, or the confirmation of one, changes nothing here. The write also
+/// carries a setting, which shows the frame itself was taken.
+#[test]
+fn a_controller_frame_does_not_change_a_device_vlan() {
+    let mut h = command_device(120);
+    let subject = h.sender;
+    let idle = V2ipDeviceSetting::AUTO_POWER_SAVE.bits();
+    let with_vlan = |cfg: &Cfg, minutes: u16, block: &[u8; 16]| {
+        let mut p = cfg.bytes_with_power_save(idle, 0, minutes, &V2ipPowerSaveSchedule::default());
+        p.extend_from_slice(block);
+        p
+    };
+    let reported = vlan_block(1, 10, [20, 30, 40], 0, 1, 0);
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &with_vlan(&Cfg::addresses(subject, "239.1.2.3"), 10, &reported),
+    );
+
+    let controller = uid_n(83);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2B, "Ctrl", "CTRL0007", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = 0;
+    let confirm = (V2ipVlanFlag::VALID | V2ipVlanFlag::CONFIRM).bits();
+    h.feed_as(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &with_vlan(&write, 20, &vlan_block(confirm, 11, [21, 31, 41], 1, 0, 0)),
+    );
+
+    let d = h.state.device(subject).expect("the subject is gone");
+    assert_eq!(
+        d.v2ip_settings.and_then(|s| s.auto_power_save()),
+        Some(20),
+        "the write itself did not land"
+    );
+    let vlan = d
+        .v2ip_vlan
+        .expect("the subject's VLAN configuration is gone");
+    assert_eq!(vlan.device, 10);
+    assert_eq!(
+        h.state.device(controller).and_then(|d| d.v2ip_vlan),
+        None,
+        "the write was taken as the controller's own"
+    );
 }

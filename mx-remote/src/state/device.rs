@@ -12,7 +12,7 @@ use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
     RcSettings, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDeviceStats, V2ipScalingSettings,
-    V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus,
+    V2ipStreamSources, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
 
@@ -130,6 +130,8 @@ pub(crate) struct Device {
     pub(crate) v2ip_features: Option<V2ipFpgaFeature>,
     /// The device settings, once any has been reported.
     pub(crate) v2ip_settings: Option<V2ipDeviceSettings>,
+    /// The VLAN configuration the device last reported about itself.
+    pub(crate) v2ip_vlan: Option<V2ipVlan>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
     pub(crate) setup_done: Option<bool>,
     pub(crate) installer_id: Option<u16>,
@@ -174,6 +176,7 @@ impl Device {
             v2ip_sink: None,
             v2ip_features: None,
             v2ip_settings: None,
+            v2ip_vlan: None,
             v2ip_stats: None,
             setup_done: None,
             installer_id: None,
@@ -1036,6 +1039,17 @@ impl Device {
         ev.push(Event::V2ipDeviceSettingsChanged {
             device: self.uid,
             settings: merged,
+        });
+    }
+
+    pub(crate) fn set_v2ip_vlan(&mut self, vlan: V2ipVlan, ev: &mut Vec<Event>) {
+        if self.v2ip_vlan == Some(vlan) {
+            return;
+        }
+        self.v2ip_vlan = Some(vlan);
+        ev.push(Event::V2ipVlanChanged {
+            device: self.uid,
+            vlan,
         });
     }
 

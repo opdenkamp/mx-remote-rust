@@ -21,7 +21,7 @@ use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UtpCableStatus,
     V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature, V2ipRxStats,
-    V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig, V2ipTxStats, VctStatus,
+    V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig, V2ipTxStats, V2ipVlan, VctStatus,
     MULTIVIEWER_INPUTS,
 };
 
@@ -1111,6 +1111,79 @@ pub unsafe extern "C" fn mxr_device_clock(
             .map(|d| d.as_secs());
         // SAFETY: the caller guarantees a writable uint64_t or null.
         unsafe { fill(r, uid, out, "clock", value) }
+    })
+}
+
+/// VLAN tagging on a V2IP device's uplink.
+///
+/// Only the device knows what it runs, so this is what it reported about
+/// itself. A change written to it is applied at once and carries
+/// `MXR_V2IP_VLAN_PENDING` until the mesh controller confirms it; unconfirmed,
+/// the device reverts it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_vlan_t {
+    /// `MXR_V2IP_VLAN_*` bits.
+    pub flags: u16,
+    /// The VLAN id of the device's own traffic, 0 for untagged.
+    pub device: u16,
+    /// The VLAN id each downlink port carries, 0 to share the device's
+    /// untagged traffic: the SFP port, the UTP port with PoE, then the UTP
+    /// port.
+    pub port: [u16; MXR_V2IP_VLAN_PORTS],
+    /// The port pinned as the uplink as 1 + its index in `port`, 0 to detect
+    /// it.
+    pub uplink: u8,
+    /// Reported by the device: the port in use as the uplink, as 1 + its
+    /// index in `port`.
+    pub active_uplink: u8,
+    /// Reported by the device: the seconds before a pending configuration is
+    /// reverted.
+    pub revert_s: u8,
+}
+
+/// The ports in `mxr_v2ip_vlan_t::port`.
+pub const MXR_V2IP_VLAN_PORTS: usize = 3;
+/// The index of the SFP port in `mxr_v2ip_vlan_t::port`.
+pub const MXR_V2IP_VLAN_PORT_SFP: usize = 0;
+/// The highest VLAN id: 0 means untagged, and 4095 is reserved by IEEE 802.1Q.
+pub const MXR_V2IP_VLAN_ID_MAX: u16 = 4094;
+
+const _: () = assert!(MXR_V2IP_VLAN_PORTS == mx_remote::V2IP_VLAN_PORTS);
+const _: () = assert!(MXR_V2IP_VLAN_PORT_SFP == mx_remote::V2IP_VLAN_PORT_SFP);
+const _: () = assert!(MXR_V2IP_VLAN_ID_MAX == mx_remote::V2IP_VLAN_ID_MAX);
+
+/// Fills `out` with the VLAN configuration a V2IP device last reported.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported one. A change
+/// is announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_vlan_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_vlan(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_vlan_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_vlan(uid.into())
+            .map(|v: V2ipVlan| mxr_v2ip_vlan_t {
+                flags: v.flags.bits(),
+                device: v.device,
+                port: v.port,
+                uplink: v.uplink,
+                active_uplink: v.active_uplink,
+                revert_s: v.revert_s,
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "VLAN configuration", value) }
     })
 }
 

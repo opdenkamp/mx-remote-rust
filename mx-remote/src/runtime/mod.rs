@@ -359,6 +359,12 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_settings)
     }
 
+    /// The VLAN configuration a V2IP device last reported about itself,
+    /// `None` until it has reported one.
+    pub fn v2ip_vlan(&self, uid: DeviceUid) -> Option<V2ipVlan> {
+        self.shared.read(|state| state.device(uid)?.v2ip_vlan)
+    }
+
     /// The time zone a device announced for its mesh, `None` until it has.
     ///
     /// The mesh controller announces it with every periodic broadcast.

@@ -708,6 +708,26 @@ pub const MXR_V2IP_SETTING_POWER_SAVE_SCHEDULE: u32 = 1 << 12;
 /// The device's clock has been set, on/off. Never written.
 pub const MXR_V2IP_SETTING_CLOCK_SET: u32 = 1 << 13;
 
+// ---- V2IP VLAN flags, in `mxr_v2ip_vlan_t::flags` ----
+
+/// The block carries a configuration. A block without it carries nothing.
+pub const MXR_V2IP_VLAN_VALID: u16 = 1 << 0;
+
+/// Untagged frames arriving on the uplink are dropped instead of reaching the
+/// device.
+pub const MXR_V2IP_VLAN_TRUNK: u16 = 1 << 1;
+
+/// Reported by the device: the configuration is applied, and reverted unless
+/// the mesh controller confirms it. Never written.
+pub const MXR_V2IP_VLAN_PENDING: u16 = 1 << 2;
+
+/// Sent by the mesh controller: a pending configuration it heard, which the
+/// device then keeps.
+pub const MXR_V2IP_VLAN_CONFIRM: u16 = 1 << 3;
+
+/// Reported by the device: it has an SFP port. Never written.
+pub const MXR_V2IP_VLAN_HAS_SFP: u16 = 1 << 4;
+
 // ---- reading the packed words ----
 
 /// The remote-control type a bay status word carries in bits 16-19.

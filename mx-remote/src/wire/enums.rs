@@ -267,6 +267,26 @@ bitmask! {
     }
 }
 
+bitmask! {
+    /// The flags of a V2IP device's VLAN configuration.
+    V2ipVlanFlag: u16 {
+        /// The block carries a configuration. A block without it carries
+        /// nothing, whatever its other bytes hold.
+        VALID = 1 << 0;
+        /// Untagged frames arriving on the uplink are dropped instead of
+        /// reaching the device.
+        TRUNK = 1 << 1;
+        /// Reported by the device: the configuration is applied, and reverted
+        /// unless the mesh controller confirms it. Never written.
+        PENDING = 1 << 2;
+        /// Sent by the mesh controller: a pending configuration it heard, which
+        /// the device then keeps.
+        CONFIRM = 1 << 3;
+        /// Reported by the device: it has an SFP port. Never written.
+        HAS_SFP = 1 << 4;
+    }
+}
+
 impl V2ipDeviceSetting {
     /// The settings that are on or off, as opposed to carrying a value, and
     /// that can be written.

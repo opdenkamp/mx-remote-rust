@@ -22,7 +22,7 @@ use mx_remote::{
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
     V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute,
-    V2ipRouteTarget, VideoWallWindow,
+    V2ipRouteTarget, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -30,7 +30,7 @@ use crate::abi::{
 };
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
-use crate::subsystems::{mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t};
+use crate::subsystems::{mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_vlan_t};
 
 /// A stream's sample rate and channel count.
 #[repr(C)]
@@ -1097,6 +1097,54 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
                 end: power_save.end,
             },
         }))
+    })
+}
+
+/// Changes a V2IP device's VLAN configuration.
+///
+/// Sends `vlan`'s ids, its `uplink` and its `MXR_V2IP_VLAN_TRUNK` bit; its
+/// other flags, `active_uplink` and `revert_s` are the device's to report and
+/// are not sent. Returns `MXR_ERR_INVALID_ARGUMENT` for an id above
+/// `MXR_V2IP_VLAN_ID_MAX` or an uplink above `MXR_V2IP_VLAN_PORTS`,
+/// `MXR_ERR_UNSUPPORTED` for a device without `MXR_FEATURE_VLAN` or an SFP
+/// uplink on a device without `MXR_V2IP_VLAN_HAS_SFP`, and
+/// `MXR_ERR_NOT_REPORTED` before the device has reported its configuration,
+/// sending nothing in each case.
+///
+/// The device reverts the change unless the mesh controller confirms it.
+/// Nothing is cached: `mxr_v2ip_vlan()` reads what the device reports.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `vlan` is
+/// null or points at an initialised `mxr_v2ip_vlan_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_vlan(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    vlan: *const mxr_v2ip_vlan_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(vlan) = (unsafe { vlan.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the VLAN pointer is null",
+            );
+        };
+        from_control(r.remote.set_v2ip_vlan(
+            device.into(),
+            V2ipVlan {
+                flags: V2ipVlanFlag::from_bits(vlan.flags),
+                device: vlan.device,
+                port: vlan.port,
+                uplink: vlan.uplink,
+                active_uplink: vlan.active_uplink,
+                revert_s: vlan.revert_s,
+            },
+        ))
     })
 }
 

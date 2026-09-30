@@ -10,7 +10,7 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, V2ipAudioFormat, V2ipDeviceSettings, VideoWallOp, VideoWallWindow,
+    AmpZoneSettings, V2ipAudioFormat, V2ipDeviceSettings, V2ipVlan, VideoWallOp, VideoWallWindow,
     VolumeMuteStatus, VIDEO_WALL_CLEARED,
 };
 
@@ -443,6 +443,29 @@ pub(crate) fn build_v2ip_device_settings(
     // block and feature word.
     p.resize(128, 0);
     p.extend_from_slice(&build_v2ip_settings_block(settings));
+    p
+}
+
+/// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's VLAN
+/// configuration, leaving every other field of the configuration alone.
+///
+/// 192 bytes: the frame [`build_v2ip_device_settings`] builds, with a settings
+/// block that carries no setting, then the VLAN block at 176..192. A receiver
+/// reads that block only from a frame long enough to hold it, so one that
+/// predates it takes the frame as that settings write.
+///
+/// The VLAN block is `flags` u16 at 0, the device's VLAN id u16 at 2, the
+/// three ports' ids u16 at 4, 6 and 8, the pinned uplink at 10, the uplink in
+/// use at 11 and the revert seconds at 12, then three reserved bytes.
+pub(crate) fn build_v2ip_vlan(target: DeviceUid, vlan: &V2ipVlan) -> Vec<u8> {
+    let mut p = build_v2ip_device_settings(target, &V2ipDeviceSettings::default());
+    p.extend_from_slice(&vlan.flags.bits().to_le_bytes());
+    p.extend_from_slice(&vlan.device.to_le_bytes());
+    for id in vlan.port {
+        p.extend_from_slice(&id.to_le_bytes());
+    }
+    p.extend_from_slice(&[vlan.uplink, vlan.active_uplink, vlan.revert_s]);
+    p.resize(192, 0);
     p
 }
 

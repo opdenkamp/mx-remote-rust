@@ -33,22 +33,23 @@ use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat,
     V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
-    V2ipScalingSettings, V2ipStreamSources, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
-    MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS_VALID, VIDEO_WALL_CLEARED,
+    V2ipScalingSettings, V2ipStreamSources, V2ipVlan, VideoWallOp, VideoWallWindow,
+    VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
+    SCALING_FLAG_OPTIONS_VALID, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
     build_set_bay_name, build_set_volume, build_stats_request, build_target_only, build_time_zone,
     build_v2ip_device_settings, build_v2ip_manual_source_switch, build_v2ip_scaling,
-    build_v2ip_settings_all, build_v2ip_source_switch, build_video_wall, mv_cmd_payload, mv_sub,
-    op, Addressee, BayUid, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
-    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction,
-    RcKey, SendError, StreamAddr, V2ipDeviceSetting, V2ipStreams, DEVICE_NAME_LEN,
-    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
-    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_vlan, build_video_wall,
+    mv_cmd_payload, mv_sub, op, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
+    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
+    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
+    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
+    V2ipDeviceSetting, V2ipStreams, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
+    TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1221,6 +1222,55 @@ impl Remote {
                     d.merge_v2ip_settings(settings, ev);
                 }
             }))
+        })
+    }
+
+    // ---- V2IP VLAN ----
+
+    /// Changes a V2IP device's VLAN configuration.
+    ///
+    /// Writes the VLAN ids, the pinned uplink and the
+    /// [`TRUNK`](V2ipVlanFlag::TRUNK) flag of `vlan`; its other flags and the
+    /// fields only the device reports are not sent. Refused before anything is
+    /// sent unless the device announces [`DeviceFeature::VLAN`] and has
+    /// reported its configuration, every id is at most
+    /// [`V2IP_VLAN_ID_MAX`](crate::V2IP_VLAN_ID_MAX), and the uplink is
+    /// detected or names a port the device has.
+    ///
+    /// The device applies the change at once and reverts it unless the mesh
+    /// controller, hearing the device report it, confirms it. Nothing is
+    /// cached here: [`Remote::v2ip_vlan`] reads what the device reports, and
+    /// [`V2ipVlan::is_pending`] whether it is still to be confirmed.
+    pub fn set_v2ip_vlan(&self, device: DeviceUid, vlan: V2ipVlan) -> Result<(), ControlError> {
+        if !vlan.is_valid() {
+            return Err(ControlError::InvalidRequest(
+                "a VLAN id is out of range or the uplink names no port",
+            ));
+        }
+        let written = V2ipVlan {
+            flags: V2ipVlanFlag::VALID | (vlan.flags & V2ipVlanFlag::TRUNK),
+            device: vlan.device,
+            port: vlan.port,
+            uplink: vlan.uplink,
+            active_uplink: 0,
+            revert_s: 0,
+        };
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.hello.features.has(DeviceFeature::VLAN) {
+                return Err(ControlError::Unsupported("the device does not take VLANs"));
+            }
+            let Some(reported) = d.v2ip_vlan else {
+                return Err(ControlError::NotReported("the device's VLAN configuration"));
+            };
+            if written.pinned_uplink() == Some(V2IP_VLAN_PORT_SFP) && !reported.has_sfp() {
+                return Err(ControlError::Unsupported("the device has no SFP port"));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_DEVICE_CFG,
+                build_v2ip_vlan(d.uid, &written),
+            ))
         })
     }
 

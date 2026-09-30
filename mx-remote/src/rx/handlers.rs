@@ -11,14 +11,14 @@ use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
     V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipScalingSettings, V2ipStreamSource,
-    V2ipStreamSources, V2ipTilingConfig, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
+    V2ipStreamSources, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
     SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_SKIP_420,
     VOLUME_UNCHANGED,
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, BAY_CONFIG_SIZE,
-    FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipVlanFlag,
+    BAY_CONFIG_SIZE, FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
 };
 
 use super::Rx;
@@ -462,6 +462,10 @@ const V2IP_SETTINGS_SIZE: usize = 16;
 const V2IP_SCHEDULE_AT: usize = V2IP_SETTINGS_AT + V2IP_SETTINGS_SIZE;
 const V2IP_SCHEDULE_SIZE: usize = 28;
 
+/// The VLAN configuration, behind the whole 48-byte settings block.
+const V2IP_VLAN_AT: usize = V2IP_SETTINGS_AT + 48;
+const V2IP_VLAN_SIZE: usize = 16;
+
 /// Applies a device's V2IP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
 ///
@@ -630,6 +634,27 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
                 frame.as_applied_to(reported)
             };
             device.merge_v2ip_settings(frame, ev);
+        }
+    }
+
+    // Only the device knows what it runs. A controller's frame about it is a
+    // write the device may yet revert, or the confirmation of one.
+    if subject == rx.sender() {
+        if let Some(v) = p.get(V2IP_VLAN_AT..V2IP_VLAN_AT + V2IP_VLAN_SIZE) {
+            let flags = V2ipVlanFlag::from_bits(u16_at(v, 0));
+            if flags.has(V2ipVlanFlag::VALID) {
+                let vlan = V2ipVlan {
+                    flags,
+                    device: u16_at(v, 2),
+                    port: [u16_at(v, 4), u16_at(v, 6), u16_at(v, 8)],
+                    uplink: v[10],
+                    active_uplink: v[11],
+                    revert_s: v[12],
+                };
+                if let Some(device) = state.device_mut(subject) {
+                    device.set_v2ip_vlan(vlan, ev);
+                }
+            }
         }
     }
 }

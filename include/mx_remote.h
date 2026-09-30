@@ -1105,6 +1105,34 @@
 #define MXR_V2IP_SETTING_CLOCK_SET (1 << 13)
 
 /**
+ * The block carries a configuration. A block without it carries nothing.
+ */
+#define MXR_V2IP_VLAN_VALID (1 << 0)
+
+/**
+ * Untagged frames arriving on the uplink are dropped instead of reaching the
+ * device.
+ */
+#define MXR_V2IP_VLAN_TRUNK (1 << 1)
+
+/**
+ * Reported by the device: the configuration is applied, and reverted unless
+ * the mesh controller confirms it. Never written.
+ */
+#define MXR_V2IP_VLAN_PENDING (1 << 2)
+
+/**
+ * Sent by the mesh controller: a pending configuration it heard, which the
+ * device then keeps.
+ */
+#define MXR_V2IP_VLAN_CONFIRM (1 << 3)
+
+/**
+ * Reported by the device: it has an SFP port. Never written.
+ */
+#define MXR_V2IP_VLAN_HAS_SFP (1 << 4)
+
+/**
  * The colour space a V2IP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -1276,6 +1304,21 @@
  * Bytes in `mxr_time_zone_t.rule`, its NUL included.
  */
 #define MXR_TIME_ZONE_RULE_LEN 64
+
+/**
+ * The ports in `mxr_v2ip_vlan_t::port`.
+ */
+#define MXR_V2IP_VLAN_PORTS 3
+
+/**
+ * The index of the SFP port in `mxr_v2ip_vlan_t::port`.
+ */
+#define MXR_V2IP_VLAN_PORT_SFP 0
+
+/**
+ * The highest VLAN id: 0 means untagged, and 4095 is reserved by IEEE 802.1Q.
+ */
+#define MXR_V2IP_VLAN_ID_MAX 4094
 
 /**
  * The audio return channel a bay is carrying.
@@ -1722,6 +1765,46 @@ typedef struct {
    */
   int8_t ir_profile_sink;
 } mxr_v2ip_device_settings_t;
+
+/**
+ * VLAN tagging on a V2IP device's uplink.
+ *
+ * Only the device knows what it runs, so this is what it reported about
+ * itself. A change written to it is applied at once and carries
+ * `MXR_V2IP_VLAN_PENDING` until the mesh controller confirms it; unconfirmed,
+ * the device reverts it.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_VLAN_*` bits.
+   */
+  uint16_t flags;
+  /**
+   * The VLAN id of the device's own traffic, 0 for untagged.
+   */
+  uint16_t device;
+  /**
+   * The VLAN id each downlink port carries, 0 to share the device's
+   * untagged traffic: the SFP port, the UTP port with PoE, then the UTP
+   * port.
+   */
+  uint16_t port[MXR_V2IP_VLAN_PORTS];
+  /**
+   * The port pinned as the uplink as 1 + its index in `port`, 0 to detect
+   * it.
+   */
+  uint8_t uplink;
+  /**
+   * Reported by the device: the port in use as the uplink, as 1 + its
+   * index in `port`.
+   */
+  uint8_t active_uplink;
+  /**
+   * Reported by the device: the seconds before a pending configuration is
+   * reverted.
+   */
+  uint8_t revert_s;
+} mxr_v2ip_vlan_t;
 
 /**
  * The output format to scale a V2IP sink to.
@@ -4471,6 +4554,30 @@ mxr_result_t mxr_set_all_v2ip_device_settings(const mxr_remote_t *remote,
                                               const mxr_v2ip_power_save_t *power_save);
 
 /**
+ * Changes a V2IP device's VLAN configuration.
+ *
+ * Sends `vlan`'s ids, its `uplink` and its `MXR_V2IP_VLAN_TRUNK` bit; its
+ * other flags, `active_uplink` and `revert_s` are the device's to report and
+ * are not sent. Returns `MXR_ERR_INVALID_ARGUMENT` for an id above
+ * `MXR_V2IP_VLAN_ID_MAX` or an uplink above `MXR_V2IP_VLAN_PORTS`,
+ * `MXR_ERR_UNSUPPORTED` for a device without `MXR_FEATURE_VLAN` or an SFP
+ * uplink on a device without `MXR_V2IP_VLAN_HAS_SFP`, and
+ * `MXR_ERR_NOT_REPORTED` before the device has reported its configuration,
+ * sending nothing in each case.
+ *
+ * The device reverts the change unless the mesh controller confirms it.
+ * Nothing is cached: `mxr_v2ip_vlan()` reads what the device reports.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `vlan` is
+ * null or points at an initialised `mxr_v2ip_vlan_t`.
+ */
+mxr_result_t mxr_set_v2ip_vlan(const mxr_remote_t *remote,
+                               mxr_uid_t device,
+                               const mxr_v2ip_vlan_t *vlan);
+
+/**
  * Sets the infrared profile of a V2IP device's output infrared port.
  *
  * `MXR_V2IP_IR_PROFILE_NOT_SET` makes the port follow the global one.
@@ -5250,6 +5357,19 @@ mxr_result_t mxr_time_zone(const mxr_remote_t *remote, mxr_uid_t uid, mxr_time_z
  * `uint64_t`.
  */
 mxr_result_t mxr_device_clock(const mxr_remote_t *remote, mxr_uid_t uid, uint64_t *out);
+
+/**
+ * Fills `out` with the VLAN configuration a V2IP device last reported.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported one. A change
+ * is announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_vlan_t`.
+ */
+mxr_result_t mxr_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_vlan_t *out);
 
 /**
  * Fills `out` with the window a sink is told to show.
