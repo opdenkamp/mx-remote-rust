@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 17] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 20] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -492,6 +492,24 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
         ),
         ("MXR_MV_BOOL_", core_bits(&enums, "MultiviewerBool"), &[], 3),
         ("MXR_V2IP_VLAN_", core_bits(&enums, "V2ipVlanFlag"), &[], 5),
+        (
+            "MXR_V2IP_TEST_PATTERN_",
+            core_bits(&enums, "V2ipTestPattern"),
+            &[],
+            7,
+        ),
+        (
+            "MXR_V2IP_TONE_MODE_",
+            core_bits(&enums, "V2ipToneMode"),
+            &[],
+            5,
+        ),
+        (
+            "MXR_V2IP_TESTCARD_",
+            core_bits(&enums, "V2ipTestcardFlag"),
+            &[],
+            6,
+        ),
         (
             "MXR_V2IP_SETTING_",
             core_bits(&enums, "V2ipDeviceSetting"),
@@ -731,6 +749,55 @@ fn the_vlan_calls_check_their_arguments_first() {
     }
     // SAFETY: a live handle and an initialised struct.
     let rc = unsafe { mxr_set_v2ip_vlan(remote, uid_n(9), &fine) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// The test card calls answer a caller's mistake as an argument error and a
+/// device never heard from as not found, before anything is sent.
+#[test]
+fn the_testcard_calls_check_their_arguments_first() {
+    let remote = client(c"abi-testcard", c"00000022.00000000.00000000.000000a7");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_testcard(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_testcard_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_testcard(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    let loud = mxr_v2ip_test_tone_t {
+        mode: MXR_V2IP_TONE_MODE_CONTINUOUS,
+        level: 1,
+        channels: 2,
+        freq: 1000,
+        rate: 48000,
+    };
+    let no_lead = mxr_v2ip_test_sync_t {
+        period: 0,
+        lead: 1,
+        offset: 0,
+        beep_ms: MXR_V2IP_SYNC_BEEP_MS_MIN,
+    };
+    // SAFETY: a live handle, and each struct null or initialised.
+    let calls = unsafe {
+        [
+            mxr_set_v2ip_test_pattern(remote, uid_n(9), MXR_V2IP_TEST_PATTERN_CARD + 1, 0),
+            mxr_set_v2ip_test_pattern(remote, uid_n(9), MXR_V2IP_TEST_PATTERN_FLAT, 0x0100_0000),
+            mxr_set_v2ip_test_tone(remote, uid_n(9), ptr::null()),
+            mxr_set_v2ip_test_tone(remote, uid_n(9), &loud),
+            mxr_set_v2ip_test_sync(remote, uid_n(9), ptr::null()),
+            mxr_set_v2ip_test_sync(remote, uid_n(9), &no_lead),
+        ]
+    };
+    for (n, rc) in calls.into_iter().enumerate() {
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "call {n}");
+    }
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_request_v2ip_testcard(remote, uid_n(9)) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
     // SAFETY: created above and not yet freed.

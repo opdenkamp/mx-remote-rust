@@ -15,7 +15,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// A peer also sets this client's offline window from it: 15s from 0x20, and
 /// 60s from 0x2A when the peer is itself on 0x2A.
-pub const PROTOCOL_VERSION: u16 = 0x2A;
+pub const PROTOCOL_VERSION: u16 = 0x2B;
 
 /// UDP port used in broadcast mode.
 pub const BROADCAST_PORT: u16 = 8811;

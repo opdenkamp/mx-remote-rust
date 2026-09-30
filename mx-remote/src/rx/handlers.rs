@@ -11,14 +11,16 @@ use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
     V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipScalingSettings, V2ipStreamSource,
-    V2ipStreamSources, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
-    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,
-    SCALING_FLAG_SKIP_420, VOLUME_UNCHANGED,
+    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
+    VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE,
+    SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
+    VOLUME_UNCHANGED,
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipVlanFlag,
-    BAY_CONFIG_SIZE, FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipTestPattern,
+    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
+    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
 };
 
 use super::Rx;
@@ -863,6 +865,56 @@ pub(super) fn time(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]) {
     };
     if let Some(device) = state.device_mut(rx.sender()) {
         device.clock = Some((utc, rx.timestamp));
+    }
+}
+
+/// The size of every `V2IP_TESTCARD` frame.
+const TESTCARD_SIZE: usize = 56;
+
+/// The frame type of a sink's report of its test card; the other two, a
+/// request and a change, are addressed to a sink and change nothing here.
+const TESTCARD_STATE: u8 = 2;
+
+/// Records the test card a sink reports: the sink's uid at 0, the type at 16,
+/// the flags at 17, pattern and tone mode at 18 and 19, the colour u32 at 20,
+/// then the tone - frequency u16 at 24, level i8 at 26, channels at 27, rate
+/// u32 at 28 - the lip-sync - period and lead u16 at 32 and 34, offset u32 at
+/// 36, beep u16 at 40 - two reserved bytes, and the counters u32 at 44, 48 and
+/// 52.
+///
+/// A sink answers the device that asked, but on the group, so every device
+/// hears it and records it against the sink the frame names.
+pub(super) fn v2ip_testcard(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
+    let p = rx.frame.payload();
+    let Some(p) = p.get(..TESTCARD_SIZE) else {
+        return;
+    };
+    if p[16] != TESTCARD_STATE {
+        return;
+    }
+    let testcard = V2ipTestcard {
+        flags: V2ipTestcardFlag::from_bits(p[17]),
+        pattern: V2ipTestPattern::from_wire(p[18]),
+        colour: u32_at(p, 20) & 0x00FF_FFFF,
+        tone: V2ipTestTone {
+            mode: V2ipToneMode::from_wire(p[19]),
+            freq: u16_at(p, 24),
+            level: p[26] as i8,
+            channels: p[27],
+            rate: u32_at(p, 28),
+        },
+        sync: V2ipTestSync {
+            period: u16_at(p, 32),
+            lead: u16_at(p, 34),
+            offset: u32_at(p, 36),
+            beep_ms: u16_at(p, 40),
+        },
+        frames: u32_at(p, 44),
+        periods: u32_at(p, 48),
+        marks: u32_at(p, 52),
+    };
+    if let Some(device) = state.device_mut(uid_at(p, 0)) {
+        device.set_v2ip_testcard(testcard, ev);
     }
 }
 

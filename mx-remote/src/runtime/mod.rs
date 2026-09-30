@@ -365,6 +365,12 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_vlan)
     }
 
+    /// The test card a V2IP sink last reported, `None` until it has answered
+    /// [`Remote::request_v2ip_testcard`] or a change.
+    pub fn v2ip_testcard(&self, uid: DeviceUid) -> Option<V2ipTestcard> {
+        self.shared.read(|state| state.device(uid)?.v2ip_testcard)
+    }
+
     /// The time zone a device announced for its mesh, `None` until it has.
     ///
     /// The mesh controller announces it with every periodic broadcast, empty

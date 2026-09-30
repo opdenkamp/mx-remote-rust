@@ -10,8 +10,8 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, V2ipAudioFormat, V2ipDeviceSettings, V2ipVlan, VideoWallOp, VideoWallWindow,
-    VolumeMuteStatus, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, V2ipAudioFormat, V2ipDeviceSettings, V2ipTestcard, V2ipVlan, VideoWallOp,
+    VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
 };
 
 use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN};
@@ -466,6 +466,51 @@ pub(crate) fn build_v2ip_vlan(target: DeviceUid, vlan: &V2ipVlan) -> Vec<u8> {
     }
     p.extend_from_slice(&[vlan.uplink, vlan.active_uplink, vlan.revert_s]);
     p.resize(192, 0);
+    p
+}
+
+/// The frame types of `V2IP_TESTCARD` (0x4E) a client sends: ask a sink for
+/// its test card, or change parts of it.
+pub(crate) mod testcard_type {
+    pub(crate) const REQUEST: u8 = 0;
+    pub(crate) const SET: u8 = 1;
+}
+
+/// The parts of a test card a change carries, in its flags byte.
+pub(crate) mod testcard_part {
+    pub(crate) const PATTERN: u8 = 1 << 0;
+    pub(crate) const TONE: u8 = 1 << 1;
+    pub(crate) const SYNC: u8 = 1 << 2;
+}
+
+/// Builds a `V2IP_TESTCARD` (0x4E) payload: 56 bytes, laid out as the handler
+/// that reads a sink's report describes. A sink reads only the parts `parts`
+/// names from a change, and nothing past the type from a request; the counters
+/// are the sink's to report and go out zero.
+pub(crate) fn build_v2ip_testcard(
+    target: DeviceUid,
+    kind: u8,
+    parts: u8,
+    testcard: &V2ipTestcard,
+) -> Vec<u8> {
+    let mut p = Vec::with_capacity(56);
+    p.extend_from_slice(target.as_bytes());
+    p.extend_from_slice(&[
+        kind,
+        parts,
+        testcard.pattern.to_wire(),
+        testcard.tone.mode.to_wire(),
+    ]);
+    p.extend_from_slice(&testcard.colour.to_le_bytes());
+    p.extend_from_slice(&testcard.tone.freq.to_le_bytes());
+    p.extend_from_slice(&testcard.tone.level.to_le_bytes());
+    p.push(testcard.tone.channels);
+    p.extend_from_slice(&testcard.tone.rate.to_le_bytes());
+    p.extend_from_slice(&testcard.sync.period.to_le_bytes());
+    p.extend_from_slice(&testcard.sync.lead.to_le_bytes());
+    p.extend_from_slice(&testcard.sync.offset.to_le_bytes());
+    p.extend_from_slice(&testcard.sync.beep_ms.to_le_bytes());
+    p.resize(56, 0);
     p
 }
 

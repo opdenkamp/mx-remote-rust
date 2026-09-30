@@ -33,23 +33,23 @@ use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat,
     V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
-    V2ipScalingSettings, V2ipStreamSources, V2ipVlan, VideoWallOp, VideoWallWindow,
-    VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS_VALID, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan,
+    VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
     build_set_bay_name, build_set_volume, build_stats_request, build_target_only, build_time_zone,
     build_v2ip_device_settings, build_v2ip_manual_source_switch, build_v2ip_scaling,
-    build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_vlan, build_video_wall,
-    mv_cmd_payload, mv_sub, op, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
-    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
-    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
-    V2ipDeviceSetting, V2ipStreams, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
-    TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan,
+    build_video_wall, mv_cmd_payload, mv_sub, op, testcard_part, testcard_type, Addressee, BayUid,
+    DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction,
+    RcKey, SendError, StreamAddr, V2ipDeviceSetting, V2ipFpgaFeature, V2ipStreams, V2ipTestPattern,
+    V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1282,6 +1282,131 @@ impl Remote {
                 Addressee::device(d),
                 op::V2IP_DEVICE_CFG,
                 build_v2ip_vlan(d.uid, &written),
+            ))
+        })
+    }
+
+    // ---- V2IP test card ----
+
+    /// Asks a V2IP sink for its test card, which it reports straight back;
+    /// [`Remote::v2ip_testcard`] reads it.
+    ///
+    /// Refused unless the sink's video processor has reported
+    /// [`SINK_TEST_PATTERN`](V2ipFpgaFeature::SINK_TEST_PATTERN). A sink with
+    /// that feature but without the module that draws the test card does not
+    /// answer.
+    pub fn request_v2ip_testcard(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.send_v2ip_testcard(device, testcard_type::REQUEST, 0, V2ipTestcard::default())
+    }
+
+    /// Shows a test pattern on a V2IP sink's output, or none for
+    /// [`V2ipTestPattern::OFF`]. `colour` is `0xRRGGBB`, used by
+    /// [`V2ipTestPattern::FLAT`].
+    ///
+    /// A pattern runs until it is turned off, and holds the output on while it
+    /// does. The sink reports its test card in answer. Refused as
+    /// [`Remote::request_v2ip_testcard`] is, and for a pattern this library
+    /// does not name or a colour above `0xFFFFFF`.
+    pub fn set_v2ip_test_pattern(
+        &self,
+        device: DeviceUid,
+        pattern: V2ipTestPattern,
+        colour: u32,
+    ) -> Result<(), ControlError> {
+        if pattern.to_wire() > V2ipTestPattern::CARD.to_wire() || colour > 0x00FF_FFFF {
+            return Err(ControlError::InvalidRequest(
+                "no such test pattern, or a colour wider than 24 bits",
+            ));
+        }
+        self.send_v2ip_testcard(
+            device,
+            testcard_type::SET,
+            testcard_part::PATTERN,
+            V2ipTestcard {
+                pattern,
+                colour,
+                ..V2ipTestcard::default()
+            },
+        )
+    }
+
+    /// Plays a test tone on a V2IP sink's output.
+    ///
+    /// Every value is checked here, as the sink ignores a tone that is not
+    /// [`V2ipTestTone::is_valid`]; [`V2ipToneMode::OFF`] stops it whatever the
+    /// rest holds, and the sink keeps those values as its last ones. Otherwise
+    /// as [`Remote::set_v2ip_test_pattern`].
+    pub fn set_v2ip_test_tone(
+        &self,
+        device: DeviceUid,
+        tone: V2ipTestTone,
+    ) -> Result<(), ControlError> {
+        if tone.mode != V2ipToneMode::OFF && !tone.is_valid() {
+            return Err(ControlError::InvalidRequest(
+                "a test tone value is out of range",
+            ));
+        }
+        self.send_v2ip_testcard(
+            device,
+            testcard_type::SET,
+            testcard_part::TONE,
+            V2ipTestcard {
+                tone,
+                ..V2ipTestcard::default()
+            },
+        )
+    }
+
+    /// Sets a V2IP sink's lip-sync flash.
+    ///
+    /// Checked here as [`V2ipTestSync::is_valid`], since the sink ignores
+    /// settings that are not. Otherwise as [`Remote::set_v2ip_test_pattern`].
+    pub fn set_v2ip_test_sync(
+        &self,
+        device: DeviceUid,
+        sync: V2ipTestSync,
+    ) -> Result<(), ControlError> {
+        if !sync.is_valid() {
+            return Err(ControlError::InvalidRequest(
+                "a lip-sync value is out of range",
+            ));
+        }
+        self.send_v2ip_testcard(
+            device,
+            testcard_type::SET,
+            testcard_part::SYNC,
+            V2ipTestcard {
+                sync,
+                ..V2ipTestcard::default()
+            },
+        )
+    }
+
+    /// The one send behind the test card methods. Nothing is cached: the sink
+    /// answers every frame with its test card.
+    fn send_v2ip_testcard(
+        &self,
+        device: DeviceUid,
+        kind: u8,
+        parts: u8,
+        testcard: V2ipTestcard,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            let Some(features) = d.v2ip_features else {
+                return Err(ControlError::NotReported(
+                    "the sink's video processor features",
+                ));
+            };
+            if !features.has(V2ipFpgaFeature::SINK_TEST_PATTERN) {
+                return Err(ControlError::Unsupported(
+                    "the sink cannot draw a test card",
+                ));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_TESTCARD,
+                build_v2ip_testcard(d.uid, kind, parts, &testcard),
             ))
         })
     }

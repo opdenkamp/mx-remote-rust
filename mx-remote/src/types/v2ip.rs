@@ -7,9 +7,10 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipVlanFlag,
-    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipTestPattern,
+    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX,
+    V2IP_IR_PROFILE_NOT_SET,
 };
 
 /// Which of a V2IP device's streams an address describes.
@@ -837,6 +838,120 @@ const fn port_index(wire: u8) -> Option<usize> {
     match wire {
         1..=3 => Some(wire as usize - 1),
         _ => None,
+    }
+}
+
+/// The lowest test tone frequency, in Hz.
+pub const V2IP_TONE_FREQ_MIN: u16 = 20;
+/// The highest test tone frequency, in Hz.
+pub const V2IP_TONE_FREQ_MAX: u16 = 20_000;
+/// The quietest test tone level, in dBFS; the loudest is 0.
+pub const V2IP_TONE_LEVEL_MIN: i8 = -60;
+/// The most channels a test tone plays on.
+pub const V2IP_TONE_CHANNELS_MAX: u8 = 8;
+/// The sample rates a test tone plays at, in Hz.
+pub const V2IP_TONE_RATES: [u32; 3] = [44_100, 48_000, 96_000];
+/// The largest lip-sync beep offset, in sample periods.
+pub const V2IP_SYNC_OFFSET_MAX: u32 = 0x00FF_FFFF;
+/// The shortest lip-sync beep, in milliseconds.
+pub const V2IP_SYNC_BEEP_MS_MIN: u16 = 1;
+/// The longest lip-sync beep, in milliseconds.
+pub const V2IP_SYNC_BEEP_MS_MAX: u16 = 10_000;
+
+/// A V2IP sink's test tone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipTestTone {
+    /// What plays.
+    pub mode: V2ipToneMode,
+    /// The frequency, in Hz.
+    pub freq: u16,
+    /// The level, in dBFS.
+    pub level: i8,
+    /// The channels it plays on.
+    pub channels: u8,
+    /// The sample rate, in Hz.
+    pub rate: u32,
+}
+
+impl V2ipTestTone {
+    /// Whether a sink plays this tone: a mode it names, and every value in
+    /// range. A line-up tone needs two channels or more.
+    pub fn is_valid(&self) -> bool {
+        let min_channels = if self.mode == V2ipToneMode::LINEUP {
+            2
+        } else {
+            1
+        };
+        self.mode.to_wire() <= V2ipToneMode::BEEP.to_wire()
+            && (V2IP_TONE_FREQ_MIN..=V2IP_TONE_FREQ_MAX).contains(&self.freq)
+            && (V2IP_TONE_LEVEL_MIN..=0).contains(&self.level)
+            && (min_channels..=V2IP_TONE_CHANNELS_MAX).contains(&self.channels)
+            && V2IP_TONE_RATES.contains(&self.rate)
+    }
+}
+
+/// A V2IP sink's lip-sync flash: a pattern frame is marked every `period`,
+/// the frame `lead` after a mark flashes white, and a
+/// [`BEEP`](V2ipToneMode::BEEP) tone starts `offset` sample periods after it.
+///
+/// The offset is a calibration: nothing measures the sink's own delay between
+/// a picture and a sample reaching the HDMI link, and a display adds its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipTestSync {
+    /// Every this many pattern frames is marked, 0 for none.
+    pub period: u16,
+    /// The frame this many after a mark flashes.
+    pub lead: u16,
+    /// The sample periods between a mark and the beep.
+    pub offset: u32,
+    /// How long the beep lasts, in milliseconds.
+    pub beep_ms: u16,
+}
+
+impl V2ipTestSync {
+    /// Whether a sink takes these settings: the lead is below the period, or
+    /// 0 without one, and the offset and beep are in range.
+    pub fn is_valid(&self) -> bool {
+        let lead_ok = if self.period == 0 {
+            self.lead == 0
+        } else {
+            self.lead < self.period
+        };
+        lead_ok
+            && self.offset <= V2IP_SYNC_OFFSET_MAX
+            && (V2IP_SYNC_BEEP_MS_MIN..=V2IP_SYNC_BEEP_MS_MAX).contains(&self.beep_ms)
+    }
+}
+
+/// The test card a V2IP sink draws on its output, as it last reported it.
+///
+/// A sink reports it only when asked, with
+/// [`Remote::request_v2ip_testcard`](crate::Remote::request_v2ip_testcard) or
+/// in answer to a change. The counters run free and wrap.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipTestcard {
+    /// What the sink reports about its test card.
+    pub flags: V2ipTestcardFlag,
+    /// The pattern.
+    pub pattern: V2ipTestPattern,
+    /// The colour of a [`FLAT`](V2ipTestPattern::FLAT) pattern, `0xRRGGBB`.
+    pub colour: u32,
+    /// The tone.
+    pub tone: V2ipTestTone,
+    /// The lip-sync flash.
+    pub sync: V2ipTestSync,
+    /// Pattern frames sent.
+    pub frames: u32,
+    /// Sample periods since the tone started.
+    pub periods: u32,
+    /// Lip-sync marks the tone has seen.
+    pub marks: u32,
+}
+
+impl V2ipTestcard {
+    /// Whether the sink can draw the test card.
+    pub const fn supported(&self) -> bool {
+        self.flags.has(V2ipTestcardFlag::SUPPORTED)
     }
 }
 

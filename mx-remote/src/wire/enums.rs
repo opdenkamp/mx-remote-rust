@@ -220,6 +220,8 @@ bitmask! {
         SINK_STATE = 1 << 4;
         /// Reports information about the stream its sink receives.
         SINK_STREAM_INFO = 1 << 5;
+        /// Draws a test pattern, tone and lip-sync flash on its sink's output.
+        SINK_TEST_PATTERN = 1 << 8;
     }
 }
 
@@ -264,6 +266,60 @@ bitmask! {
         /// The device's clock has been set, on/off. Reported by the device
         /// itself and never written.
         CLOCK_SET = 1 << 13;
+    }
+}
+
+wire_enum! {
+    /// The test pattern a V2IP sink draws on its output.
+    V2ipTestPattern: u8 {
+        /// No pattern.
+        OFF = 0;
+        /// Colour bars.
+        BARS = 1;
+        /// One flat colour, the one the test card carries.
+        FLAT = 2;
+        /// A ramp.
+        RAMP = 3;
+        /// A grid.
+        GRID = 4;
+        /// A strip.
+        STRIP = 5;
+        /// A test card.
+        CARD = 6;
+    }
+}
+
+wire_enum! {
+    /// The test tone a V2IP sink plays on its output.
+    V2ipToneMode: u8 {
+        /// No tone.
+        OFF = 0;
+        /// A continuous tone.
+        CONTINUOUS = 1;
+        /// A channel ident.
+        IDENT = 2;
+        /// A line-up tone, which needs two channels or more.
+        LINEUP = 3;
+        /// A beep on each lip-sync mark.
+        BEEP = 4;
+    }
+}
+
+bitmask! {
+    /// What a V2IP sink reports about its test card.
+    V2ipTestcardFlag: u8 {
+        /// The sink can draw the test card.
+        SUPPORTED = 1 << 0;
+        /// The output shows the pattern.
+        SHOWING = 1 << 1;
+        /// The tone plays on the output.
+        PLAYING = 1 << 2;
+        /// A pattern change has yet to reach the video processor.
+        PATTERN_PENDING = 1 << 3;
+        /// A tone change has yet to reach the video processor.
+        TONE_PENDING = 1 << 4;
+        /// A lip-sync change has yet to reach the video processor.
+        SYNC_PENDING = 1 << 5;
     }
 }
 

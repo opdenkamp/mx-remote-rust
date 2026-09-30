@@ -13,14 +13,16 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::types::{
     AudioChangeSource, MultiviewerCommand, V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason,
-    V2ipDecoderState, V2ipPowerSaveSchedule, V2ipVlan, VideoWallCommand, VideoWallOp,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
+    V2ipDecoderState, V2ipPowerSaveSchedule, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan,
+    VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,
+    SCALING_FLAG_SKIP_420,
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipVlanFlag, PROTOCOL_VERSION,
-    V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipTestPattern, V2ipTestcardFlag,
+    V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, vlan_block, Cfg};
@@ -2860,4 +2862,106 @@ fn a_frame_that_is_not_the_whole_state_keeps_the_mode() {
         "the write did not land"
     );
     assert_eq!(scaling.configured_mode().map(|m| m.1), Some(60));
+}
+
+/// A `V2IP_TESTCARD` frame, composed from the module's `tc_mesh_frame`
+/// declaration rather than captured: the uid at 0, type 16, flags 17, pattern
+/// 18, tone mode 19, colour 20, frequency 24, level 26, channels 27, rate 28,
+/// period 32, lead 34, offset 36, beep 40, two reserved bytes left poisoned,
+/// then frames 44, periods 48 and marks 52.
+fn testcard_frame(target: DeviceUid, kind: u8) -> Vec<u8> {
+    let mut p = poisoned(56);
+    p[..16].copy_from_slice(target.as_bytes());
+    p[16] = kind;
+    p[17] = 0b0010_1011;
+    p[18] = 2;
+    p[19] = 3;
+    p[20..24].copy_from_slice(&0xAB12_3456u32.to_le_bytes());
+    p[24..26].copy_from_slice(&0x0457u16.to_le_bytes());
+    p[26] = (-23i8) as u8;
+    p[27] = 6;
+    p[28..32].copy_from_slice(&96_000u32.to_le_bytes());
+    p[32..34].copy_from_slice(&0x0312u16.to_le_bytes());
+    p[34..36].copy_from_slice(&0x0211u16.to_le_bytes());
+    p[36..40].copy_from_slice(&0x00AB_CDEFu32.to_le_bytes());
+    p[40..42].copy_from_slice(&0x0765u16.to_le_bytes());
+    p[44..48].copy_from_slice(&0x1122_3344u32.to_le_bytes());
+    p[48..52].copy_from_slice(&0x5566_7788u32.to_le_bytes());
+    p[52..56].copy_from_slice(&0x99AA_BBCCu32.to_le_bytes());
+    p
+}
+
+/// A sink's report of its test card is read field by field, against the sink
+/// the frame names; every value is distinct and wider than a byte where its
+/// field is, and the colour's unused top byte is junk.
+#[test]
+fn a_testcard_state_is_read_field_by_field() {
+    let mut h = command_device(125);
+    let sink = uid_n(126);
+    h.feed_as(
+        sink,
+        op::SYS_HELLO,
+        &hello_payload(0x2B, "ONEIP", "TC0001", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    // Answered to the device that asked, but heard by everyone.
+    h.feed_as(sink, op::V2IP_TESTCARD, &testcard_frame(sink, 2));
+
+    let tc = h
+        .state
+        .device(sink)
+        .and_then(|d| d.v2ip_testcard)
+        .expect("no test card was read");
+    assert_eq!(
+        tc,
+        V2ipTestcard {
+            flags: V2ipTestcardFlag::from_bits(0b0010_1011),
+            pattern: V2ipTestPattern::FLAT,
+            colour: 0x0012_3456,
+            tone: V2ipTestTone {
+                mode: V2ipToneMode::LINEUP,
+                freq: 0x0457,
+                level: -23,
+                channels: 6,
+                rate: 96_000,
+            },
+            sync: V2ipTestSync {
+                period: 0x0312,
+                lead: 0x0211,
+                offset: 0x00AB_CDEF,
+                beep_ms: 0x0765,
+            },
+            frames: 0x1122_3344,
+            periods: 0x5566_7788,
+            marks: 0x99AA_BBCC,
+        }
+    );
+    assert!(tc.supported());
+    assert!(tc.flags.has(V2ipTestcardFlag::SYNC_PENDING));
+
+    let changes = |h: &Harness| {
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::V2ipTestcardChanged { .. }))
+            .count()
+    };
+    assert_eq!(changes(&h), 1);
+    h.feed_as(sink, op::V2IP_TESTCARD, &testcard_frame(sink, 2));
+    assert_eq!(changes(&h), 1, "an unchanged report raised an event");
+}
+
+/// A request or a change addressed to a sink is not its report, and a frame
+/// shorter than the whole struct is nothing.
+#[test]
+fn only_a_whole_testcard_state_is_recorded() {
+    let mut h = command_device(127);
+    let sink = uid_n(128);
+    h.feed_as(
+        sink,
+        op::SYS_HELLO,
+        &hello_payload(0x2B, "ONEIP", "TC0002", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    h.feed(op::V2IP_TESTCARD, &testcard_frame(sink, 0));
+    h.feed(op::V2IP_TESTCARD, &testcard_frame(sink, 1));
+    h.feed_as(sink, op::V2IP_TESTCARD, &testcard_frame(sink, 2)[..55]);
+    assert_eq!(h.state.device(sink).and_then(|d| d.v2ip_testcard), None);
 }

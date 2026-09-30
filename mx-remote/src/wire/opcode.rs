@@ -91,6 +91,7 @@ pub(crate) mod op {
     pub(crate) const TIME_ZONE: Opcode = Opcode(0x4B);
     pub(crate) const V2IP_SETTINGS_ALL: Opcode = Opcode(0x4C);
     pub(crate) const TIME: Opcode = Opcode(0x4D);
+    pub(crate) const V2IP_TESTCARD: Opcode = Opcode(0x4E);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -184,6 +185,7 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::TIME_ZONE => 0x2A,
         op::V2IP_SETTINGS_ALL => 0x2A,
         op::TIME => 0x2A,
+        op::V2IP_TESTCARD => 0x2B,
         Opcode(_) => return None,
     })
 }

@@ -22,7 +22,7 @@ use mx_remote::{
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
     V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute,
-    V2ipRouteTarget, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
+    V2ipRouteTarget, V2ipTestPattern, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -30,7 +30,10 @@ use crate::abi::{
 };
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
-use crate::subsystems::{mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_vlan_t};
+use crate::subsystems::{
+    mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t,
+    mxr_v2ip_vlan_t,
+};
 
 /// A stream's sample rate and channel count.
 #[repr(C)]
@@ -1159,6 +1162,120 @@ pub unsafe extern "C" fn mxr_set_v2ip_vlan(
                 revert_s: vlan.revert_s,
             },
         ))
+    })
+}
+
+/// Asks a V2IP sink for its test card, which it reports straight back;
+/// `mxr_v2ip_testcard()` reads it.
+///
+/// `MXR_ERR_NOT_REPORTED` before the sink has reported its video processor
+/// features, `MXR_ERR_UNSUPPORTED` when they lack bit 8 of
+/// `mxr_v2ip_features()` (the test pattern), and `MXR_ERR_PROTOCOL_TOO_OLD`
+/// for a sink below protocol 0x2B, sending nothing in each case. A sink with
+/// the feature but without the module that draws the test card does not
+/// answer.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_v2ip_testcard(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_v2ip_testcard(device.into()))
+    })
+}
+
+/// Shows `MXR_V2IP_TEST_PATTERN_*` on a V2IP sink's output; `colour` is
+/// `0xRRGGBB`, used by a flat pattern. The pattern runs until it is turned
+/// off, and holds the output on while it does.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a pattern above
+/// `MXR_V2IP_TEST_PATTERN_CARD` or a colour above `0xFFFFFF`. Otherwise as
+/// `mxr_request_v2ip_testcard()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_test_pattern(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    pattern: u8,
+    colour: u32,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_test_pattern(
+            device.into(),
+            V2ipTestPattern::from_wire(pattern),
+            colour,
+        ))
+    })
+}
+
+/// Plays a test tone on a V2IP sink's output.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
+/// `mxr_v2ip_test_tone_t` gives, unless its mode is `MXR_V2IP_TONE_MODE_OFF`,
+/// which stops the tone whatever the rest holds. Otherwise as
+/// `mxr_request_v2ip_testcard()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `tone` is
+/// null or points at an initialised `mxr_v2ip_test_tone_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_test_tone(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    tone: *const mxr_v2ip_test_tone_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(tone) = (unsafe { tone.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the tone pointer is null",
+            );
+        };
+        from_control(r.remote.set_v2ip_test_tone(device.into(), (*tone).into()))
+    })
+}
+
+/// Sets a V2IP sink's lip-sync flash.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
+/// `mxr_v2ip_test_sync_t` gives. Otherwise as `mxr_request_v2ip_testcard()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `sync` is
+/// null or points at an initialised `mxr_v2ip_test_sync_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_test_sync(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    sync: *const mxr_v2ip_test_sync_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(sync) = (unsafe { sync.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the lip-sync pointer is null",
+            );
+        };
+        from_control(r.remote.set_v2ip_test_sync(device.into(), (*sync).into()))
     })
 }
 

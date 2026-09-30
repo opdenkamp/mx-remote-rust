@@ -1133,6 +1133,96 @@
 #define MXR_V2IP_VLAN_HAS_SFP (1 << 4)
 
 /**
+ * No pattern.
+ */
+#define MXR_V2IP_TEST_PATTERN_OFF 0
+
+/**
+ * Colour bars.
+ */
+#define MXR_V2IP_TEST_PATTERN_BARS 1
+
+/**
+ * One flat colour, the test card's `colour`.
+ */
+#define MXR_V2IP_TEST_PATTERN_FLAT 2
+
+/**
+ * A ramp.
+ */
+#define MXR_V2IP_TEST_PATTERN_RAMP 3
+
+/**
+ * A grid.
+ */
+#define MXR_V2IP_TEST_PATTERN_GRID 4
+
+/**
+ * A strip.
+ */
+#define MXR_V2IP_TEST_PATTERN_STRIP 5
+
+/**
+ * A test card.
+ */
+#define MXR_V2IP_TEST_PATTERN_CARD 6
+
+/**
+ * No tone.
+ */
+#define MXR_V2IP_TONE_MODE_OFF 0
+
+/**
+ * A continuous tone.
+ */
+#define MXR_V2IP_TONE_MODE_CONTINUOUS 1
+
+/**
+ * A channel ident.
+ */
+#define MXR_V2IP_TONE_MODE_IDENT 2
+
+/**
+ * A line-up tone, which needs two channels or more.
+ */
+#define MXR_V2IP_TONE_MODE_LINEUP 3
+
+/**
+ * A beep on each lip-sync mark.
+ */
+#define MXR_V2IP_TONE_MODE_BEEP 4
+
+/**
+ * The sink can draw the test card.
+ */
+#define MXR_V2IP_TESTCARD_SUPPORTED (1 << 0)
+
+/**
+ * The output shows the pattern.
+ */
+#define MXR_V2IP_TESTCARD_SHOWING (1 << 1)
+
+/**
+ * The tone plays on the output.
+ */
+#define MXR_V2IP_TESTCARD_PLAYING (1 << 2)
+
+/**
+ * A pattern change has yet to reach the video processor.
+ */
+#define MXR_V2IP_TESTCARD_PATTERN_PENDING (1 << 3)
+
+/**
+ * A tone change has yet to reach the video processor.
+ */
+#define MXR_V2IP_TESTCARD_TONE_PENDING (1 << 4)
+
+/**
+ * A lip-sync change has yet to reach the video processor.
+ */
+#define MXR_V2IP_TESTCARD_SYNC_PENDING (1 << 5)
+
+/**
  * The colour space a V2IP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -1319,6 +1409,41 @@
  * The highest VLAN id: 0 means untagged, and 4095 is reserved by IEEE 802.1Q.
  */
 #define MXR_V2IP_VLAN_ID_MAX 4094
+
+/**
+ * The lowest test tone frequency, in Hz.
+ */
+#define MXR_V2IP_TONE_FREQ_MIN 20
+
+/**
+ * The highest test tone frequency, in Hz.
+ */
+#define MXR_V2IP_TONE_FREQ_MAX 20000
+
+/**
+ * The quietest test tone level, in dBFS.
+ */
+#define MXR_V2IP_TONE_LEVEL_MIN -60
+
+/**
+ * The most channels a test tone plays on.
+ */
+#define MXR_V2IP_TONE_CHANNELS_MAX 8
+
+/**
+ * The largest lip-sync beep offset, in sample periods.
+ */
+#define MXR_V2IP_SYNC_OFFSET_MAX 16777215
+
+/**
+ * The shortest lip-sync beep, in milliseconds.
+ */
+#define MXR_V2IP_SYNC_BEEP_MS_MIN 1
+
+/**
+ * The longest lip-sync beep, in milliseconds.
+ */
+#define MXR_V2IP_SYNC_BEEP_MS_MAX 10000
 
 /**
  * The audio return channel a bay is carrying.
@@ -1805,6 +1930,60 @@ typedef struct {
    */
   uint8_t revert_s;
 } mxr_v2ip_vlan_t;
+
+/**
+ * A V2IP sink's test tone.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_TONE_MODE_*`.
+   */
+  uint8_t mode;
+  /**
+   * The level, in dBFS, `MXR_V2IP_TONE_LEVEL_MIN` to 0.
+   */
+  int8_t level;
+  /**
+   * The channels it plays on, 1 to `MXR_V2IP_TONE_CHANNELS_MAX`; a line-up
+   * tone needs 2 or more.
+   */
+  uint8_t channels;
+  /**
+   * The frequency, `MXR_V2IP_TONE_FREQ_MIN` to `MXR_V2IP_TONE_FREQ_MAX` Hz.
+   */
+  uint16_t freq;
+  /**
+   * The sample rate: 44100, 48000 or 96000 Hz.
+   */
+  uint32_t rate;
+} mxr_v2ip_test_tone_t;
+
+/**
+ * A V2IP sink's lip-sync flash: a pattern frame is marked every `period`,
+ * the frame `lead` after a mark flashes white, and a beep tone starts
+ * `offset` sample periods after it.
+ */
+typedef struct {
+  /**
+   * Every this many pattern frames is marked, 0 for none.
+   */
+  uint16_t period;
+  /**
+   * The frame this many after a mark flashes; below `period`, or 0 without
+   * one.
+   */
+  uint16_t lead;
+  /**
+   * Sample periods between a mark and the beep, at most
+   * `MXR_V2IP_SYNC_OFFSET_MAX`.
+   */
+  uint32_t offset;
+  /**
+   * How long the beep lasts, `MXR_V2IP_SYNC_BEEP_MS_MIN` to
+   * `MXR_V2IP_SYNC_BEEP_MS_MAX` ms.
+   */
+  uint16_t beep_ms;
+} mxr_v2ip_test_sync_t;
 
 /**
  * The output format to scale a V2IP sink to.
@@ -3557,6 +3736,44 @@ typedef struct {
 } mxr_time_zone_t;
 
 /**
+ * The test card a V2IP sink last reported. The counters run free and wrap.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_TESTCARD_*` bits.
+   */
+  uint8_t flags;
+  /**
+   * `MXR_V2IP_TEST_PATTERN_*`.
+   */
+  uint8_t pattern;
+  /**
+   * The colour of a flat pattern, `0xRRGGBB`.
+   */
+  uint32_t colour;
+  /**
+   * The tone.
+   */
+  mxr_v2ip_test_tone_t tone;
+  /**
+   * The lip-sync flash.
+   */
+  mxr_v2ip_test_sync_t sync;
+  /**
+   * Pattern frames sent.
+   */
+  uint32_t frames;
+  /**
+   * Sample periods since the tone started.
+   */
+  uint32_t periods;
+  /**
+   * Lip-sync marks the tone has seen.
+   */
+  uint32_t marks;
+} mxr_v2ip_testcard_t;
+
+/**
  * The window a sink is currently told to show.
  *
  * This is the pollable view of a sink's window, not the persisted video wall
@@ -4590,6 +4807,73 @@ mxr_result_t mxr_set_v2ip_vlan(const mxr_remote_t *remote,
                                const mxr_v2ip_vlan_t *vlan);
 
 /**
+ * Asks a V2IP sink for its test card, which it reports straight back;
+ * `mxr_v2ip_testcard()` reads it.
+ *
+ * `MXR_ERR_NOT_REPORTED` before the sink has reported its video processor
+ * features, `MXR_ERR_UNSUPPORTED` when they lack bit 8 of
+ * `mxr_v2ip_features()` (the test pattern), and `MXR_ERR_PROTOCOL_TOO_OLD`
+ * for a sink below protocol 0x2B, sending nothing in each case. A sink with
+ * the feature but without the module that draws the test card does not
+ * answer.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_v2ip_testcard(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Shows `MXR_V2IP_TEST_PATTERN_*` on a V2IP sink's output; `colour` is
+ * `0xRRGGBB`, used by a flat pattern. The pattern runs until it is turned
+ * off, and holds the output on while it does.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a pattern above
+ * `MXR_V2IP_TEST_PATTERN_CARD` or a colour above `0xFFFFFF`. Otherwise as
+ * `mxr_request_v2ip_testcard()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_test_pattern(const mxr_remote_t *remote,
+                                       mxr_uid_t device,
+                                       uint8_t pattern,
+                                       uint32_t colour);
+
+/**
+ * Plays a test tone on a V2IP sink's output.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
+ * `mxr_v2ip_test_tone_t` gives, unless its mode is `MXR_V2IP_TONE_MODE_OFF`,
+ * which stops the tone whatever the rest holds. Otherwise as
+ * `mxr_request_v2ip_testcard()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `tone` is
+ * null or points at an initialised `mxr_v2ip_test_tone_t`.
+ */
+mxr_result_t mxr_set_v2ip_test_tone(const mxr_remote_t *remote,
+                                    mxr_uid_t device,
+                                    const mxr_v2ip_test_tone_t *tone);
+
+/**
+ * Sets a V2IP sink's lip-sync flash.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
+ * `mxr_v2ip_test_sync_t` gives. Otherwise as `mxr_request_v2ip_testcard()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `sync` is
+ * null or points at an initialised `mxr_v2ip_test_sync_t`.
+ */
+mxr_result_t mxr_set_v2ip_test_sync(const mxr_remote_t *remote,
+                                    mxr_uid_t device,
+                                    const mxr_v2ip_test_sync_t *sync);
+
+/**
  * Sets the infrared profile of a V2IP device's output infrared port.
  *
  * `MXR_V2IP_IR_PROFILE_NOT_SET` makes the port follow the global one.
@@ -5382,6 +5666,20 @@ mxr_result_t mxr_device_clock(const mxr_remote_t *remote, mxr_uid_t uid, uint64_
  * `mxr_v2ip_vlan_t`.
  */
 mxr_result_t mxr_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_vlan_t *out);
+
+/**
+ * Fills `out` with the test card a V2IP sink last reported.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the sink has answered
+ * `mxr_request_v2ip_testcard()` or a change. A change is announced through
+ * `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_testcard_t`.
+ */
+mxr_result_t mxr_v2ip_testcard(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_testcard_t *out);
 
 /**
  * Fills `out` with the window a sink is told to show.

@@ -21,8 +21,8 @@ use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UtpCableStatus,
     V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature, V2ipRxStats,
-    V2ipStreamSource, V2ipStreamSources, V2ipTilingConfig, V2ipTxStats, V2ipVlan, VctStatus,
-    MULTIVIEWER_INPUTS,
+    V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
+    V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -1185,6 +1185,170 @@ pub unsafe extern "C" fn mxr_v2ip_vlan(
             });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "VLAN configuration", value) }
+    })
+}
+
+/// A V2IP sink's test tone.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_test_tone_t {
+    /// `MXR_V2IP_TONE_MODE_*`.
+    pub mode: u8,
+    /// The level, in dBFS, `MXR_V2IP_TONE_LEVEL_MIN` to 0.
+    pub level: i8,
+    /// The channels it plays on, 1 to `MXR_V2IP_TONE_CHANNELS_MAX`; a line-up
+    /// tone needs 2 or more.
+    pub channels: u8,
+    /// The frequency, `MXR_V2IP_TONE_FREQ_MIN` to `MXR_V2IP_TONE_FREQ_MAX` Hz.
+    pub freq: u16,
+    /// The sample rate: 44100, 48000 or 96000 Hz.
+    pub rate: u32,
+}
+
+/// A V2IP sink's lip-sync flash: a pattern frame is marked every `period`,
+/// the frame `lead` after a mark flashes white, and a beep tone starts
+/// `offset` sample periods after it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_test_sync_t {
+    /// Every this many pattern frames is marked, 0 for none.
+    pub period: u16,
+    /// The frame this many after a mark flashes; below `period`, or 0 without
+    /// one.
+    pub lead: u16,
+    /// Sample periods between a mark and the beep, at most
+    /// `MXR_V2IP_SYNC_OFFSET_MAX`.
+    pub offset: u32,
+    /// How long the beep lasts, `MXR_V2IP_SYNC_BEEP_MS_MIN` to
+    /// `MXR_V2IP_SYNC_BEEP_MS_MAX` ms.
+    pub beep_ms: u16,
+}
+
+/// The test card a V2IP sink last reported. The counters run free and wrap.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_testcard_t {
+    /// `MXR_V2IP_TESTCARD_*` bits.
+    pub flags: u8,
+    /// `MXR_V2IP_TEST_PATTERN_*`.
+    pub pattern: u8,
+    /// The colour of a flat pattern, `0xRRGGBB`.
+    pub colour: u32,
+    /// The tone.
+    pub tone: mxr_v2ip_test_tone_t,
+    /// The lip-sync flash.
+    pub sync: mxr_v2ip_test_sync_t,
+    /// Pattern frames sent.
+    pub frames: u32,
+    /// Sample periods since the tone started.
+    pub periods: u32,
+    /// Lip-sync marks the tone has seen.
+    pub marks: u32,
+}
+
+/// The lowest test tone frequency, in Hz.
+pub const MXR_V2IP_TONE_FREQ_MIN: u16 = 20;
+/// The highest test tone frequency, in Hz.
+pub const MXR_V2IP_TONE_FREQ_MAX: u16 = 20000;
+/// The quietest test tone level, in dBFS.
+pub const MXR_V2IP_TONE_LEVEL_MIN: i8 = -60;
+/// The most channels a test tone plays on.
+pub const MXR_V2IP_TONE_CHANNELS_MAX: u8 = 8;
+/// The largest lip-sync beep offset, in sample periods.
+pub const MXR_V2IP_SYNC_OFFSET_MAX: u32 = 0xFFFFFF;
+/// The shortest lip-sync beep, in milliseconds.
+pub const MXR_V2IP_SYNC_BEEP_MS_MIN: u16 = 1;
+/// The longest lip-sync beep, in milliseconds.
+pub const MXR_V2IP_SYNC_BEEP_MS_MAX: u16 = 10000;
+
+const _: () = assert!(MXR_V2IP_TONE_FREQ_MIN == mx_remote::V2IP_TONE_FREQ_MIN);
+const _: () = assert!(MXR_V2IP_TONE_FREQ_MAX == mx_remote::V2IP_TONE_FREQ_MAX);
+const _: () = assert!(MXR_V2IP_TONE_LEVEL_MIN == mx_remote::V2IP_TONE_LEVEL_MIN);
+const _: () = assert!(MXR_V2IP_TONE_CHANNELS_MAX == mx_remote::V2IP_TONE_CHANNELS_MAX);
+const _: () = assert!(MXR_V2IP_SYNC_OFFSET_MAX == mx_remote::V2IP_SYNC_OFFSET_MAX);
+const _: () = assert!(MXR_V2IP_SYNC_BEEP_MS_MIN == mx_remote::V2IP_SYNC_BEEP_MS_MIN);
+const _: () = assert!(MXR_V2IP_SYNC_BEEP_MS_MAX == mx_remote::V2IP_SYNC_BEEP_MS_MAX);
+
+impl From<V2ipTestTone> for mxr_v2ip_test_tone_t {
+    fn from(t: V2ipTestTone) -> Self {
+        Self {
+            mode: t.mode.to_wire(),
+            level: t.level,
+            channels: t.channels,
+            freq: t.freq,
+            rate: t.rate,
+        }
+    }
+}
+
+impl From<mxr_v2ip_test_tone_t> for V2ipTestTone {
+    fn from(t: mxr_v2ip_test_tone_t) -> Self {
+        Self {
+            mode: V2ipToneMode::from_wire(t.mode),
+            freq: t.freq,
+            level: t.level,
+            channels: t.channels,
+            rate: t.rate,
+        }
+    }
+}
+
+impl From<V2ipTestSync> for mxr_v2ip_test_sync_t {
+    fn from(s: V2ipTestSync) -> Self {
+        Self {
+            period: s.period,
+            lead: s.lead,
+            offset: s.offset,
+            beep_ms: s.beep_ms,
+        }
+    }
+}
+
+impl From<mxr_v2ip_test_sync_t> for V2ipTestSync {
+    fn from(s: mxr_v2ip_test_sync_t) -> Self {
+        Self {
+            period: s.period,
+            lead: s.lead,
+            offset: s.offset,
+            beep_ms: s.beep_ms,
+        }
+    }
+}
+
+/// Fills `out` with the test card a V2IP sink last reported.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the sink has answered
+/// `mxr_request_v2ip_testcard()` or a change. A change is announced through
+/// `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_testcard_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_testcard(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_testcard_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_testcard(uid.into())
+            .map(|t: V2ipTestcard| mxr_v2ip_testcard_t {
+                flags: t.flags.bits(),
+                pattern: t.pattern.to_wire(),
+                colour: t.colour,
+                tone: t.tone.into(),
+                sync: t.sync.into(),
+                frames: t.frames,
+                periods: t.periods,
+                marks: t.marks,
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "test card", value) }
     })
 }
 

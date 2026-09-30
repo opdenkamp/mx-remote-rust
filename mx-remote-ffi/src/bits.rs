@@ -728,6 +728,47 @@ pub const MXR_V2IP_VLAN_CONFIRM: u16 = 1 << 3;
 /// Reported by the device: it has an SFP port. Never written.
 pub const MXR_V2IP_VLAN_HAS_SFP: u16 = 1 << 4;
 
+// ---- V2IP test card, in `mxr_v2ip_testcard_t` ----
+
+/// No pattern.
+pub const MXR_V2IP_TEST_PATTERN_OFF: u8 = 0;
+/// Colour bars.
+pub const MXR_V2IP_TEST_PATTERN_BARS: u8 = 1;
+/// One flat colour, the test card's `colour`.
+pub const MXR_V2IP_TEST_PATTERN_FLAT: u8 = 2;
+/// A ramp.
+pub const MXR_V2IP_TEST_PATTERN_RAMP: u8 = 3;
+/// A grid.
+pub const MXR_V2IP_TEST_PATTERN_GRID: u8 = 4;
+/// A strip.
+pub const MXR_V2IP_TEST_PATTERN_STRIP: u8 = 5;
+/// A test card.
+pub const MXR_V2IP_TEST_PATTERN_CARD: u8 = 6;
+
+/// No tone.
+pub const MXR_V2IP_TONE_MODE_OFF: u8 = 0;
+/// A continuous tone.
+pub const MXR_V2IP_TONE_MODE_CONTINUOUS: u8 = 1;
+/// A channel ident.
+pub const MXR_V2IP_TONE_MODE_IDENT: u8 = 2;
+/// A line-up tone, which needs two channels or more.
+pub const MXR_V2IP_TONE_MODE_LINEUP: u8 = 3;
+/// A beep on each lip-sync mark.
+pub const MXR_V2IP_TONE_MODE_BEEP: u8 = 4;
+
+/// The sink can draw the test card.
+pub const MXR_V2IP_TESTCARD_SUPPORTED: u8 = 1 << 0;
+/// The output shows the pattern.
+pub const MXR_V2IP_TESTCARD_SHOWING: u8 = 1 << 1;
+/// The tone plays on the output.
+pub const MXR_V2IP_TESTCARD_PLAYING: u8 = 1 << 2;
+/// A pattern change has yet to reach the video processor.
+pub const MXR_V2IP_TESTCARD_PATTERN_PENDING: u8 = 1 << 3;
+/// A tone change has yet to reach the video processor.
+pub const MXR_V2IP_TESTCARD_TONE_PENDING: u8 = 1 << 4;
+/// A lip-sync change has yet to reach the video processor.
+pub const MXR_V2IP_TESTCARD_SYNC_PENDING: u8 = 1 << 5;
+
 // ---- reading the packed words ----
 
 /// The remote-control type a bay status word carries in bits 16-19.

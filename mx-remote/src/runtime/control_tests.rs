@@ -28,10 +28,10 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipStreams, V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION,
-    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
-    V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
+    V2ipDeviceSetting, V2ipFpgaFeature, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
+    HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE,
+    V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO,
+    V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -2807,4 +2807,243 @@ fn a_vlan_write_the_device_would_not_take_is_refused() {
         .set_v2ip_vlan(no_sfp, write(3, V2IP_VLAN_ID_MAX))
         .expect("the highest id and the last port are taken");
     assert_eq!(f.tap.frames().len(), 1);
+}
+
+/// Announces `uid` as a sink on `protocol` whose video processor reports
+/// `features`, 0 for a processor that has reported nothing yet.
+fn testcard_sink(f: &Fixture, uid: DeviceUid, protocol: u16, serial: &str, features: u64) {
+    f.feed(
+        uid,
+        op::SYS_HELLO,
+        &hello_payload(protocol, "OneIP", serial, "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    let mut cfg = Cfg::addresses(uid, "239.1.2.3");
+    cfg.codec = features;
+    f.feed(uid, op::V2IP_DEVICE_CFG, &cfg.bytes_with_options());
+}
+
+/// Each test card write puts its part at its own offsets behind its own bit,
+/// and leaves every other byte zero.
+#[test]
+fn a_testcard_write_carries_its_part_behind_its_bit() {
+    let f = Fixture::new();
+    let uid = uid_n(233);
+    testcard_sink(
+        &f,
+        uid,
+        0x2B,
+        "TC0003",
+        V2ipFpgaFeature::SINK_TEST_PATTERN.bits(),
+    );
+    f.connect();
+
+    let sent = |f: &Fixture| {
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[20..22], &op::V2IP_TESTCARD.0.to_le_bytes());
+        assert_eq!(&frame[2..4], &0x2Bu16.to_le_bytes(), "the stamp");
+        let p = frame[HEADER_LEN..].to_vec();
+        assert_eq!(p.len(), 56);
+        assert_eq!(&p[..16], uid.as_bytes());
+        p
+    };
+
+    f.tap.clear();
+    f.remote
+        .request_v2ip_testcard(uid)
+        .expect("a test card sink");
+    let p = sent(&f);
+    assert!(
+        p[16..].iter().all(|b| *b == 0),
+        "a request carries only the uid"
+    );
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_test_pattern(uid, V2ipTestPattern::GRID, 0x0012_3456)
+        .expect("a test card sink");
+    let mut want = [0u8; 40];
+    want[..8].copy_from_slice(&[1, 1, 4, 0, 0x56, 0x34, 0x12, 0]);
+    assert_eq!(&sent(&f)[16..56], &want[..], "the pattern");
+
+    f.tap.clear();
+    let tone = V2ipTestTone {
+        mode: V2ipToneMode::CONTINUOUS,
+        freq: 0x0457,
+        level: -23,
+        channels: 6,
+        rate: 48_000,
+    };
+    f.remote
+        .set_v2ip_test_tone(uid, tone)
+        .expect("a test card sink");
+    let p = sent(&f);
+    assert_eq!(&p[16..20], &[1, 2, 0, 1]);
+    assert_eq!(
+        &p[20..32],
+        &[0, 0, 0, 0, 0x57, 0x04, 0xE9, 6, 0x80, 0xBB, 0, 0]
+    );
+    assert!(p[32..].iter().all(|b| *b == 0), "the tone");
+
+    f.tap.clear();
+    let sync = V2ipTestSync {
+        period: 0x0312,
+        lead: 0x0211,
+        offset: 0x00AB_CDEF,
+        beep_ms: 0x0765,
+    };
+    f.remote
+        .set_v2ip_test_sync(uid, sync)
+        .expect("a test card sink");
+    let p = sent(&f);
+    assert_eq!(&p[16..18], &[1, 4]);
+    assert!(p[18..32].iter().all(|b| *b == 0));
+    assert_eq!(
+        &p[32..42],
+        &[0x12, 0x03, 0x11, 0x02, 0xEF, 0xCD, 0xAB, 0x00, 0x65, 0x07],
+        "the lip-sync"
+    );
+    assert!(p[42..].iter().all(|b| *b == 0), "reserved and counters");
+    assert_eq!(f.remote.v2ip_testcard(uid), None, "a write was cached");
+}
+
+/// A write the sink could not take, and a sink that cannot draw a test card,
+/// are refused before anything is sent.
+#[test]
+fn a_testcard_write_the_sink_would_not_take_is_refused() {
+    let f = Fixture::new();
+    let sink = uid_n(234);
+    testcard_sink(
+        &f,
+        sink,
+        0x2B,
+        "TC0004",
+        V2ipFpgaFeature::SINK_TEST_PATTERN.bits(),
+    );
+    let without = uid_n(235);
+    testcard_sink(
+        &f,
+        without,
+        0x2B,
+        "TC0005",
+        V2ipFpgaFeature::SINK_STATE.bits(),
+    );
+    let unreported = uid_n(236);
+    testcard_sink(&f, unreported, 0x2B, "TC0006", 0);
+    let old = uid_n(237);
+    testcard_sink(
+        &f,
+        old,
+        0x2A,
+        "TC0007",
+        V2ipFpgaFeature::SINK_TEST_PATTERN.bits(),
+    );
+    f.connect();
+    f.tap.clear();
+
+    let invalid = |r| matches!(r, Err(ControlError::InvalidRequest(_)));
+    let r = &f.remote;
+    assert!(invalid(r.set_v2ip_test_pattern(
+        sink,
+        V2ipTestPattern::from_wire(7),
+        0
+    )));
+    assert!(invalid(r.set_v2ip_test_pattern(
+        sink,
+        V2ipTestPattern::FLAT,
+        0x0100_0000
+    )));
+    let tone = V2ipTestTone {
+        mode: V2ipToneMode::LINEUP,
+        freq: 1000,
+        level: 0,
+        channels: 2,
+        rate: 48_000,
+    };
+    for bad in [
+        V2ipTestTone {
+            mode: V2ipToneMode::from_wire(5),
+            ..tone
+        },
+        V2ipTestTone { freq: 19, ..tone },
+        V2ipTestTone {
+            freq: 20_001,
+            ..tone
+        },
+        V2ipTestTone { level: -61, ..tone },
+        V2ipTestTone { level: 1, ..tone },
+        V2ipTestTone {
+            channels: 1,
+            ..tone
+        },
+        V2ipTestTone {
+            channels: 9,
+            ..tone
+        },
+        V2ipTestTone {
+            rate: 32_000,
+            ..tone
+        },
+    ] {
+        assert!(invalid(r.set_v2ip_test_tone(sink, bad)), "{bad:?}");
+    }
+    let sync = V2ipTestSync {
+        period: 10,
+        lead: 9,
+        offset: 0x00FF_FFFF,
+        beep_ms: 10_000,
+    };
+    for bad in [
+        V2ipTestSync { lead: 10, ..sync },
+        V2ipTestSync { period: 0, ..sync },
+        V2ipTestSync {
+            offset: 0x0100_0000,
+            ..sync
+        },
+        V2ipTestSync { beep_ms: 0, ..sync },
+        V2ipTestSync {
+            beep_ms: 10_001,
+            ..sync
+        },
+    ] {
+        assert!(invalid(r.set_v2ip_test_sync(sink, bad)), "{bad:?}");
+    }
+    assert!(matches!(
+        r.request_v2ip_testcard(without),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        r.request_v2ip_testcard(unreported),
+        Err(ControlError::NotReported(_))
+    ));
+    assert!(refused(&r.request_v2ip_testcard(old)));
+    assert!(f.tap.frames().is_empty(), "a refused write was sent");
+
+    // The edges that are taken, and a tone turned off whatever it holds.
+    r.set_v2ip_test_tone(sink, tone)
+        .expect("a two-channel line-up");
+    r.set_v2ip_test_tone(
+        sink,
+        V2ipTestTone {
+            freq: 20,
+            level: -60,
+            channels: 8,
+            rate: 96_000,
+            ..tone
+        },
+    )
+    .expect("the low edges");
+    r.set_v2ip_test_tone(sink, V2ipTestTone::default())
+        .expect("off");
+    r.set_v2ip_test_sync(sink, sync).expect("the high edges");
+    r.set_v2ip_test_sync(
+        sink,
+        V2ipTestSync {
+            beep_ms: 1,
+            ..V2ipTestSync::default()
+        },
+    )
+    .expect("no marks at all");
+    r.set_v2ip_test_pattern(sink, V2ipTestPattern::CARD, 0x00FF_FFFF)
+        .expect("the last pattern and the widest colour");
+    assert_eq!(f.tap.frames().len(), 6);
 }
