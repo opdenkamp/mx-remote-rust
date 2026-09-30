@@ -437,6 +437,11 @@
 #define MXR_AUDIO_GAIN_CONTROL (1 << 14)
 
 /**
+ * Keeps its audio source when the video route changes, while locked.
+ */
+#define MXR_AUDIO_AUDIO_LOCK (1 << 15)
+
+/**
  * Digit 0.
  */
 #define MXR_KEY_NUM0 0
@@ -4515,6 +4520,24 @@ mxr_result_t mxr_set_audio_endpoint_muted(const mxr_remote_t *remote,
                                           bool muted);
 
 /**
+ * Locks or unlocks an audio endpoint's source: while it is locked, a video
+ * route change leaves the endpoint's audio source alone.
+ *
+ * `MXR_ERR_NOT_REPORTED` before the device has reported its audio endpoints,
+ * and `MXR_ERR_UNSUPPORTED` for an endpoint without `MXR_AUDIO_AUDIO_LOCK`,
+ * sending nothing in either case. The device reports its endpoints again
+ * once the lock has changed; `mxr_audio_endpoint_status()` reads it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_audio_endpoint_locked(const mxr_remote_t *remote,
+                                           mxr_uid_t device,
+                                           uint8_t endpoint,
+                                           bool locked);
+
+/**
  * Activates or clears an audio endpoint's trigger.
  *
  * A loadable module serves this, not the device firmware, and a model may
@@ -5796,6 +5819,26 @@ size_t mxr_audio_endpoints(const mxr_remote_t *remote,
                            mxr_uid_t uid,
                            mxr_audio_endpoint_t *out,
                            size_t cap);
+
+/**
+ * Fills `out` with the state an audio endpoint reports, on the bits of its
+ * features: `MXR_AUDIO_MUTE` while it is muted, `MXR_AUDIO_TRIGGER` while
+ * its trigger is active, and `MXR_AUDIO_AUDIO_LOCK` while its source is
+ * locked. Beside `mxr_audio_endpoint_t` rather than in it, so that struct
+ * keeps its size.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported its audio
+ * endpoints, and `MXR_ERR_NOT_FOUND` for an endpoint it did not report.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `uint32_t`.
+ */
+mxr_result_t mxr_audio_endpoint_status(const mxr_remote_t *remote,
+                                       mxr_uid_t uid,
+                                       uint8_t endpoint,
+                                       uint32_t *out);
 
 /**
  * Writes the endpoints hanging off one audio endpoint, and returns how many

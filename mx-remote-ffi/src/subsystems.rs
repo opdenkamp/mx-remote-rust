@@ -1702,6 +1702,46 @@ pub unsafe extern "C" fn mxr_audio_endpoints(
     })
 }
 
+/// Fills `out` with the state an audio endpoint reports, on the bits of its
+/// features: `MXR_AUDIO_MUTE` while it is muted, `MXR_AUDIO_TRIGGER` while
+/// its trigger is active, and `MXR_AUDIO_AUDIO_LOCK` while its source is
+/// locked. Beside `mxr_audio_endpoint_t` rather than in it, so that struct
+/// keeps its size.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported its audio
+/// endpoints, and `MXR_ERR_NOT_FOUND` for an endpoint it did not report.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `uint32_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_audio_endpoint_status(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    endpoint: u8,
+    out: *mut u32,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if out.is_null() {
+            return null_out("audio endpoint status");
+        }
+        let Some(endpoints) = r.remote.audio_endpoints(uid.into()) else {
+            return not_reported(r, uid, "audio endpoints");
+        };
+        let Some(status) = endpoints.status(endpoint) else {
+            return fail(
+                mxr_result_t::MXR_ERR_NOT_FOUND,
+                "the device reported no such audio endpoint",
+            );
+        };
+        // SAFETY: the caller guarantees a writable uint32_t or null.
+        unsafe { fill(r, uid, out, "audio endpoint status", Some(status.bits())) }
+    })
+}
+
 /// Writes the endpoints hanging off one audio endpoint, and returns how many
 /// there are.
 ///

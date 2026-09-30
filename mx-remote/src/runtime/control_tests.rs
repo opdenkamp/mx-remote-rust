@@ -17,10 +17,10 @@ use std::sync::{Arc, Mutex};
 use crate::event::EventHandler;
 use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n, vlan_block, Cfg};
 use crate::types::{
-    ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, BayNameChange, EdidProfileChange,
-    EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute, V2ipRouteTarget,
-    V2ipVlan, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    V2IP_MINUTES_PER_DAY, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
+    ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
+    EdidProfileChange, EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute,
+    V2ipRouteTarget, V2ipVlan, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
+    SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -3046,4 +3046,56 @@ fn a_testcard_write_the_sink_would_not_take_is_refused() {
     r.set_v2ip_test_pattern(sink, V2ipTestPattern::CARD, 0x00FF_FFFF)
         .expect("the last pattern and the widest colour");
     assert_eq!(f.tap.frames().len(), 6);
+}
+
+/// Has `uid` report a tree whose endpoint 1 can lock its source and whose
+/// endpoint 0 cannot.
+fn report_lockable_tree(f: &Fixture, uid: DeviceUid) {
+    let mut p = vec![0u8; 68];
+    p[28..30].copy_from_slice(&2u16.to_le_bytes());
+    p[37] = 1;
+    p[44..48].copy_from_slice(&AudioFeatures::OUTPUT.bits().to_le_bytes());
+    p[52] = 1;
+    p[53] = 1;
+    let input = AudioFeatures::INPUT.bits() | AudioFeatures::AUDIO_LOCK.bits();
+    p[60..64].copy_from_slice(&input.to_le_bytes());
+    f.feed(uid, op::V2IP_AUDIO, &p);
+}
+
+/// A lock goes out as the endpoint commands do, on sub-opcode 6, and only to
+/// an endpoint that reports it can lock.
+#[test]
+fn an_audio_lock_goes_only_to_an_endpoint_that_can_lock() {
+    let f = Fixture::new();
+    let uid = uid_n(238);
+    f.everything(uid, 0x2B, "AL0001");
+    let unreported = uid_n(239);
+    f.everything(unreported, 0x2B, "AL0002");
+    report_lockable_tree(&f, uid);
+    f.connect();
+
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.set_audio_endpoint_locked(uid, 0, true),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.set_audio_endpoint_locked(uid, 7, true),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.set_audio_endpoint_locked(unreported, 1, true),
+        Err(ControlError::NotReported(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused lock was sent");
+
+    f.remote
+        .set_audio_endpoint_locked(uid, 1, true)
+        .expect("endpoint 1 can lock");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 28);
+    assert_eq!(&p[..2], &[6, 0], "the LOCK sub-opcode");
+    assert_eq!(&p[4..20], uid.as_bytes());
+    assert_eq!(&p[20..28], &[1, 0, 0, 0, 1, 0, 0, 0]);
 }

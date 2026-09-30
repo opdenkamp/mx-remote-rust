@@ -159,7 +159,8 @@ events! {
         V2ipSinkChanged => on_v2ip_sink_changed(sink: DeviceV2ipSink);
         /// A multiviewer reported its state.
         MultiviewerStatusChanged => on_multiviewer_status_changed(status: MultiviewerStatus);
-        /// The device reported its audio endpoint tree.
+        /// The device reported a different audio endpoint tree, or an
+        /// endpoint's status changed.
         AudioEndpointsChanged => on_audio_endpoints_changed(endpoints: AudioEndpoints);
         /// The device reported its mesh master.
         MeshMasterChanged => on_mesh_master_changed(master: DeviceUid);
@@ -195,6 +196,8 @@ events! {
         AudioEndpointMute => on_audio_endpoint_mute(endpoint: u16, muted: bool);
         /// An audio endpoint's trigger changed.
         AudioEndpointTrigger => on_audio_endpoint_trigger(endpoint: u16, active: bool);
+        /// An audio endpoint's source was locked or unlocked.
+        AudioEndpointLock => on_audio_endpoint_lock(endpoint: u16, locked: bool);
         /// An audio endpoint's volume changed.
         AudioEndpointVolume => on_audio_endpoint_volume(endpoint: u16, volume: u32);
         /// A peer asked every device to announce itself.

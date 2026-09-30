@@ -1116,10 +1116,9 @@ impl Device {
     /// redone either way, because a bay discovered after the tree first
     /// arrived has nothing to attach it to until the tree comes round again.
     pub(crate) fn set_audio_endpoints(&mut self, endpoints: AudioEndpoints, ev: &mut Vec<Event>) {
-        let same = self
-            .audio
-            .as_ref()
-            .is_some_and(|current| current.same_tree(&endpoints));
+        let same = self.audio.as_ref().is_some_and(|current| {
+            current.same_tree(&endpoints) && current.same_status(&endpoints)
+        });
         self.audio = Some(endpoints);
         self.attach_audio_endpoints(ev);
         if same {

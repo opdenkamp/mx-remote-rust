@@ -208,6 +208,7 @@ pub(crate) mod audio_sub {
     pub(crate) const SELECT_INPUT: u16 = 3;
     pub(crate) const VOLUME: u16 = 4;
     pub(crate) const LINKS: u16 = 5;
+    pub(crate) const LOCK: u16 = 6;
 }
 
 /// Sub-opcodes of `V2IP_MULTIVIEWER` (0x42), on the byte at payload offset 16.

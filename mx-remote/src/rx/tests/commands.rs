@@ -923,6 +923,7 @@ fn audio_endpoint_commands_carry_an_endpoint_and_a_value() {
     send(1, 2, 1); // mute
     send(2, 3, 0); // trigger
     send(4, 4, 80); // volume
+    send(6, 5, 1); // lock
 
     assert!(h.saw(|e| matches!(
         e,
@@ -945,6 +946,14 @@ fn audio_endpoint_commands_carry_an_endpoint_and_a_value() {
         Event::AudioEndpointVolume {
             endpoint: 4,
             volume: 80,
+            ..
+        }
+    )));
+    assert!(h.saw(|e| matches!(
+        e,
+        Event::AudioEndpointLock {
+            endpoint: 5,
+            locked: true,
             ..
         }
     )));

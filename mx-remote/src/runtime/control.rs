@@ -31,7 +31,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat,
+    AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat,
     V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
     V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan,
     VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING,
@@ -642,6 +642,39 @@ impl Remote {
         active: bool,
     ) -> Result<(), ControlError> {
         self.audio_endpoint(device, audio_sub::TRIGGER, endpoint, u32::from(active))
+    }
+
+    /// Locks or unlocks the audio source of an audio endpoint: while it is
+    /// locked, a video route change leaves the endpoint's audio source alone.
+    ///
+    /// Refused unless the endpoint reports
+    /// [`AudioFeatures::AUDIO_LOCK`], which
+    /// is the only one the device acts on. The device reports its endpoints
+    /// again once the lock has changed;
+    /// [`AudioEndpoints::status`](crate::AudioEndpoints::status) reads it.
+    pub fn set_audio_endpoint_locked(
+        &self,
+        device: DeviceUid,
+        endpoint: u8,
+        locked: bool,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            let Some(endpoints) = d.audio.as_ref() else {
+                return Err(ControlError::NotReported("the device's audio endpoints"));
+            };
+            if !endpoints
+                .get(endpoint)
+                .is_some_and(|ep| ep.features.has(AudioFeatures::AUDIO_LOCK))
+            {
+                return Err(ControlError::Unsupported(
+                    "the endpoint cannot lock its audio source",
+                ));
+            }
+            let mut payload = audio_cmd_header(audio_sub::LOCK, d.uid);
+            payload.extend_from_slice(&audio_param(u16::from(endpoint), u32::from(locked)));
+            Ok(Command::new(Addressee::device(d), op::V2IP_AUDIO, payload))
+        })
     }
 
     /// Sets an audio endpoint's volume.

@@ -44,6 +44,8 @@ impl AudioFeatures {
     pub const VOLUME_CONTROL: Self = Self(1 << 13);
     /// Has a gain control.
     pub const GAIN_CONTROL: Self = Self(1 << 14);
+    /// Keeps its audio source when the video route changes, while locked.
+    pub const AUDIO_LOCK: Self = Self(1 << 15);
 
     /// Wraps the raw wire bits, including ones this library has no name for.
     pub const fn from_bits(bits: u32) -> Self {
@@ -113,6 +115,7 @@ impl AudioEndpoint {
 pub struct AudioEndpoints {
     order: Vec<u8>,
     endpoints: BTreeMap<u8, AudioEndpoint>,
+    status: BTreeMap<u8, AudioFeatures>,
 }
 
 impl AudioEndpoints {
@@ -123,6 +126,18 @@ impl AudioEndpoints {
             self.order.push(endpoint.id);
         }
         self.endpoints.insert(endpoint.id, endpoint);
+    }
+
+    /// The state endpoint `id` reports, on the bits of its features: `MUTE`
+    /// while it is muted, `TRIGGER` while its trigger is active, and
+    /// `AUDIO_LOCK` while its audio source is locked. `None` for an endpoint
+    /// the device did not report.
+    pub fn status(&self, id: u8) -> Option<AudioFeatures> {
+        self.status.get(&id).copied()
+    }
+
+    pub(crate) fn set_status(&mut self, id: u8, status: AudioFeatures) {
+        self.status.insert(id, status);
     }
 
     /// The endpoint with the given id.
@@ -169,6 +184,11 @@ impl AudioEndpoints {
                     .get(id)
                     .is_some_and(|o| o.features == ep.features && o.parent == ep.parent)
             })
+    }
+
+    /// Reports whether every endpoint reports the same status in both.
+    pub(crate) fn same_status(&self, other: &Self) -> bool {
+        self.status == other.status
     }
 
     /// Records the endpoint and device one of these endpoints is linked to.

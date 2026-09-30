@@ -152,6 +152,59 @@ fn audio_features_parse() {
     assert!(ep1.features.has(AudioFeatures::OUTPUT));
 }
 
+/// A V2IP receiver's tree: endpoint 0 an output, endpoint 1 its V2IP input,
+/// which can lock its source. Each entry's status word follows its features,
+/// and every other byte is poisoned.
+fn lockable_tree(status0: u32, status1: u32) -> Vec<u8> {
+    let mut p = poisoned(68);
+    p[0..2].copy_from_slice(&0u16.to_le_bytes()); // the FEATURES sub-opcode
+    p[28..30].copy_from_slice(&2u16.to_le_bytes()); // endpoint count
+    p[36] = 0;
+    p[37] = 1;
+    p[44..48].copy_from_slice(&AudioFeatures::OUTPUT.bits().to_le_bytes());
+    p[48..52].copy_from_slice(&status0.to_le_bytes());
+    p[52] = 1;
+    p[53] = 1;
+    let input = AudioFeatures::INPUT.bits()
+        | AudioFeatures::V2IP_RX.bits()
+        | AudioFeatures::AUDIO_LOCK.bits();
+    p[60..64].copy_from_slice(&input.to_le_bytes());
+    p[64..68].copy_from_slice(&status1.to_le_bytes());
+    p
+}
+
+/// Each endpoint's status word is read behind its features, and a report
+/// whose only change is a status is still a change.
+#[test]
+fn an_audio_endpoint_status_is_read_and_its_change_reported() {
+    let mut h = Harness::new(6);
+    h.hello(0x2B, "ONEIP", "AU0002", DeviceFeature::V2IP_SINK);
+    // The module's MXR_AUDIO_FEATURE_AUDIO_LOCK, written out so a wrong
+    // constant here cannot agree with itself.
+    let lock = 1u32 << 15;
+    let muted = AudioFeatures::MUTE.bits();
+    h.feed(op::V2IP_AUDIO, &lockable_tree(muted, 0));
+
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert_eq!(eps.status(0), Some(AudioFeatures::MUTE));
+    assert_eq!(eps.status(1), Some(AudioFeatures::from_bits(0)));
+    assert_eq!(eps.status(2), None, "an endpoint the device did not report");
+
+    let changes = |h: &Harness| {
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::AudioEndpointsChanged { .. }))
+            .count()
+    };
+    assert_eq!(changes(&h), 1);
+    h.feed(op::V2IP_AUDIO, &lockable_tree(muted, 0));
+    assert_eq!(changes(&h), 1, "an unchanged report raised an event");
+    h.feed(op::V2IP_AUDIO, &lockable_tree(muted, lock));
+    assert_eq!(changes(&h), 2, "locking the source raised no event");
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert_eq!(eps.status(1), Some(AudioFeatures::AUDIO_LOCK));
+}
+
 /// An amplifier tree with one output endpoint, numbered as amplifiers number
 /// them: inputs below ten, outputs from ten, so id 10 is `Output` bay 0.
 fn amp_output_tree() -> Vec<u8> {

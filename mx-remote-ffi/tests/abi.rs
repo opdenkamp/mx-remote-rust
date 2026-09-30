@@ -429,7 +429,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
         ),
         ("MXR_BAY_STATUS_", core_bits(&enums, "BayStatus"), &[], 19),
         ("MXR_KEY_", core_bits(&enums, "RcKey"), &[], 48),
-        ("MXR_AUDIO_", core_consts(&audio, "AudioFeatures"), &[], 15),
+        ("MXR_AUDIO_", core_consts(&audio, "AudioFeatures"), &[], 16),
         (
             "MXR_MV_VIEW_MODE_",
             core_bits(&enums, "MultiviewerViewMode"),
@@ -798,6 +798,27 @@ fn the_testcard_calls_check_their_arguments_first() {
     }
     // SAFETY: a live handle.
     let rc = unsafe { mxr_request_v2ip_testcard(remote, uid_n(9)) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// The audio lock calls answer a null output as an argument error and a
+/// device never heard from as not found, before anything is sent.
+#[test]
+fn the_audio_lock_calls_check_their_arguments_first() {
+    let remote = client(c"abi-audio-lock", c"00000022.00000000.00000000.000000a8");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_audio_endpoint_status(remote, uid_n(9), 1, ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = 0u32;
+    // SAFETY: a live handle and a writable u32.
+    let rc = unsafe { mxr_audio_endpoint_status(remote, uid_n(9), 1, &mut out) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_audio_endpoint_locked(remote, uid_n(9), 1, true) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
     // SAFETY: created above and not yet freed.

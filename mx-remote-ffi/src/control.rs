@@ -585,6 +585,34 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_muted(
     })
 }
 
+/// Locks or unlocks an audio endpoint's source: while it is locked, a video
+/// route change leaves the endpoint's audio source alone.
+///
+/// `MXR_ERR_NOT_REPORTED` before the device has reported its audio endpoints,
+/// and `MXR_ERR_UNSUPPORTED` for an endpoint without `MXR_AUDIO_AUDIO_LOCK`,
+/// sending nothing in either case. The device reports its endpoints again
+/// once the lock has changed; `mxr_audio_endpoint_status()` reads it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_audio_endpoint_locked(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    endpoint: u8,
+    locked: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(
+            r.remote
+                .set_audio_endpoint_locked(device.into(), endpoint, locked),
+        )
+    })
+}
+
 /// Activates or clears an audio endpoint's trigger.
 ///
 /// A loadable module serves this, not the device firmware, and a model may

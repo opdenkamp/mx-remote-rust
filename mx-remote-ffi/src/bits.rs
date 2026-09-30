@@ -291,6 +291,9 @@ pub const MXR_AUDIO_VOLUME_CONTROL: u32 = 1 << 13;
 /// Has a gain control.
 pub const MXR_AUDIO_GAIN_CONTROL: u32 = 1 << 14;
 
+/// Keeps its audio source when the video route changes, while locked.
+pub const MXR_AUDIO_AUDIO_LOCK: u32 = 1 << 15;
+
 // ---- remote-control keys, for `mxr_send_key()` ----
 //
 // A key above the last named here is sent as it is given: the range from

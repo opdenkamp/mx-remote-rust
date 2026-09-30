@@ -75,6 +75,7 @@ fn endpoints(rx: &Rx<'_>) -> AudioEndpoints {
                 features: AudioFeatures::from_bits(f.u32(base + 8).unwrap_or(0)),
                 ..AudioEndpoint::default()
             });
+            eps.set_status(id, AudioFeatures::from_bits(f.u32(base + 12).unwrap_or(0)));
         }
     }
 
@@ -181,14 +182,14 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                 device.set_audio_select_input(change, ev);
             }
         }
-        sub::MUTE | sub::TRIGGER | sub::VOLUME => {
+        sub::MUTE | sub::TRIGGER | sub::VOLUME | sub::LOCK => {
             let (Some(endpoint), Some(value)) = (rx.frame.u16(20), rx.frame.u32(24)) else {
                 return;
             };
             if state.device(rx.sender()).is_none() {
                 return;
             }
-            // Mute and trigger carry a boolean in the low bit of the same u32
+            // Mute, trigger and lock carry a boolean in the same u32
             // that volume uses for a level.
             let device = rx.sender();
             ev.push(match op {
@@ -201,6 +202,11 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                     device,
                     endpoint,
                     active: value != 0,
+                },
+                sub::LOCK => Event::AudioEndpointLock {
+                    device,
+                    endpoint,
+                    locked: value != 0,
                 },
                 _ => Event::AudioEndpointVolume {
                     device,
