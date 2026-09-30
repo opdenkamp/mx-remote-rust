@@ -179,6 +179,15 @@ bitmask! {
         /// Firmware without this bit sends a device configuration built over
         /// uninitialised memory, so fields it did not mean to write carry junk.
         CONFIG_INITIALISED = 1 << 25;
+        /// Receives one or more peers only by broadcast, because its multicast
+        /// receive path is faulty.
+        STATUS_MCAST_FAULT = 1 << 26;
+        /// Powers its video processor down in power save. A device without it
+        /// refuses to enter power save.
+        POWER_SAVE = 1 << 27;
+        /// Tags its uplink by the VLAN configuration it reports, and takes one
+        /// written to it.
+        VLAN = 1 << 28;
         /// Set while the device is in its boot loader.
         BOOT_BIT = 1 << 31;
     }
@@ -355,6 +364,10 @@ bitmask! {
         CEC_DISABLED = 1 << 20;
         /// The V2IP encoder reports an error.
         ENCODER_ERROR = 1 << 21;
+        /// The bay's name was generated - a default, or taken from CEC or the
+        /// EDID - rather than set by a user. A device that predates this bit
+        /// never sets it, so a clear bit does not prove a user set the name.
+        AUTO_NAME = 1 << 24;
     }
 }
 

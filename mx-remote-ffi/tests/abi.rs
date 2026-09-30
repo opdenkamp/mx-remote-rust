@@ -420,14 +420,14 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
     let lists: [(&str, Vec<Bit>, &[&str], usize); 16] = [
-        ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 27),
+        ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
             core_bits(&enums, "BayFeatures"),
             &["MXR_BAY_STATUS_"],
             17,
         ),
-        ("MXR_BAY_STATUS_", core_bits(&enums, "BayStatus"), &[], 18),
+        ("MXR_BAY_STATUS_", core_bits(&enums, "BayStatus"), &[], 19),
         ("MXR_KEY_", core_bits(&enums, "RcKey"), &[], 48),
         ("MXR_AUDIO_", core_consts(&audio, "AudioFeatures"), &[], 15),
         (

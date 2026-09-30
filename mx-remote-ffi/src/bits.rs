@@ -112,6 +112,18 @@ pub const MXR_FEATURE_VIDEO_WALL: u32 = 1 << 24;
 /// uninitialised memory, so fields it did not mean to write carry junk.
 pub const MXR_FEATURE_CONFIG_INITIALISED: u32 = 1 << 25;
 
+/// Receives one or more peers only by broadcast, because its multicast receive
+/// path is faulty.
+pub const MXR_FEATURE_STATUS_MCAST_FAULT: u32 = 1 << 26;
+
+/// Powers its video processor down in power save. A device without it refuses
+/// to enter power save.
+pub const MXR_FEATURE_POWER_SAVE: u32 = 1 << 27;
+
+/// Tags its uplink by the VLAN configuration it reports, and takes one written
+/// to it.
+pub const MXR_FEATURE_VLAN: u32 = 1 << 28;
+
 /// Set while the device is in its boot loader.
 pub const MXR_FEATURE_BOOT_BIT: u32 = 1 << 31;
 
@@ -226,6 +238,11 @@ pub const MXR_BAY_STATUS_CEC_DISABLED: u32 = 1 << 20;
 
 /// The V2IP encoder reports an error.
 pub const MXR_BAY_STATUS_ENCODER_ERROR: u32 = 1 << 21;
+
+/// The bay's name was generated - a default, or taken from CEC or the EDID -
+/// rather than set by a user. A device that predates this bit never sets it,
+/// so a clear bit does not prove a user set the name.
+pub const MXR_BAY_STATUS_AUTO_NAME: u32 = 1 << 24;
 
 // ---- what an audio endpoint can do, in `mxr_audio_endpoint_t::features` ----
 
