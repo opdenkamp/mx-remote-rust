@@ -342,7 +342,9 @@ impl fmt::Display for ArcStatus {
 /// The time zone a device announces for its mesh.
 ///
 /// The mesh controller announces it with every periodic broadcast, and each
-/// device of the mesh keeps its clock and its power save windows by it.
+/// device of the mesh keeps its clock and its power save windows by it. An
+/// empty name and rule mean the controller has none, and the devices keep
+/// UTC.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TimeZone {
     /// The IANA name, such as `Europe/Amsterdam`.

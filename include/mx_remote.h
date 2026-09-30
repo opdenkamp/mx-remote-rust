@@ -3542,7 +3542,8 @@ typedef struct {
 } mxr_v2ip_sink_t;
 
 /**
- * The time zone a device announces for its mesh.
+ * The time zone a device announces for its mesh. An empty name and rule mean
+ * the controller has none, and the devices keep UTC.
  */
 typedef struct {
   /**
@@ -4426,6 +4427,17 @@ mxr_result_t mxr_ping(const mxr_remote_t *remote, mxr_uid_t device);
  * NUL-terminated strings.
  */
 mxr_result_t mxr_set_mesh_time_zone(const mxr_remote_t *remote, const char *zone, const char *rule);
+
+/**
+ * Clears the time zone of every device that hears it, which then keeps UTC:
+ * `mxr_set_mesh_time_zone()` with an empty name and rule, which that call
+ * refuses.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle.
+ */
+mxr_result_t mxr_clear_mesh_time_zone(const mxr_remote_t *remote);
 
 /**
  * Sets the clock of every device that hears it to `utc`, in seconds since

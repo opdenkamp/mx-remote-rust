@@ -819,7 +819,7 @@ impl Remote {
     /// TZ rule the devices keep time by, such as `CET-1CEST,M3.5.0,M10.5.0/3`.
     /// A device applies the rule and shows the name.
     /// Neither may be empty, hold a NUL, or be longer than its field on the
-    /// wire leaves room for.
+    /// wire leaves room for; [`Remote::clear_mesh_time_zone`] sends both empty.
     ///
     /// The mesh controller takes it too, and announces it from then on with
     /// every periodic broadcast. A device takes it only from a management
@@ -836,6 +836,18 @@ impl Remote {
             &Addressee::Broadcast,
             op::TIME_ZONE,
             &build_time_zone(zone, rule),
+        )?;
+        Ok(())
+    }
+
+    /// Clears the time zone of every device that hears it, which then keeps
+    /// UTC. Sent, received and announced as [`Remote::set_mesh_time_zone`]
+    /// with an empty name and rule.
+    pub fn clear_mesh_time_zone(&self) -> Result<(), ControlError> {
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::TIME_ZONE,
+            &build_time_zone("", ""),
         )?;
         Ok(())
     }

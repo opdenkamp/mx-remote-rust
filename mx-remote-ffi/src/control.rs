@@ -797,6 +797,20 @@ pub unsafe extern "C" fn mxr_set_mesh_time_zone(
     })
 }
 
+/// Clears the time zone of every device that hears it, which then keeps UTC:
+/// `mxr_set_mesh_time_zone()` with an empty name and rule, which that call
+/// refuses.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_clear_mesh_time_zone(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| from_control(r.remote.clear_mesh_time_zone()))
+}
+
 /// Sets the clock of every device that hears it to `utc`, in seconds since
 /// 1970 UTC. A device keeps its own clock where that is within 2s.
 ///

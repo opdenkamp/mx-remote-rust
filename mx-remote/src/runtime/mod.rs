@@ -367,7 +367,8 @@ impl Remote {
 
     /// The time zone a device announced for its mesh, `None` until it has.
     ///
-    /// The mesh controller announces it with every periodic broadcast.
+    /// The mesh controller announces it with every periodic broadcast, empty
+    /// when it has none.
     pub fn time_zone(&self, uid: DeviceUid) -> Option<TimeZone> {
         self.shared
             .read(|state| state.device(uid)?.time_zone.clone())

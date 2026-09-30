@@ -9,7 +9,7 @@
 
 use crate::event::Event;
 use crate::types::{
-    ArcStatus, PowerStatus, AMP_TONE_HTTP_MAX, AMP_TONE_HTTP_MIN, VOLUME_UNCHANGED,
+    ArcStatus, PowerStatus, TimeZone, AMP_TONE_HTTP_MAX, AMP_TONE_HTTP_MIN, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     op, parse_bay_config, BayFeatures, BayStatus, DeviceFeature, DeviceUid, EdidProfile,
@@ -1084,6 +1084,24 @@ fn a_captured_time_zone_reads_as_the_controller_announced_it() {
 
     h.feed(op::TIME_ZONE, &frame[..111]);
     assert_eq!(h.device().time_zone, Some(tz), "a short frame was read");
+}
+
+/// A controller that has no time zone announces an empty one, and that
+/// replaces the zone it announced before.
+#[test]
+fn an_empty_time_zone_replaces_the_announced_one() {
+    let mut h = Harness::new(141);
+    h.hello(0x2B, "ONEIP", "TZ0002", DeviceFeature::V2IP_SINK);
+    h.feed(op::TIME_ZONE, &unhex(CAPTURED_TIME_ZONE));
+    h.feed(op::TIME_ZONE, &[0; 112]);
+
+    assert_eq!(h.device().time_zone, Some(TimeZone::default()));
+    let changes = h
+        .events
+        .iter()
+        .filter(|e| matches!(e, Event::TimeZoneChanged { .. }))
+        .count();
+    assert_eq!(changes, 2, "clearing the zone was not reported");
 }
 
 /// A 0x4D a mesh controller sent: seconds since 1970 as a little-endian u32.

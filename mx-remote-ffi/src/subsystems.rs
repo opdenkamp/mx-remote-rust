@@ -1042,7 +1042,8 @@ pub const MXR_TIME_ZONE_RULE_LEN: usize = 64;
 const _: () = assert!(MXR_TIME_ZONE_NAME_LEN == mx_remote::TIME_ZONE_NAME_LEN);
 const _: () = assert!(MXR_TIME_ZONE_RULE_LEN == mx_remote::TIME_ZONE_RULE_LEN);
 
-/// The time zone a device announces for its mesh.
+/// The time zone a device announces for its mesh. An empty name and rule mean
+/// the controller has none, and the devices keep UTC.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_time_zone_t {

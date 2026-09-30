@@ -2616,6 +2616,19 @@ fn a_time_zone_goes_out_in_its_two_fields() {
     assert_eq!(f.tap.frames().len(), 1, "the longest names that fit");
 }
 
+/// Clearing the time zone sends the frame whole, with both fields empty.
+#[test]
+fn a_cleared_time_zone_goes_out_empty() {
+    let f = Fixture::new();
+    f.tap.clear();
+    let _ = f.remote.clear_mesh_time_zone();
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::TIME_ZONE.0.to_le_bytes());
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 112, "a receiver drops a shorter frame");
+    assert!(p.iter().all(|b| *b == 0));
+}
+
 /// A time goes out as seconds since 1970 in a u32, and one outside that is
 /// refused.
 #[test]
