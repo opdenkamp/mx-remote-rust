@@ -3099,3 +3099,66 @@ fn an_audio_lock_goes_only_to_an_endpoint_that_can_lock() {
     assert_eq!(&p[4..20], uid.as_bytes());
     assert_eq!(&p[20..28], &[1, 0, 0, 0, 1, 0, 0, 0]);
 }
+
+/// Handing a source's addresses back goes out as mesh operation 6 naming the
+/// source, with the parameter and padding zero, stamped as every mesh
+/// operation is.
+#[test]
+fn auto_addresses_goes_out_as_mesh_operation_6() {
+    let f = Fixture::new();
+    let uid = uid_n(240);
+    f.everything(uid, 0x2B, "AA0001");
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .auto_assign_v2ip_source_addresses(uid)
+        .expect("a V2IP source on 0x2B");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::MESH_OPERATION.0.to_le_bytes());
+    assert_eq!(
+        &frame[2..4],
+        &protocol_for(op::MESH_OPERATION).to_le_bytes(),
+        "the stamp"
+    );
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 40);
+    assert_eq!(&p[..4], &[6, 0, 0, 0]);
+    assert_eq!(&p[4..20], uid.as_bytes());
+    assert!(p[20..].iter().all(|b| *b == 0), "the parameter and padding");
+}
+
+/// A device that is not a source, or that predates the operation, is refused
+/// before anything is sent.
+#[test]
+fn auto_addresses_is_refused_where_it_would_be_ignored() {
+    let f = Fixture::new();
+    let old = uid_n(241);
+    f.everything(old, 0x2A, "AA0002");
+    let sink_only = uid_n(242);
+    f.feed(
+        sink_only,
+        op::SYS_HELLO,
+        &hello_payload(0x2B, "OneIP", "AA0003", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    f.connect();
+    f.tap.clear();
+
+    assert!(matches!(
+        f.remote.auto_assign_v2ip_source_addresses(old),
+        Err(ControlError::Send(SendError::ProtocolTooOld {
+            have: 0x2A,
+            need: 0x2B,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        f.remote.auto_assign_v2ip_source_addresses(sink_only),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.auto_assign_v2ip_source_addresses(uid_n(243)),
+        Err(ControlError::UnknownDevice(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused operation was sent");
+}

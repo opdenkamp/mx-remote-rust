@@ -800,6 +800,29 @@ pub unsafe extern "C" fn mxr_ping(remote: *const mxr_remote_t, device: mxr_uid_t
     with(handle, |r| from_control(r.remote.ping(device.into())))
 }
 
+/// Hands a V2IP source's stream addresses back to automatic assignment,
+/// undoing addresses that were set on it by hand. The device's next
+/// configuration report carries the addresses it ends up with.
+///
+/// `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+/// `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2B, which ignores it,
+/// sending nothing in either case.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_auto_assign_v2ip_source_addresses(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.auto_assign_v2ip_source_addresses(device.into()))
+    })
+}
+
 /// Sets the time zone of every device that hears it: `zone` an IANA name such
 /// as `Europe/Amsterdam`, `rule` the POSIX TZ rule the devices keep time by.
 ///

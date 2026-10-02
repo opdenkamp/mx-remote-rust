@@ -4654,6 +4654,21 @@ mxr_result_t mxr_reboot(const mxr_remote_t *remote, mxr_uid_t device);
 mxr_result_t mxr_ping(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
+ * Hands a V2IP source's stream addresses back to automatic assignment,
+ * undoing addresses that were set on it by hand. The device's next
+ * configuration report carries the addresses it ends up with.
+ *
+ * `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+ * `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2B, which ignores it,
+ * sending nothing in either case.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_auto_assign_v2ip_source_addresses(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
  * Sets the time zone of every device that hears it: `zone` an IANA name such
  * as `Europe/Amsterdam`, `rule` the POSIX TZ rule the devices keep time by.
  *

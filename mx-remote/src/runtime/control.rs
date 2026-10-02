@@ -39,17 +39,18 @@ use crate::types::{
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
-    build_bay_hide, build_edid_profile, build_edid_request, build_rc_action, build_rc_key,
-    build_set_bay_name, build_set_volume, build_stats_request, build_target_only, build_time_zone,
-    build_v2ip_device_settings, build_v2ip_manual_source_switch, build_v2ip_scaling,
-    build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan,
-    build_video_wall, mv_cmd_payload, mv_sub, op, testcard_part, testcard_type, Addressee, BayUid,
-    DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
-    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction,
-    RcKey, SendError, StreamAddr, V2ipDeviceSetting, V2ipFpgaFeature, V2ipStreams, V2ipTestPattern,
-    V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation, build_rc_action,
+    build_rc_key, build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
+    build_time_zone, build_v2ip_device_settings, build_v2ip_manual_source_switch,
+    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard,
+    build_v2ip_vlan, build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, testcard_part,
+    testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
+    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
+    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
+    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
+    V2ipDeviceSetting, V2ipFpgaFeature, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
+    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -159,6 +160,14 @@ impl Shared {
         Ok(())
     }
 }
+
+/// The first protocol version whose devices can act on the automatic address
+/// operation.
+///
+/// Not the stamp: that is the mesh operation opcode's, and a device between
+/// the two takes the frame and ignores an operation it does not know. Not
+/// every device on this version has it either, but none below it does.
+const AUTO_ADDRESSES_PROTOCOL: u16 = 0x2B;
 
 fn device_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
     state.device(uid).ok_or(ControlError::UnknownDevice(uid))
@@ -842,6 +851,39 @@ impl Remote {
                 Addressee::device(d),
                 op::SYS_PING,
                 build_target_only(d.uid),
+            ))
+        })
+    }
+
+    /// Hands a V2IP source's stream addresses back to automatic assignment,
+    /// undoing addresses that were set on it by hand.
+    ///
+    /// The device takes this only from management, which this client
+    /// announces itself as. Nothing acknowledges it: the device's next
+    /// configuration report carries the addresses it ends up with, and
+    /// [`Remote::v2ip_details`] reads them.
+    ///
+    /// Refused for a device that is not a V2IP source, and for one below
+    /// protocol 0x2B, which predates the operation and ignores it.
+    pub fn auto_assign_v2ip_source_addresses(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.hello.features.has(DeviceFeature::V2IP_SOURCE) {
+                return Err(ControlError::Unsupported("the device is not a V2IP source"));
+            }
+            let have = d.hello.supported_protocol;
+            if have != 0 && have < AUTO_ADDRESSES_PROTOCOL {
+                return Err(ControlError::Send(SendError::ProtocolTooOld {
+                    serial: d.serial().to_owned(),
+                    opcode: op::MESH_OPERATION.0,
+                    have,
+                    need: AUTO_ADDRESSES_PROTOCOL,
+                }));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::MESH_OPERATION,
+                build_mesh_operation(mesh_op::AUTO_ADDRESSES, d.uid),
             ))
         })
     }

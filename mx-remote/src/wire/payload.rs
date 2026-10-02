@@ -469,6 +469,23 @@ pub(crate) fn build_v2ip_vlan(target: DeviceUid, vlan: &V2ipVlan) -> Vec<u8> {
     p
 }
 
+/// Mesh operations this library sends on `MESH_OPERATION` (0x3B).
+pub(crate) mod mesh_op {
+    /// Hand the target's source addresses back to automatic assignment.
+    pub(crate) const AUTO_ADDRESSES: u8 = 6;
+}
+
+/// Builds a `MESH_OPERATION` payload that names only its target: 40 bytes,
+/// the operation at 0, three bytes of padding, the target uid at 4, then the
+/// parameter uid at 20 and the struct's trailing padding, both zero.
+pub(crate) fn build_mesh_operation(operation: u8, target: DeviceUid) -> Vec<u8> {
+    let mut p = Vec::with_capacity(40);
+    p.extend_from_slice(&[operation, 0, 0, 0]);
+    p.extend_from_slice(target.as_bytes());
+    p.resize(40, 0);
+    p
+}
+
 /// The frame types of `V2IP_TESTCARD` (0x4E) a client sends: ask a sink for
 /// its test card, or change parts of it.
 pub(crate) mod testcard_type {

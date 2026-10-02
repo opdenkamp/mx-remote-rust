@@ -825,6 +825,17 @@ fn the_audio_lock_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// Handing addresses back answers a device never heard from as not found.
+#[test]
+fn auto_addresses_answers_an_unknown_device_as_not_found() {
+    let remote = client(c"abi-auto-addr", c"00000022.00000000.00000000.000000a9");
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_auto_assign_v2ip_source_addresses(remote, uid_n(9)) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// What the new reads answer on a client that has heard from nothing.
 ///
 /// "Not found" and "not reported" are different answers and a caller acts on
