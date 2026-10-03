@@ -65,6 +65,13 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(50);
 /// Shortest gap between two discovery requests.
 const DISCOVER_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How long a discover to every device stands in for asking any one of them.
+///
+/// Each device answers it with everything it holds, after a jitter of up to a
+/// few seconds, so asking one again inside this window repeats an answer
+/// already on its way.
+const DISCOVER_COVERS: Duration = Duration::from_secs(60);
+
 /// How a [`Remote`] finds the network.
 ///
 /// [`Config::default`] discovers over multicast on the interface the host
@@ -536,14 +543,21 @@ impl Shared {
     /// clock, and the one frame that may add a hello here is a ping addressed
     /// to this client, which asks for exactly that.
     fn process_datagram(&self, data: &[u8], from: Ipv4Addr) {
-        let (events, hello_requested) = {
+        let (events, hello_requested, state_requests) = {
             let mut state = lock(&self.state);
             let events = process_frame(&mut state, data, Some(from), Instant::now());
-            (events, std::mem::take(&mut state.hello_requested))
+            (
+                events,
+                std::mem::take(&mut state.hello_requested),
+                std::mem::take(&mut state.state_requests),
+            )
         };
         self.dispatch(events);
         if hello_requested {
             self.announce();
+        }
+        for device in state_requests {
+            self.request_state(device);
         }
     }
 
@@ -556,6 +570,19 @@ impl Shared {
         lock(&self.schedule).discovered(Instant::now());
         self.send(&Addressee::Broadcast, op::SYS_DISCOVER, &[])?;
         Ok(())
+    }
+
+    /// Asks one device for everything it holds, with a discover naming it.
+    ///
+    /// Skipped while a discover to every device is recent enough to have
+    /// covered it. A receiver that predates the named form answers it as a
+    /// discover to every device, so each one asked costs the whole mesh's
+    /// state on such a network.
+    fn request_state(&self, device: DeviceUid) {
+        if lock(&self.schedule).discover_covers(Instant::now()) {
+            return;
+        }
+        let _ = self.send(&Addressee::Broadcast, op::SYS_DISCOVER, device.as_bytes());
     }
 
     /// Announces this client, and re-arms the announcement timer only once the

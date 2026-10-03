@@ -3157,7 +3157,7 @@ typedef struct {
    */
   mxr_endpoint_u32_cb on_audio_endpoint_volume;
   /**
-   * A peer asked every device to announce itself.
+   * A peer asked this client, or every device, to announce itself.
    */
   mxr_device_cb on_discover_request;
   /**

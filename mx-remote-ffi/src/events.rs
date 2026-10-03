@@ -532,7 +532,7 @@ pub struct mxr_callbacks_t {
     pub on_audio_endpoint_trigger: mxr_endpoint_bool_cb,
     /// An audio endpoint's volume changed.
     pub on_audio_endpoint_volume: mxr_endpoint_u32_cb,
-    /// A peer asked every device to announce itself.
+    /// A peer asked this client, or every device, to announce itself.
     pub on_discover_request: mxr_device_cb,
     /// A peer asked a device to switch a sink.
     pub on_set_route_requested: mxr_set_route_cb,

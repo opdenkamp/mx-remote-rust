@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::DISCOVER_INTERVAL;
+use super::{DISCOVER_COVERS, DISCOVER_INTERVAL};
 
 /// Announcement cadence, matching the firmware's own: a 2.5s base plus up to
 /// 2.5s of jitter, re-drawn after each send so a mesh full of clients does not
@@ -80,6 +80,13 @@ impl Schedule {
 
     pub(super) fn discovered(&mut self, now: Instant) {
         self.last_discover = Some(now);
+    }
+
+    /// Whether the last discover to every device is recent enough to stand in
+    /// for asking one of them. See [`DISCOVER_COVERS`].
+    pub(super) fn discover_covers(&self, now: Instant) -> bool {
+        self.last_discover
+            .is_some_and(|last| now.saturating_duration_since(last) < DISCOVER_COVERS)
     }
 
     /// The announcement timer as it stands, for a caller checking whether a

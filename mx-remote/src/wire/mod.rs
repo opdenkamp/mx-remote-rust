@@ -48,6 +48,7 @@ pub(crate) use netif::broadcast_address;
 pub(crate) use opcode::{audio_sub, mv_sub, op, Opcode};
 pub(crate) use payload::*;
 pub(crate) use tx::{Addressee, ProtocolTarget, Tx};
+pub(crate) use uid::UID_LEN;
 
 // Reached only from the test modules elsewhere in the crate, so they are cut
 // from a release build rather than carried there behind an allow.

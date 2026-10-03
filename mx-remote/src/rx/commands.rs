@@ -20,7 +20,9 @@ use crate::types::{
     RcSettings, RebootRequest, SetRouteRequest, V2ipBlacklistChange, V2ipPowerSaveRequest,
     V2ipTilingConfig, VideoWallCommand, VideoWallOp, VolumeMuteStatus,
 };
-use crate::wire::{cstr, BayUid, DeviceUid, EdidProfile, RcAction, RcKey, DEVICE_NAME_LEN};
+use crate::wire::{
+    cstr, BayUid, DeviceUid, EdidProfile, RcAction, RcKey, DEVICE_NAME_LEN, UID_LEN,
+};
 
 use super::handlers::{byte, ipv4_at, u16_at, u32_at, uid_at};
 use super::Rx;
@@ -33,7 +35,15 @@ fn from_known_device(state: &State, rx: &Rx<'_>) -> Option<DeviceUid> {
     state.device(rx.sender()).map(|d| d.uid)
 }
 
+/// Reports a discover, unless it asks another device.
+///
+/// An empty discover asks every device. One carrying exactly a uid asks only
+/// that device; any other length is read as asking every device, as a receiver
+/// that predates the uid form reads them all.
 pub(super) fn discover_request(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
+    if rx.frame.payload().len() == UID_LEN && rx.frame.uid(0) != Some(state.uid) {
+        return;
+    }
     if let Some(device) = from_known_device(state, rx) {
         ev.push(Event::DiscoverRequest { device });
     }

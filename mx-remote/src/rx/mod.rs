@@ -23,8 +23,8 @@ use std::net::Ipv4Addr;
 use std::time::Instant;
 
 use crate::event::Event;
-use crate::state::State;
-use crate::wire::{op, DeviceUid, Frame, Opcode};
+use crate::state::{Device, State};
+use crate::wire::{op, DeviceFeature, DeviceUid, Frame, Opcode};
 
 pub use svd::{lookup_svd, Svd};
 
@@ -88,6 +88,7 @@ pub(crate) fn process_frame(
     if !known && opcode != op::SYS_HELLO && opcode != op::SYS_DISCOVER && opcode != op::SYS_PING {
         return Vec::new();
     }
+    let before = state.device(sender).map(|d| Heard::of(d, timestamp));
     let rx = Rx {
         frame,
         address,
@@ -100,8 +101,49 @@ pub(crate) fn process_frame(
     // after fifteen seconds of silence but announces itself only every thirty.
     if let Some(device) = state.device_mut(sender) {
         device.touch(timestamp, Instant::now(), &mut ev);
+        if Heard::missed_state(before, device) {
+            state.state_requests.push(sender);
+        }
     }
     ev
+}
+
+/// What this client had heard of a device before the frame being handled.
+struct Heard {
+    /// Whether it had been silent long enough to count as offline.
+    away: bool,
+    /// Its reboot toggle, as last announced.
+    boot_bit: bool,
+}
+
+impl Heard {
+    fn of(device: &Device, timestamp: Instant) -> Self {
+        Self {
+            away: !device.is_online(timestamp),
+            boot_bit: device.hello.features.has(DeviceFeature::BOOT_BIT),
+        }
+    }
+
+    /// Whether a device just heard may hold state this client never received.
+    ///
+    /// A device repeats a frame only for a short while after it changes, so
+    /// whatever it sent before this client first heard it, or while it was
+    /// out of earshot, may not come again. `before` is `None` for a device
+    /// this frame registered.
+    ///
+    /// Not asked: a device whose reboot toggle flipped, or that is about to
+    /// reboot, because a booting device sends everything it holds; and a
+    /// management client, which holds nothing to send.
+    fn missed_state(before: Option<Self>, device: &Device) -> bool {
+        let features = device.hello.features;
+        if features.has(DeviceFeature::MANAGER) || features.has(DeviceFeature::STATUS_REBOOT) {
+            return false;
+        }
+        match before {
+            None => true,
+            Some(b) => b.away && b.boot_bit == features.has(DeviceFeature::BOOT_BIT),
+        }
+    }
 }
 
 /// Routes a frame to the handler for its opcode.

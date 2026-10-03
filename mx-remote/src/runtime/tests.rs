@@ -139,10 +139,10 @@ fn a_ping_for_this_client_is_answered_with_a_hello() {
     remote.shared.process_datagram(&ping(uid_n(202)), FROM);
     assert_eq!(tap.opcodes(), vec![op::SYS_HELLO.0], "from a stranger");
 
-    tap.clear();
     remote
         .shared
         .process_datagram(&hello_datagram(peer, "Peer", "PR0002"), FROM);
+    tap.clear();
     remote.shared.process_datagram(&ping(uid_n(204)), FROM);
     assert!(tap.opcodes().is_empty(), "a ping for another device");
 
@@ -532,5 +532,110 @@ fn a_management_client_does_not_keep_discovery_going() {
     assert!(
         !tap.opcodes().contains(&op::SYS_DISCOVER.0),
         "a manager that has nothing more to send kept discovery going"
+    );
+}
+
+/// Announces `peer` to `remote` with the given features, as a hello datagram.
+fn hello_with(remote: &Remote, peer: DeviceUid, features: DeviceFeature) {
+    let hello = crate::testing::hello_payload(0x2A, "ONEIP", "SR0001", "1.0.0", features);
+    remote.shared.process_datagram(
+        &datagram(peer, op::SYS_HELLO, protocol_for(op::SYS_HELLO), &hello),
+        FROM,
+    );
+}
+
+/// Moves the last time `peer` was heard far enough back to count as offline.
+fn silence(remote: &Remote, peer: DeviceUid) {
+    remote.shared.mutate(|state, _| {
+        let device = state.device_mut(peer).expect("peer not registered");
+        device.last_ping = device
+            .last_ping
+            .checked_sub(Duration::from_secs(600))
+            .expect("the test clock cannot predate the process");
+    });
+}
+
+/// The discovers captured, as their payloads.
+fn discovers(tap: &Tap) -> Vec<Vec<u8>> {
+    tap.frames()
+        .into_iter()
+        .filter(|f| f.get(20..22) == Some(&op::SYS_DISCOVER.0.to_le_bytes()[..]))
+        .map(|f| f[HEADER_LEN..].to_vec())
+        .collect()
+}
+
+/// A device that comes back is asked for its state by a discover naming it.
+///
+/// A device repeats a frame only for a short while after it changes, so what
+/// it sent while this client could not hear it may never come again.
+#[test]
+fn a_device_back_from_offline_is_asked_for_its_state() {
+    let (remote, tap) = client(220);
+    let peer = uid_n(221);
+    let features = DeviceFeature::VIDEO_ROUTING;
+
+    hello_with(&remote, peer, features);
+    assert_eq!(
+        discovers(&tap),
+        vec![peer.as_bytes().to_vec()],
+        "a device this client first heard"
+    );
+
+    tap.clear();
+    hello_with(&remote, peer, features);
+    assert!(discovers(&tap).is_empty(), "a device that never went away");
+
+    silence(&remote, peer);
+    hello_with(&remote, peer, features);
+    assert_eq!(
+        discovers(&tap),
+        vec![peer.as_bytes().to_vec()],
+        "a device back from offline"
+    );
+}
+
+/// A device that rebooted sends everything it holds unasked, and one about to
+/// reboot is about to; a management client holds nothing to send.
+#[test]
+fn a_device_with_nothing_missed_is_not_asked_for_its_state() {
+    let (remote, tap) = client(222);
+    let features = DeviceFeature::VIDEO_ROUTING;
+
+    let rebooted = uid_n(223);
+    hello_with(&remote, rebooted, features);
+    silence(&remote, rebooted);
+    tap.clear();
+    hello_with(&remote, rebooted, features | DeviceFeature::BOOT_BIT);
+    assert!(
+        discovers(&tap).is_empty(),
+        "a device whose reboot toggle flipped"
+    );
+
+    let rebooting = uid_n(224);
+    hello_with(&remote, rebooting, features | DeviceFeature::STATUS_REBOOT);
+    assert!(discovers(&tap).is_empty(), "a device about to reboot");
+
+    let manager = uid_n(225);
+    hello_with(&remote, manager, DeviceFeature::MANAGER);
+    assert!(discovers(&tap).is_empty(), "a management client");
+}
+
+/// A discover to every device already asked each one for everything.
+#[test]
+fn a_recent_discover_covers_a_device_that_appears() {
+    let (remote, tap) = client(226);
+    let _ = remote.discover();
+    tap.clear();
+
+    hello_with(&remote, uid_n(227), DeviceFeature::VIDEO_ROUTING);
+    assert!(discovers(&tap).is_empty(), "asked again inside the window");
+
+    lock(&remote.shared.schedule)
+        .discovered(Instant::now() - DISCOVER_COVERS - Duration::from_secs(1));
+    hello_with(&remote, uid_n(228), DeviceFeature::VIDEO_ROUTING);
+    assert_eq!(
+        discovers(&tap),
+        vec![uid_n(228).as_bytes().to_vec()],
+        "not asked once the window had passed"
     );
 }

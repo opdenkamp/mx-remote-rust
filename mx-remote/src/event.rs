@@ -200,7 +200,7 @@ events! {
         AudioEndpointLock => on_audio_endpoint_lock(endpoint: u16, locked: bool);
         /// An audio endpoint's volume changed.
         AudioEndpointVolume => on_audio_endpoint_volume(endpoint: u16, volume: u32);
-        /// A peer asked every device to announce itself.
+        /// A peer asked this client, or every device, to announce itself.
         DiscoverRequest => on_discover_request();
         /// A peer asked a device to switch a sink.
         SetRouteRequested => on_set_route_requested(request: SetRouteRequest);

@@ -517,6 +517,30 @@ fn command_handlers_reach_their_events() {
     assert!(h.saw(|e| matches!(e, Event::V2ipLinkChanged { target: t, .. } if *t == target)));
 }
 
+/// A discover carrying a uid asks only that device, so one naming another
+/// device is no request to this client. Any other length asks every device.
+#[test]
+fn a_discover_naming_another_device_is_not_a_request() {
+    let mut h = bay_state(115);
+    let asked = |h: &Harness| h.saw(|e| matches!(e, Event::DiscoverRequest { .. }));
+
+    h.feed(op::SYS_DISCOVER, uid_n(116).as_bytes());
+    assert!(!asked(&h), "a discover naming another device");
+
+    let own = h.state.uid;
+    h.feed(op::SYS_DISCOVER, own.as_bytes());
+    assert!(asked(&h), "a discover naming this client");
+
+    h.events.clear();
+    let mut longer = uid_n(116).as_bytes().to_vec();
+    longer.push(0);
+    h.feed(op::SYS_DISCOVER, &longer);
+    assert!(
+        asked(&h),
+        "a discover that is not exactly a uid asks every device"
+    );
+}
+
 /// 0x1F V2IP_SOURCE_SWITCH: a sink is told which groups to subscribe to, and
 /// the sources are resolved back to the bays advertising those addresses.
 #[test]

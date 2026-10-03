@@ -38,6 +38,9 @@ pub(crate) struct State {
     pub(crate) frames_received: u64,
     /// A peer asked this client to announce itself, and it has not yet.
     pub(crate) hello_requested: bool,
+    /// Devices that may hold state this client never received, and have not
+    /// yet been asked for it.
+    pub(crate) state_requests: Vec<DeviceUid>,
 }
 
 impl State {
@@ -48,6 +51,7 @@ impl State {
             links: BayLinks::default(),
             frames_received: 0,
             hello_requested: false,
+            state_requests: Vec::new(),
         }
     }
 
