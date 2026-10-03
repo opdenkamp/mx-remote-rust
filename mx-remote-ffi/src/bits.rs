@@ -124,7 +124,7 @@ pub const MXR_FEATURE_POWER_SAVE: u32 = 1 << 27;
 /// to it.
 pub const MXR_FEATURE_VLAN: u32 = 1 << 28;
 
-/// Set while the device is in its boot loader.
+/// Flips on every reboot, so a peer that sees it change knows the device restarted.
 pub const MXR_FEATURE_BOOT_BIT: u32 = 1 << 31;
 
 // ---- what a bay is wired for, in `mxr_bay_info_t::features` ----

@@ -175,7 +175,7 @@
 #define MXR_FEATURE_VLAN (1 << 28)
 
 /**
- * Set while the device is in its boot loader.
+ * Flips on every reboot, so a peer that sees it change knows the device restarted.
  */
 #define MXR_FEATURE_BOOT_BIT (1 << 31)
 
