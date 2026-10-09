@@ -731,6 +731,8 @@ wire_enum! {
         DIRECTV = 6;
         /// Another MX Remote device.
         MX_REMOTE = 7;
+        /// Routed inside the device itself.
+        INTERNAL = 8;
     }
 }
 
@@ -745,6 +747,7 @@ impl fmt::Display for RcType {
             Self::DISH => "Dish",
             Self::DIRECTV => "DirecTV",
             Self::MX_REMOTE => "MX-Remote",
+            Self::INTERNAL => "Internal",
             _ => "Unknown",
         };
         f.write_str(name)

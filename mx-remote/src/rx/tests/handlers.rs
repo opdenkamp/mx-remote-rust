@@ -799,6 +799,16 @@ fn a_bay_mapping_page_waits_for_the_bay_it_starts_at() {
     assert_eq!(h.bay(18).v2ip_uid, outputs[1]);
 }
 
+/// Target 8 routes remote control inside the bay's own device.
+#[test]
+fn an_internal_remote_control_target_is_named() {
+    let mut rec = poisoned(crate::wire::BAY_CONFIG_SIZE);
+    rec[4] = 0x80; // high nibble: the remote-control target
+    let c = parse_bay_config(&rec).expect("record did not parse");
+    assert_eq!(c.rc_type, RcType::INTERNAL);
+    assert_eq!(c.rc_type.to_string(), "Internal");
+}
+
 /// The bay descriptor underpins most of the read API - names, ports, sources,
 /// EDID profile, remote-control target, status and features all come from this
 /// one record. Every field gets a distinct value, so reading any of them at a
