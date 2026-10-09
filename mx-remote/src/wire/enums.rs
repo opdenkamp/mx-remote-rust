@@ -266,6 +266,24 @@ bitmask! {
         /// The device's clock has been set, on/off. Reported by the device
         /// itself and never written.
         CLOCK_SET = 1 << 13;
+        /// The PTP mode the device runs.
+        PTP_MODE = 1 << 14;
+        /// The PTP domain the device runs in.
+        PTP_DOMAIN = 1 << 15;
+        /// The priority1 the device announces as a PTP grandmaster.
+        PTP_PRIORITY1 = 1 << 16;
+    }
+}
+
+wire_enum! {
+    /// How a V2IP device takes part in PTP.
+    V2ipPtpMode: u8 {
+        /// No PTP.
+        OFF = 0;
+        /// Follows a grandmaster, and never becomes one.
+        FOLLOWER = 1;
+        /// Follows a grandmaster, or becomes one when there is none.
+        AUTO = 2;
     }
 }
 
@@ -351,6 +369,10 @@ impl V2ipDeviceSetting {
     /// The settings only a device reports about itself, which no write
     /// carries.
     pub const REPORTED_ONLY: Self = Self(Self::IR_PROFILES.0 | Self::CLOCK_SET.0);
+
+    /// The PTP settings.
+    pub const PTP_SETTINGS: Self =
+        Self(Self::PTP_MODE.0 | Self::PTP_DOMAIN.0 | Self::PTP_PRIORITY1.0);
 
     /// These bits with every bit of `other` cleared.
     pub(crate) const fn without(self, other: Self) -> Self {

@@ -1034,6 +1034,59 @@ pub unsafe extern "C" fn mxr_v2ip_power_save(
     })
 }
 
+/// A V2IP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
+/// than in it so that struct keeps its size.
+///
+/// Which of them the device has reported is in that struct's `valid`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_ptp_settings_t {
+    /// `MXR_V2IP_PTP_MODE_*`, when `valid` has `MXR_V2IP_SETTING_PTP_MODE`.
+    pub mode: u8,
+    /// The domain, at most `MXR_V2IP_PTP_DOMAIN_MAX`, when `valid` has
+    /// `MXR_V2IP_SETTING_PTP_DOMAIN`.
+    pub domain: u8,
+    /// The priority1 the device announces as a grandmaster, lower winning,
+    /// when `valid` has `MXR_V2IP_SETTING_PTP_PRIORITY1`.
+    pub priority1: u8,
+}
+
+/// The highest PTP domain a V2IP device runs in.
+pub const MXR_V2IP_PTP_DOMAIN_MAX: u8 = 127;
+
+const _: () = assert!(MXR_V2IP_PTP_DOMAIN_MAX == mx_remote::V2IP_PTP_DOMAIN_MAX);
+
+/// Fills `out` with a V2IP device's PTP settings.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+/// `mxr_v2ip_device_settings()` says which of these it has.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_ptp_settings_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_ptp_settings(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_ptp_settings_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_device_settings(uid.into())
+            .map(|s: V2ipDeviceSettings| mxr_v2ip_ptp_settings_t {
+                mode: s.ptp_mode.to_wire(),
+                domain: s.ptp_domain,
+                priority1: s.ptp_priority1,
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "device settings", value) }
+    })
+}
+
 /// Bytes in `mxr_time_zone_t.zone`, its NUL included.
 pub const MXR_TIME_ZONE_NAME_LEN: usize = 48;
 /// Bytes in `mxr_time_zone_t.rule`, its NUL included.

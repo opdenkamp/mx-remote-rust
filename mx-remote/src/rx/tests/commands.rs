@@ -20,9 +20,9 @@ use crate::types::{
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipTestPattern, V2ipTestcardFlag,
-    V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET,
-    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode, V2ipTestPattern,
+    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, vlan_block, Cfg};
@@ -2404,6 +2404,89 @@ fn a_schedule_is_read_only_from_a_frame_long_enough_to_hold_it() {
     let s = h.device().v2ip_settings.expect("no settings were read");
     assert_eq!(s.auto_power_save(), Some(45));
     assert_eq!(s.power_save_schedule(), None);
+}
+
+/// A 0x3C carrying PTP settings: as [`Cfg::bytes_with_power_save`] with no
+/// power save, then the mode, domain and priority1 at 172, 173 and 174. The
+/// reserved byte behind them stays poisoned.
+fn ptp_settings_frame(cfg: &Cfg, valid: V2ipDeviceSetting, ptp: [u8; 3]) -> Vec<u8> {
+    let mut p = cfg.bytes_with_power_save(valid.bits(), 0, 0, &V2ipPowerSaveSchedule::default());
+    p[172..175].copy_from_slice(&ptp);
+    p
+}
+
+/// The PTP settings sit one byte each behind the schedule. Each value differs,
+/// so one read from a neighbour's offset shows, and priority1 has its top bit
+/// set, so a signed read shows too.
+#[test]
+fn the_ptp_settings_are_read_behind_the_schedule() {
+    let mut h = command_device(118);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &ptp_settings_frame(&cfg, V2ipDeviceSetting::PTP_SETTINGS, [2, 0x5A, 0x80]),
+    );
+
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.ptp_mode(), Some(V2ipPtpMode::AUTO));
+    assert_eq!(s.ptp_domain(), Some(0x5A));
+    assert_eq!(s.ptp_priority1(), Some(0x80));
+}
+
+/// A bit claiming PTP settings its frame is too short to hold is not a
+/// setting, and a sender that predates them reports none.
+#[test]
+fn ptp_settings_are_read_only_from_a_frame_long_enough_to_hold_them() {
+    let mut h = command_device(119);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let valid = V2ipDeviceSetting::PTP_SETTINGS | V2ipDeviceSetting::AUTO_POWER_SAVE;
+    let frame = ptp_settings_frame(&cfg, valid, [1, 3, 4]);
+    h.feed(op::V2IP_DEVICE_CFG, &frame[..174]);
+
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.auto_power_save(), Some(0), "the settings it holds");
+    assert_eq!(s.ptp_mode(), None);
+    assert_eq!(s.ptp_domain(), None);
+    assert_eq!(s.ptp_priority1(), None);
+}
+
+/// A controller's PTP write is cached only within the ranges a device takes.
+#[test]
+fn a_controller_ptp_write_out_of_range_is_not_cached() {
+    let mut h = command_device(120);
+    let subject = h.sender;
+    let cfg = Cfg::addresses(subject, "239.1.2.3");
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &ptp_settings_frame(&cfg, V2ipDeviceSetting::PTP_SETTINGS, [1, 3, 4]),
+    );
+
+    let controller = uid_n(83);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2A, "Ctrl", "CTRL0007", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = 0;
+    h.feed_as(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &ptp_settings_frame(&write, V2ipDeviceSetting::PTP_SETTINGS, [3, 128, 9]),
+    );
+
+    let s = h
+        .state
+        .device(subject)
+        .and_then(|d| d.v2ip_settings)
+        .expect("the subject's settings are gone");
+    assert_eq!(s.ptp_priority1(), Some(9), "the write itself did not land");
+    assert_eq!(
+        s.ptp_mode(),
+        Some(V2ipPtpMode::FOLLOWER),
+        "an unnamed mode was cached"
+    );
+    assert_eq!(s.ptp_domain(), Some(3), "a domain past the last was cached");
 }
 
 /// Whether a device's clock is set is only the device's to say: a

@@ -21,8 +21,8 @@ use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute,
-    V2ipRouteTarget, V2ipTestPattern, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
+    V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMode,
+    V2ipRoute, V2ipRouteTarget, V2ipTestPattern, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -31,8 +31,8 @@ use crate::abi::{
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
 use crate::subsystems::{
-    mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t,
-    mxr_v2ip_vlan_t,
+    mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_settings_t,
+    mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t,
 };
 
 /// A stream's sample rate and channel count.
@@ -1110,7 +1110,8 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_schedule(
 /// has and ignores the rest.
 ///
 /// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
-/// when one only a device reports is, for a profile out of range or a
+/// when one only a device reports is, for a PTP setting, which
+/// `mxr_set_all_v2ip_ptp_settings()` carries, for a profile out of range or a
 /// schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
 /// device that applies a change reports it.
 ///
@@ -1136,6 +1137,12 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
             );
         };
         let valid = V2ipDeviceSetting::from_bits(settings.valid);
+        if !(valid & V2ipDeviceSetting::PTP_SETTINGS).is_empty() {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "PTP settings go through mxr_set_all_v2ip_ptp_settings()",
+            );
+        }
         let needs_power_save = valid.has(V2ipDeviceSetting::AUTO_POWER_SAVE)
             || valid.has(V2ipDeviceSetting::POWER_SAVE_SCHEDULE);
         // SAFETY: the caller guarantees an initialised struct or null.
@@ -1164,6 +1171,113 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
                 start: power_save.start,
                 end: power_save.end,
             },
+            ..V2ipDeviceSettings::default()
+        }))
+    })
+}
+
+/// Sets the PTP mode a V2IP device runs, `MXR_V2IP_PTP_MODE_*`.
+/// `MXR_ERR_INVALID_ARGUMENT` for a mode with no name. Otherwise as
+/// `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_ptp_mode(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    mode: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(
+            r.remote
+                .set_v2ip_ptp_mode(device.into(), V2ipPtpMode::from_wire(mode)),
+        )
+    })
+}
+
+/// Sets the PTP domain a V2IP device runs in. `MXR_ERR_INVALID_ARGUMENT` above
+/// `MXR_V2IP_PTP_DOMAIN_MAX`. Otherwise as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_ptp_domain(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    domain: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_ptp_domain(device.into(), domain))
+    })
+}
+
+/// Sets the priority1 a V2IP device announces as a PTP grandmaster, lower
+/// winning. Otherwise as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_ptp_priority1(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    priority1: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_ptp_priority1(device.into(), priority1))
+    })
+}
+
+/// Changes PTP settings on every V2IP device of the mesh with one frame.
+///
+/// `valid` names the `MXR_V2IP_SETTING_PTP_*` bits to send, and `ptp` carries
+/// their values. `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `ptp`,
+/// for no PTP bit or any other bit in `valid`, or for a mode or domain out of
+/// range. Otherwise as `mxr_set_all_v2ip_device_settings()`, which carries the
+/// other settings.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `ptp` is
+/// null or points at an initialised `mxr_v2ip_ptp_settings_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_settings(
+    remote: *const mxr_remote_t,
+    valid: u32,
+    ptp: *const mxr_v2ip_ptp_settings_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(ptp) = (unsafe { ptp.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the PTP settings pointer is null",
+            );
+        };
+        let valid = V2ipDeviceSetting::from_bits(valid);
+        if valid.is_empty() || !V2ipDeviceSetting::PTP_SETTINGS.has(valid) {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "only PTP settings are carried here",
+            );
+        }
+        from_control(r.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+            valid,
+            ptp_mode: V2ipPtpMode::from_wire(ptp.mode),
+            ptp_domain: ptp.domain,
+            ptp_priority1: ptp.priority1,
+            ..V2ipDeviceSettings::default()
         }))
     })
 }

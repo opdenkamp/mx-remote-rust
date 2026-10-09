@@ -1110,6 +1110,37 @@
 #define MXR_V2IP_SETTING_CLOCK_SET (1 << 13)
 
 /**
+ * The PTP mode, carried in `mxr_v2ip_ptp_settings_t`'s `mode`.
+ */
+#define MXR_V2IP_SETTING_PTP_MODE (1 << 14)
+
+/**
+ * The PTP domain, carried in `mxr_v2ip_ptp_settings_t`'s `domain`.
+ */
+#define MXR_V2IP_SETTING_PTP_DOMAIN (1 << 15)
+
+/**
+ * The PTP grandmaster priority1, carried in `mxr_v2ip_ptp_settings_t`'s
+ * `priority1`.
+ */
+#define MXR_V2IP_SETTING_PTP_PRIORITY1 (1 << 16)
+
+/**
+ * No PTP.
+ */
+#define MXR_V2IP_PTP_MODE_OFF 0
+
+/**
+ * Follows a grandmaster, and never becomes one.
+ */
+#define MXR_V2IP_PTP_MODE_FOLLOWER 1
+
+/**
+ * Follows a grandmaster, or becomes one when there is none.
+ */
+#define MXR_V2IP_PTP_MODE_AUTO 2
+
+/**
  * The block carries a configuration. A block without it carries nothing.
  */
 #define MXR_V2IP_VLAN_VALID (1 << 0)
@@ -1389,6 +1420,11 @@
  * Minutes in a day: every power save time is below this.
  */
 #define MXR_V2IP_MINUTES_PER_DAY 1440
+
+/**
+ * The highest PTP domain a V2IP device runs in.
+ */
+#define MXR_V2IP_PTP_DOMAIN_MAX 127
 
 /**
  * Bytes in `mxr_time_zone_t.zone`, its NUL included.
@@ -1895,6 +1931,29 @@ typedef struct {
    */
   int8_t ir_profile_sink;
 } mxr_v2ip_device_settings_t;
+
+/**
+ * A V2IP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
+ * than in it so that struct keeps its size.
+ *
+ * Which of them the device has reported is in that struct's `valid`.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_PTP_MODE_*`, when `valid` has `MXR_V2IP_SETTING_PTP_MODE`.
+   */
+  uint8_t mode;
+  /**
+   * The domain, at most `MXR_V2IP_PTP_DOMAIN_MAX`, when `valid` has
+   * `MXR_V2IP_SETTING_PTP_DOMAIN`.
+   */
+  uint8_t domain;
+  /**
+   * The priority1 the device announces as a grandmaster, lower winning,
+   * when `valid` has `MXR_V2IP_SETTING_PTP_PRIORITY1`.
+   */
+  uint8_t priority1;
+} mxr_v2ip_ptp_settings_t;
 
 /**
  * VLAN tagging on a V2IP device's uplink.
@@ -4806,7 +4865,8 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
  * has and ignores the rest.
  *
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
- * when one only a device reports is, for a profile out of range or a
+ * when one only a device reports is, for a PTP setting, which
+ * `mxr_set_all_v2ip_ptp_settings()` carries, for a profile out of range or a
  * schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
  * device that applies a change reports it.
  *
@@ -4819,6 +4879,57 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
 mxr_result_t mxr_set_all_v2ip_device_settings(const mxr_remote_t *remote,
                                               const mxr_v2ip_device_settings_t *settings,
                                               const mxr_v2ip_power_save_t *power_save);
+
+/**
+ * Sets the PTP mode a V2IP device runs, `MXR_V2IP_PTP_MODE_*`.
+ * `MXR_ERR_INVALID_ARGUMENT` for a mode with no name. Otherwise as
+ * `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_ptp_mode(const mxr_remote_t *remote, mxr_uid_t device, uint8_t mode);
+
+/**
+ * Sets the PTP domain a V2IP device runs in. `MXR_ERR_INVALID_ARGUMENT` above
+ * `MXR_V2IP_PTP_DOMAIN_MAX`. Otherwise as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_ptp_domain(const mxr_remote_t *remote, mxr_uid_t device, uint8_t domain);
+
+/**
+ * Sets the priority1 a V2IP device announces as a PTP grandmaster, lower
+ * winning. Otherwise as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_ptp_priority1(const mxr_remote_t *remote,
+                                        mxr_uid_t device,
+                                        uint8_t priority1);
+
+/**
+ * Changes PTP settings on every V2IP device of the mesh with one frame.
+ *
+ * `valid` names the `MXR_V2IP_SETTING_PTP_*` bits to send, and `ptp` carries
+ * their values. `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `ptp`,
+ * for no PTP bit or any other bit in `valid`, or for a mode or domain out of
+ * range. Otherwise as `mxr_set_all_v2ip_device_settings()`, which carries the
+ * other settings.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `ptp` is
+ * null or points at an initialised `mxr_v2ip_ptp_settings_t`.
+ */
+mxr_result_t mxr_set_all_v2ip_ptp_settings(const mxr_remote_t *remote,
+                                           uint32_t valid,
+                                           const mxr_v2ip_ptp_settings_t *ptp);
 
 /**
  * Changes a V2IP device's VLAN configuration.
@@ -5663,6 +5774,21 @@ mxr_result_t mxr_v2ip_device_settings(const mxr_remote_t *remote,
 mxr_result_t mxr_v2ip_power_save(const mxr_remote_t *remote,
                                  mxr_uid_t uid,
                                  mxr_v2ip_power_save_t *out);
+
+/**
+ * Fills `out` with a V2IP device's PTP settings.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+ * `mxr_v2ip_device_settings()` says which of these it has.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_ptp_settings_t`.
+ */
+mxr_result_t mxr_v2ip_ptp_settings(const mxr_remote_t *remote,
+                                   mxr_uid_t uid,
+                                   mxr_v2ip_ptp_settings_t *out);
 
 /**
  * Fills `out` with the time zone a device announced for its mesh.

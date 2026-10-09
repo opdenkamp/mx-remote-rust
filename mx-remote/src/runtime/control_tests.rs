@@ -20,7 +20,8 @@ use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
     EdidProfileChange, EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute,
     V2ipRouteTarget, V2ipVlan, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
+    SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX,
+    VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -28,10 +29,10 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipFpgaFeature, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
-    HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE,
-    V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO,
-    V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
+    V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
+    V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -2493,6 +2494,62 @@ fn a_power_save_write_the_device_would_not_take_is_refused() {
     ));
 }
 
+/// Each PTP write puts its byte at its offset in the settings block, behind its
+/// own bit, and a value out of range is refused before anything is sent.
+#[test]
+fn a_ptp_write_carries_its_value_behind_its_bit() {
+    let f = Fixture::new();
+    let uid = uid_n(230);
+    f.everything(uid, 0x2A, "PT0001");
+    report_settings(&f, uid, V2ipDeviceSetting::PTP_SETTINGS);
+    f.connect();
+
+    let block_of = |f: &Fixture| {
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        frame[HEADER_LEN + 128..].to_vec()
+    };
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_ptp_mode(uid, V2ipPtpMode::FOLLOWER)
+        .expect("the device has reported the setting");
+    let block = block_of(&f);
+    assert_eq!(&block[..4], &(1u32 << 14).to_le_bytes(), "mode: valid");
+    assert_eq!(block[44], 1, "the mode");
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_ptp_domain(uid, 0x7F)
+        .expect("the device has reported the setting");
+    let block = block_of(&f);
+    assert_eq!(&block[..4], &(1u32 << 15).to_le_bytes(), "domain: valid");
+    assert_eq!(block[45], 0x7F, "the domain");
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_ptp_priority1(uid, 0x80)
+        .expect("the device has reported the setting");
+    let block = block_of(&f);
+    assert_eq!(&block[..4], &(1u32 << 16).to_le_bytes(), "priority1: valid");
+    assert_eq!(block[46], 0x80, "the priority1");
+
+    let cached = f.remote.v2ip_device_settings(uid).expect("no settings");
+    assert_eq!(cached.ptp_mode(), Some(V2ipPtpMode::FOLLOWER));
+    assert_eq!(cached.ptp_domain(), Some(0x7F));
+    assert_eq!(cached.ptp_priority1(), Some(0x80));
+
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.set_v2ip_ptp_mode(uid, V2ipPtpMode::from_wire(3)),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        f.remote.set_v2ip_ptp_domain(uid, V2IP_PTP_DOMAIN_MAX + 1),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused write was sent");
+}
+
 /// Settings for every device go out as the bare settings block, to everyone,
 /// and change nothing here until a device reports them.
 #[test]
@@ -2558,6 +2615,16 @@ fn settings_every_device_would_ignore_are_refused() {
                 start: [V2IP_MINUTES_PER_DAY; 7],
                 end: [0; 7],
             },
+            ..V2ipDeviceSettings::default()
+        },
+        V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::PTP_MODE,
+            ptp_mode: V2ipPtpMode::from_wire(3),
+            ..V2ipDeviceSettings::default()
+        },
+        V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::PTP_DOMAIN,
+            ptp_domain: V2IP_PTP_DOMAIN_MAX + 1,
             ..V2ipDeviceSettings::default()
         },
     ];

@@ -711,6 +711,25 @@ pub const MXR_V2IP_SETTING_POWER_SAVE_SCHEDULE: u32 = 1 << 12;
 /// The device's clock has been set, on/off. Never written.
 pub const MXR_V2IP_SETTING_CLOCK_SET: u32 = 1 << 13;
 
+/// The PTP mode, carried in `mxr_v2ip_ptp_settings_t`'s `mode`.
+pub const MXR_V2IP_SETTING_PTP_MODE: u32 = 1 << 14;
+
+/// The PTP domain, carried in `mxr_v2ip_ptp_settings_t`'s `domain`.
+pub const MXR_V2IP_SETTING_PTP_DOMAIN: u32 = 1 << 15;
+
+/// The PTP grandmaster priority1, carried in `mxr_v2ip_ptp_settings_t`'s
+/// `priority1`.
+pub const MXR_V2IP_SETTING_PTP_PRIORITY1: u32 = 1 << 16;
+
+// ---- V2IP PTP modes, in `mxr_v2ip_ptp_settings_t::mode` ----
+
+/// No PTP.
+pub const MXR_V2IP_PTP_MODE_OFF: u8 = 0;
+/// Follows a grandmaster, and never becomes one.
+pub const MXR_V2IP_PTP_MODE_FOLLOWER: u8 = 1;
+/// Follows a grandmaster, or becomes one when there is none.
+pub const MXR_V2IP_PTP_MODE_AUTO: u8 = 2;
+
 // ---- V2IP VLAN flags, in `mxr_v2ip_vlan_t::flags` ----
 
 /// The block carries a configuration. A block without it carries nothing.

@@ -35,7 +35,8 @@ use crate::types::{
     V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
     V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan,
     VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_PORT_SFP,
+    VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -48,8 +49,8 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
-    V2ipDeviceSetting, V2ipFpgaFeature, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
-    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX,
+    V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
+    V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX,
     V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
@@ -1236,14 +1237,69 @@ impl Remote {
         )
     }
 
+    /// Sets the PTP mode a V2IP device runs. The terms of
+    /// [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_ptp_mode(
+        &self,
+        device: DeviceUid,
+        mode: V2ipPtpMode,
+    ) -> Result<(), ControlError> {
+        if mode > V2ipPtpMode::AUTO {
+            return Err(ControlError::InvalidRequest("no such PTP mode"));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::PTP_MODE,
+                ptp_mode: mode,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
+    /// Sets the PTP domain a V2IP device runs in, at most
+    /// [`V2IP_PTP_DOMAIN_MAX`](crate::V2IP_PTP_DOMAIN_MAX). The terms of
+    /// [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_ptp_domain(&self, device: DeviceUid, domain: u8) -> Result<(), ControlError> {
+        if domain > V2IP_PTP_DOMAIN_MAX {
+            return Err(ControlError::InvalidRequest("no such PTP domain"));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::PTP_DOMAIN,
+                ptp_domain: domain,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
+    /// Sets the priority1 a V2IP device announces as a PTP grandmaster, lower
+    /// winning. The terms of [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_ptp_priority1(
+        &self,
+        device: DeviceUid,
+        priority1: u8,
+    ) -> Result<(), ControlError> {
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::PTP_PRIORITY1,
+                ptp_priority1: priority1,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
     /// Changes settings on every V2IP device of the mesh with one frame.
     ///
     /// `settings` carries the settings behind their bits in
     /// [`valid`](V2ipDeviceSettings::valid), as a device reports them. Each
     /// device applies those it has and ignores the rest, and none that
     /// predates the frame applies any. A setting only a device reports about
-    /// itself, a profile out of range and a schedule time that is not a time
-    /// of day are refused here, since every device would ignore them.
+    /// itself, a profile, PTP mode or PTP domain out of range and a schedule
+    /// time that is not a time of day are refused here, since every device
+    /// would ignore them.
     ///
     /// Nothing is cached: each device that applies a change reports its
     /// settings, and [`Remote::v2ip_device_settings`] reads that.
@@ -1274,6 +1330,12 @@ impl Remote {
             return Err(ControlError::InvalidRequest(
                 "a power save time is not a time of day",
             ));
+        }
+        if valid.has(V2ipDeviceSetting::PTP_MODE) && settings.ptp_mode > V2ipPtpMode::AUTO {
+            return Err(ControlError::InvalidRequest("no such PTP mode"));
+        }
+        if valid.has(V2ipDeviceSetting::PTP_DOMAIN) && settings.ptp_domain > V2IP_PTP_DOMAIN_MAX {
+            return Err(ControlError::InvalidRequest("no such PTP domain"));
         }
         self.shared.send(
             &Addressee::Broadcast,

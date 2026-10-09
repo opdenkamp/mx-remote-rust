@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 20] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 21] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -509,6 +509,12 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             core_bits(&enums, "V2ipTestcardFlag"),
             &[],
             6,
+        ),
+        (
+            "MXR_V2IP_PTP_MODE_",
+            core_bits(&enums, "V2ipPtpMode"),
+            &[],
+            3,
         ),
         (
             "MXR_V2IP_SETTING_",
@@ -704,6 +710,84 @@ fn the_device_settings_calls_check_their_arguments_first() {
         rc,
         mxr_result_t::MXR_ERR_NOT_CONNECTED,
         "a switch needs no power save"
+    );
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// The PTP calls answer a caller's mistake as an argument error and a device
+/// never heard from as not found, before anything is sent, and the mesh-wide
+/// settings call leaves PTP to its own.
+#[test]
+fn the_ptp_calls_check_their_arguments_first() {
+    let remote = client(c"abi-ptp", c"00000022.00000000.00000000.000000a8");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_ptp_settings(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_ptp_settings_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_ptp_settings(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_ptp_mode(remote, uid_n(9), 3) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "an unnamed mode"
+    );
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_ptp_domain(remote, uid_n(9), MXR_V2IP_PTP_DOMAIN_MAX + 1) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a domain past the last"
+    );
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_ptp_priority1(remote, uid_n(9), 128) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    let ptp = mxr_v2ip_ptp_settings_t {
+        mode: MXR_V2IP_PTP_MODE_AUTO,
+        domain: 0,
+        priority1: 128,
+    };
+    // SAFETY: a live handle; a null struct is what is under test.
+    let rc =
+        unsafe { mxr_set_all_v2ip_ptp_settings(remote, MXR_V2IP_SETTING_PTP_MODE, ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no values");
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe {
+        mxr_set_all_v2ip_ptp_settings(
+            remote,
+            MXR_V2IP_SETTING_PTP_MODE | MXR_V2IP_SETTING_STATUS_LED,
+            &ptp,
+        )
+    };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a bit that is not PTP"
+    );
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_settings(remote, MXR_V2IP_SETTING_PTP_MODE, &ptp) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED, "a PTP bit alone");
+
+    let all = mxr_v2ip_device_settings_t {
+        valid: MXR_V2IP_SETTING_PTP_DOMAIN,
+        flags: 0,
+        ir_profiles: 0,
+        ir_profile: 0,
+        ir_profile_sink: 0,
+    };
+    // SAFETY: a live handle and an initialised settings struct.
+    let rc = unsafe { mxr_set_all_v2ip_device_settings(remote, &all, ptr::null()) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a PTP bit with no PTP values"
     );
 
     // SAFETY: created above and not yet freed.

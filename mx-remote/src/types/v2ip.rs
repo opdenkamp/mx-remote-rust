@@ -7,7 +7,7 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipTestPattern,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipPtpMode, V2ipTestPattern,
     V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, V2IP_AUDIO_DEFAULT_CHANNELS,
     V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX,
     V2IP_IR_PROFILE_NOT_SET,
@@ -597,6 +597,9 @@ pub struct DeviceV2ipSink {
     pub audio_fmt: Option<V2ipAudioFormat>,
 }
 
+/// The highest PTP domain a V2IP device runs in.
+pub const V2IP_PTP_DOMAIN_MAX: u8 = 127;
+
 /// Minutes in a day: every time in a [`V2ipPowerSaveSchedule`] is below this.
 pub const V2IP_MINUTES_PER_DAY: u16 = 24 * 60;
 
@@ -657,6 +660,12 @@ pub struct V2ipDeviceSettings {
     pub auto_power_save: u16,
     /// The daily windows in which the device powers down.
     pub power_save: V2ipPowerSaveSchedule,
+    /// The PTP mode the device runs.
+    pub ptp_mode: V2ipPtpMode,
+    /// The PTP domain the device runs in, up to [`V2IP_PTP_DOMAIN_MAX`].
+    pub ptp_domain: u8,
+    /// The priority1 the device announces as a PTP grandmaster, lower winning.
+    pub ptp_priority1: u8,
 }
 
 impl V2ipDeviceSettings {
@@ -712,6 +721,30 @@ impl V2ipDeviceSettings {
         Some(self.power_save)
     }
 
+    /// The PTP mode, `None` while it is not reported.
+    pub const fn ptp_mode(&self) -> Option<V2ipPtpMode> {
+        if !self.valid.has(V2ipDeviceSetting::PTP_MODE) {
+            return None;
+        }
+        Some(self.ptp_mode)
+    }
+
+    /// The PTP domain, `None` while it is not reported.
+    pub const fn ptp_domain(&self) -> Option<u8> {
+        if !self.valid.has(V2ipDeviceSetting::PTP_DOMAIN) {
+            return None;
+        }
+        Some(self.ptp_domain)
+    }
+
+    /// The PTP priority1, `None` while it is not reported.
+    pub const fn ptp_priority1(&self) -> Option<u8> {
+        if !self.valid.has(V2ipDeviceSetting::PTP_PRIORITY1) {
+            return None;
+        }
+        Some(self.ptp_priority1)
+    }
+
     /// Folds a received settings block onto the cached one.
     ///
     /// Each bit in the frame's [`valid`](Self::valid) replaces its own setting
@@ -738,6 +771,15 @@ impl V2ipDeviceSettings {
         if valid.has(V2ipDeviceSetting::POWER_SAVE_SCHEDULE) {
             out.power_save = self.power_save;
         }
+        if valid.has(V2ipDeviceSetting::PTP_MODE) {
+            out.ptp_mode = self.ptp_mode;
+        }
+        if valid.has(V2ipDeviceSetting::PTP_DOMAIN) {
+            out.ptp_domain = self.ptp_domain;
+        }
+        if valid.has(V2ipDeviceSetting::PTP_PRIORITY1) {
+            out.ptp_priority1 = self.ptp_priority1;
+        }
         out
     }
 
@@ -753,6 +795,12 @@ impl V2ipDeviceSettings {
         }
         if !(V2IP_IR_PROFILE_NOT_SET..V2IP_IR_PROFILE_MAX).contains(&self.ir_profile_sink) {
             valid = valid.without(V2ipDeviceSetting::IR_PROFILE_SINK);
+        }
+        if self.ptp_mode > V2ipPtpMode::AUTO {
+            valid = valid.without(V2ipDeviceSetting::PTP_MODE);
+        }
+        if self.ptp_domain > V2IP_PTP_DOMAIN_MAX {
+            valid = valid.without(V2ipDeviceSetting::PTP_DOMAIN);
         }
         Self { valid, ..self }
     }

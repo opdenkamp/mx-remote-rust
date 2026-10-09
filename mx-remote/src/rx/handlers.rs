@@ -18,8 +18,8 @@ use crate::types::{
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipTestPattern,
-    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode,
+    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
     TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
 };
 
@@ -464,6 +464,11 @@ const V2IP_SETTINGS_SIZE: usize = 16;
 const V2IP_SCHEDULE_AT: usize = V2IP_SETTINGS_AT + V2IP_SETTINGS_SIZE;
 const V2IP_SCHEDULE_SIZE: usize = 28;
 
+/// The PTP settings, behind the schedule: mode, domain and priority1, one byte
+/// each.
+const V2IP_PTP_SETTINGS_AT: usize = V2IP_SCHEDULE_AT + V2IP_SCHEDULE_SIZE;
+const V2IP_PTP_SETTINGS_SIZE: usize = 3;
+
 /// The VLAN configuration, behind the whole 48-byte settings block.
 const V2IP_VLAN_AT: usize = V2IP_SETTINGS_AT + 48;
 const V2IP_VLAN_SIZE: usize = 16;
@@ -623,6 +628,9 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             ir_profile_sink: s[13] as i8,
             auto_power_save: u16_at(s, 14),
             power_save: V2ipPowerSaveSchedule::default(),
+            ptp_mode: V2ipPtpMode::OFF,
+            ptp_domain: 0,
+            ptp_priority1: 0,
         };
         match p.get(V2IP_SCHEDULE_AT..V2IP_SCHEDULE_AT + V2IP_SCHEDULE_SIZE) {
             Some(w) => {
@@ -634,6 +642,16 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             // A bit claiming the schedule in a frame too short to hold it.
             None => {
                 frame.valid = frame.valid.without(V2ipDeviceSetting::POWER_SAVE_SCHEDULE);
+            }
+        }
+        match p.get(V2IP_PTP_SETTINGS_AT..V2IP_PTP_SETTINGS_AT + V2IP_PTP_SETTINGS_SIZE) {
+            Some(t) => {
+                frame.ptp_mode = V2ipPtpMode::from_wire(t[0]);
+                frame.ptp_domain = t[1];
+                frame.ptp_priority1 = t[2];
+            }
+            None => {
+                frame.valid = frame.valid.without(V2ipDeviceSetting::PTP_SETTINGS);
             }
         }
         if let Some(device) = state.device_mut(subject) {
