@@ -11,9 +11,9 @@ use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    RcSettings, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDeviceStats, V2ipScalingSettings,
-    V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
-    SCALING_FLAG_MODE_VALID,
+    RcSettings, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDeviceStats, V2ipPtpState,
+    V2ipScalingSettings, V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
+    VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
 
@@ -133,6 +133,9 @@ pub(crate) struct Device {
     pub(crate) v2ip_settings: Option<V2ipDeviceSettings>,
     /// The VLAN configuration the device last reported about itself.
     pub(crate) v2ip_vlan: Option<V2ipVlan>,
+    /// The PTP state the device last reported about itself, `None` while it
+    /// reports none.
+    pub(crate) v2ip_ptp: Option<V2ipPtpState>,
     /// The test card the sink last reported.
     pub(crate) v2ip_testcard: Option<V2ipTestcard>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
@@ -180,6 +183,7 @@ impl Device {
             v2ip_features: None,
             v2ip_settings: None,
             v2ip_vlan: None,
+            v2ip_ptp: None,
             v2ip_testcard: None,
             v2ip_stats: None,
             setup_done: None,
@@ -1069,6 +1073,17 @@ impl Device {
         ev.push(Event::V2ipVlanChanged {
             device: self.uid,
             vlan,
+        });
+    }
+
+    pub(crate) fn set_v2ip_ptp(&mut self, ptp: Option<V2ipPtpState>, ev: &mut Vec<Event>) {
+        if self.v2ip_ptp == ptp {
+            return;
+        }
+        self.v2ip_ptp = ptp;
+        ev.push(Event::V2ipPtpChanged {
+            device: self.uid,
+            ptp,
         });
     }
 

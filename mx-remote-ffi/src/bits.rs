@@ -730,6 +730,21 @@ pub const MXR_V2IP_PTP_MODE_FOLLOWER: u8 = 1;
 /// Follows a grandmaster, or becomes one when there is none.
 pub const MXR_V2IP_PTP_MODE_AUTO: u8 = 2;
 
+// ---- V2IP PTP state, in `mxr_v2ip_ptp_t` ----
+
+/// The device runs PTP and the block holds its state.
+pub const MXR_V2IP_PTP_VALID: u8 = 1 << 0;
+/// The device locked to a master since its PTP started, so its mesh holds a
+/// time.
+pub const MXR_V2IP_PTP_FOLLOWED: u8 = 1 << 1;
+
+/// Not locked.
+pub const MXR_V2IP_PTP_LOCK_UNLOCKED: u8 = 0;
+/// Locking.
+pub const MXR_V2IP_PTP_LOCK_LOCKING: u8 = 1;
+/// Locked.
+pub const MXR_V2IP_PTP_LOCK_LOCKED: u8 = 2;
+
 // ---- V2IP VLAN flags, in `mxr_v2ip_vlan_t::flags` ----
 
 /// The block carries a configuration. A block without it carries nothing.

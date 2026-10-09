@@ -342,6 +342,30 @@ bitmask! {
 }
 
 bitmask! {
+    /// The flags of a V2IP device's PTP state.
+    V2ipPtpFlag: u8 {
+        /// The device runs PTP and the block holds its state. A block without
+        /// it holds nothing: the device has no PTP, or is in power save.
+        VALID = 1 << 0;
+        /// The device locked to a master since its PTP started, so its mesh
+        /// holds a time.
+        FOLLOWED = 1 << 1;
+    }
+}
+
+wire_enum! {
+    /// How far a V2IP device's PTP clock has locked to its master.
+    V2ipPtpLock: u8 {
+        /// Not locked.
+        UNLOCKED = 0;
+        /// Locking.
+        LOCKING = 1;
+        /// Locked.
+        LOCKED = 2;
+    }
+}
+
+bitmask! {
     /// The flags of a V2IP device's VLAN configuration.
     V2ipVlanFlag: u16 {
         /// The block carries a configuration. A block without it carries

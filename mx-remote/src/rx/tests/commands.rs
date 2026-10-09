@@ -20,9 +20,9 @@ use crate::types::{
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode, V2ipTestPattern,
-    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode,
+    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION,
+    V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, vlan_block, Cfg};
@@ -2842,6 +2842,92 @@ fn a_controller_frame_does_not_change_a_device_vlan() {
         None,
         "the write was taken as the controller's own"
     );
+}
+
+/// A 0x3C carrying a PTP state behind an invalid VLAN block: `flags`, mode 2,
+/// domain 0x15, portState 9 and lock 1 at 192..197, three reserved bytes left
+/// poisoned, then the clock identity 0x11..0x18 and the grandmaster's
+/// 0x21..0x28.
+fn ptp_state_frame(cfg: &Cfg, flags: u8) -> Vec<u8> {
+    let mut p = cfg.bytes_with_vlan(&[0; 16]);
+    p.extend_from_slice(&[flags, 2, 0x15, 9, 1]);
+    p.extend_from_slice(&poisoned(3));
+    p.extend(0x11..=0x18u8);
+    p.extend(0x21..=0x28u8);
+    p
+}
+
+/// A device's PTP state is read field by field from behind its VLAN block.
+#[test]
+fn a_device_ptp_state_is_read_field_by_field() {
+    let mut h = command_device(121);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let flags = (V2ipPtpFlag::VALID | V2ipPtpFlag::FOLLOWED).bits();
+    h.feed(op::V2IP_DEVICE_CFG, &ptp_state_frame(&cfg, flags));
+
+    let ptp = h.device().v2ip_ptp.expect("no PTP state was read");
+    assert!(ptp.followed());
+    assert_eq!(ptp.mode, V2ipPtpMode::AUTO);
+    assert_eq!(ptp.domain, 0x15);
+    assert_eq!(ptp.port_state, 9);
+    assert_eq!(ptp.lock, V2ipPtpLock::LOCKING);
+    assert_eq!(
+        ptp.clock_identity,
+        [0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18]
+    );
+    assert_eq!(
+        ptp.grandmaster(),
+        Some([0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28])
+    );
+}
+
+/// A block without the valid bit says the device has no state now, replacing
+/// what it reported before; a frame too short to hold the block says nothing.
+#[test]
+fn a_ptp_state_without_its_valid_bit_is_none() {
+    let mut h = command_device(122);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let whole = ptp_state_frame(&cfg, V2ipPtpFlag::VALID.bits());
+    h.feed(op::V2IP_DEVICE_CFG, &whole);
+    assert!(h.device().v2ip_ptp.is_some());
+
+    h.feed(op::V2IP_DEVICE_CFG, &whole[..whole.len() - 1]);
+    assert!(h.device().v2ip_ptp.is_some(), "a short frame cleared it");
+
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &ptp_state_frame(&cfg, V2ipPtpFlag::FOLLOWED.bits()),
+    );
+    assert_eq!(h.device().v2ip_ptp, None);
+}
+
+/// Only the device can read its own video processor, so a controller's frame
+/// about it carries no PTP state, whatever its bytes hold.
+#[test]
+fn a_controller_frame_does_not_change_a_device_ptp_state() {
+    let mut h = command_device(123);
+    let subject = h.sender;
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &ptp_state_frame(
+            &Cfg::addresses(subject, "239.1.2.3"),
+            V2ipPtpFlag::VALID.bits(),
+        ),
+    );
+
+    let controller = uid_n(84);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2C, "Ctrl", "CTRL0008", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = 0;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &ptp_state_frame(&write, 0));
+
+    let d = h.state.device(subject).expect("the subject is gone");
+    assert!(d.v2ip_ptp.is_some(), "a controller's frame cleared it");
+    assert_eq!(h.state.device(controller).and_then(|d| d.v2ip_ptp), None);
 }
 
 /// A sink announcing that it initialises its configuration, as `uid_n(n)`,

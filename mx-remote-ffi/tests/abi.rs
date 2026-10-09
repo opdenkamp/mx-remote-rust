@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 21] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 23] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -513,6 +513,18 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
         (
             "MXR_V2IP_PTP_MODE_",
             core_bits(&enums, "V2ipPtpMode"),
+            &[],
+            3,
+        ),
+        (
+            "MXR_V2IP_PTP_",
+            core_bits(&enums, "V2ipPtpFlag"),
+            &["MXR_V2IP_PTP_MODE_", "MXR_V2IP_PTP_LOCK_"],
+            2,
+        ),
+        (
+            "MXR_V2IP_PTP_LOCK_",
+            core_bits(&enums, "V2ipPtpLock"),
             &[],
             3,
         ),
@@ -730,6 +742,14 @@ fn the_ptp_calls_check_their_arguments_first() {
     // SAFETY: a live handle and a writable struct.
     let rc = unsafe { mxr_v2ip_ptp_settings(remote, uid_n(9), out.as_mut_ptr()) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    let mut state = std::mem::MaybeUninit::<mxr_v2ip_ptp_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_ptp(remote, uid_n(9), state.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_ptp(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
 
     // SAFETY: a live handle.
     let rc = unsafe { mxr_set_v2ip_ptp_mode(remote, uid_n(9), 3) };

@@ -180,6 +180,9 @@ events! {
         V2ipDeviceSettingsChanged => on_v2ip_device_settings_changed(settings: V2ipDeviceSettings);
         /// The device reported a different VLAN configuration.
         V2ipVlanChanged => on_v2ip_vlan_changed(vlan: V2ipVlan);
+        /// The device reported a different PTP state, or stopped reporting
+        /// one.
+        V2ipPtpChanged => on_v2ip_ptp_changed(ptp: Option<V2ipPtpState>);
         /// The sink reported its test card.
         V2ipTestcardChanged => on_v2ip_testcard_changed(testcard: V2ipTestcard);
         /// The device announced a different time zone for its mesh.

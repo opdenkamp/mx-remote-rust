@@ -20,8 +20,8 @@ use std::time::UNIX_EPOCH;
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UtpCableStatus,
-    V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature, V2ipRxStats,
-    V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
+    V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature, V2ipPtpState,
+    V2ipRxStats, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
     V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
 };
 
@@ -1238,6 +1238,63 @@ pub unsafe extern "C" fn mxr_v2ip_vlan(
             });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "VLAN configuration", value) }
+    })
+}
+
+/// A V2IP device's PTP state, as it reported it about itself.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_ptp_t {
+    /// `MXR_V2IP_PTP_*` bits.
+    pub flags: u8,
+    /// `MXR_V2IP_PTP_MODE_*` the video processor runs.
+    pub mode: u8,
+    /// The domain the video processor runs in.
+    pub domain: u8,
+    /// The IEEE 1588 portState.
+    pub port_state: u8,
+    /// `MXR_V2IP_PTP_LOCK_*`.
+    pub lock: u8,
+    /// The device's own clock identity.
+    pub clock_identity: [u8; 8],
+    /// The clock identity of the grandmaster the device runs on, all zero
+    /// while it runs on none.
+    pub grandmaster_identity: [u8; 8],
+}
+
+/// Fills `out` with the PTP state a V2IP device last reported about itself.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported one, and while
+/// it has none to report: no PTP on its video processor, or in power save. A
+/// change is announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_ptp_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_ptp(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_ptp_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_ptp(uid.into())
+            .map(|t: V2ipPtpState| mxr_v2ip_ptp_t {
+                flags: t.flags.bits(),
+                mode: t.mode.to_wire(),
+                domain: t.domain,
+                port_state: t.port_state,
+                lock: t.lock.to_wire(),
+                clock_identity: t.clock_identity,
+                grandmaster_identity: t.grandmaster_identity,
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "PTP state", value) }
     })
 }
 

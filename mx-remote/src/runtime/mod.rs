@@ -372,6 +372,13 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_vlan)
     }
 
+    /// The PTP state a V2IP device last reported about itself, `None` until
+    /// it has reported one, and while it has no PTP to report: none on its
+    /// video processor, or in power save.
+    pub fn v2ip_ptp(&self, uid: DeviceUid) -> Option<V2ipPtpState> {
+        self.shared.read(|state| state.device(uid)?.v2ip_ptp)
+    }
+
     /// The test card a V2IP sink last reported, `None` until it has answered
     /// [`Remote::request_v2ip_testcard`] or a change.
     pub fn v2ip_testcard(&self, uid: DeviceUid) -> Option<V2ipTestcard> {

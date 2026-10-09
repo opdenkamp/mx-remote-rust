@@ -10,7 +10,7 @@ use crate::state::{Device, HelloInfo, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
-    V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipScalingSettings, V2ipStreamSource,
+    V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipPtpState, V2ipScalingSettings, V2ipStreamSource,
     V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
     VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE,
     SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
@@ -18,9 +18,9 @@ use crate::types::{
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode,
-    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
-    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpFlag, V2ipPtpLock,
+    V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE,
+    FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
 };
 
 use super::Rx;
@@ -473,6 +473,10 @@ const V2IP_PTP_SETTINGS_SIZE: usize = 3;
 const V2IP_VLAN_AT: usize = V2IP_SETTINGS_AT + 48;
 const V2IP_VLAN_SIZE: usize = 16;
 
+/// The PTP state, behind the VLAN configuration.
+const V2IP_PTP_AT: usize = V2IP_VLAN_AT + V2IP_VLAN_SIZE;
+const V2IP_PTP_SIZE: usize = 24;
+
 /// Applies a device's V2IP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
 ///
@@ -682,6 +686,27 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
                 if let Some(device) = state.device_mut(subject) {
                     device.set_v2ip_vlan(vlan, ev);
                 }
+            }
+        }
+    }
+
+    // Only the device can read its own video processor, so a controller's
+    // frame about it carries none. Without the valid bit the device has no
+    // state to report, which replaces whatever it reported before.
+    if subject == rx.sender() {
+        if let Some(t) = p.get(V2IP_PTP_AT..V2IP_PTP_AT + V2IP_PTP_SIZE) {
+            let flags = V2ipPtpFlag::from_bits(t[0]);
+            let ptp = flags.has(V2ipPtpFlag::VALID).then(|| V2ipPtpState {
+                flags,
+                mode: V2ipPtpMode::from_wire(t[1]),
+                domain: t[2],
+                port_state: t[3],
+                lock: V2ipPtpLock::from_wire(t[4]),
+                clock_identity: eight(&t[8..16]),
+                grandmaster_identity: eight(&t[16..24]),
+            });
+            if let Some(device) = state.device_mut(subject) {
+                device.set_v2ip_ptp(ptp, ev);
             }
         }
     }
@@ -1028,6 +1053,15 @@ pub(super) fn u64_at(p: &[u8], idx: usize) -> u64 {
     p.get(idx..idx + 8)
         .and_then(|b| <[u8; 8]>::try_from(b).ok())
         .map_or(0, u64::from_le_bytes)
+}
+
+/// Eight bytes as an array, zero where `p` is shorter.
+fn eight(p: &[u8]) -> [u8; 8] {
+    let mut out = [0; 8];
+    for (o, b) in out.iter_mut().zip(p) {
+        *o = *b;
+    }
+    out
 }
 
 pub(super) fn uid_at(p: &[u8], idx: usize) -> DeviceUid {

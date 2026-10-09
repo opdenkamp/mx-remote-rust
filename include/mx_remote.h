@@ -1141,6 +1141,32 @@
 #define MXR_V2IP_PTP_MODE_AUTO 2
 
 /**
+ * The device runs PTP and the block holds its state.
+ */
+#define MXR_V2IP_PTP_VALID (1 << 0)
+
+/**
+ * The device locked to a master since its PTP started, so its mesh holds a
+ * time.
+ */
+#define MXR_V2IP_PTP_FOLLOWED (1 << 1)
+
+/**
+ * Not locked.
+ */
+#define MXR_V2IP_PTP_LOCK_UNLOCKED 0
+
+/**
+ * Locking.
+ */
+#define MXR_V2IP_PTP_LOCK_LOCKING 1
+
+/**
+ * Locked.
+ */
+#define MXR_V2IP_PTP_LOCK_LOCKED 2
+
+/**
  * The block carries a configuration. A block without it carries nothing.
  */
 #define MXR_V2IP_VLAN_VALID (1 << 0)
@@ -3800,6 +3826,41 @@ typedef struct {
 } mxr_time_zone_t;
 
 /**
+ * A V2IP device's PTP state, as it reported it about itself.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_PTP_*` bits.
+   */
+  uint8_t flags;
+  /**
+   * `MXR_V2IP_PTP_MODE_*` the video processor runs.
+   */
+  uint8_t mode;
+  /**
+   * The domain the video processor runs in.
+   */
+  uint8_t domain;
+  /**
+   * The IEEE 1588 portState.
+   */
+  uint8_t port_state;
+  /**
+   * `MXR_V2IP_PTP_LOCK_*`.
+   */
+  uint8_t lock;
+  /**
+   * The device's own clock identity.
+   */
+  uint8_t clock_identity[8];
+  /**
+   * The clock identity of the grandmaster the device runs on, all zero
+   * while it runs on none.
+   */
+  uint8_t grandmaster_identity[8];
+} mxr_v2ip_ptp_t;
+
+/**
  * The test card a V2IP sink last reported. The counters run free and wrap.
  */
 typedef struct {
@@ -5830,6 +5891,20 @@ mxr_result_t mxr_device_clock(const mxr_remote_t *remote, mxr_uid_t uid, uint64_
  * `mxr_v2ip_vlan_t`.
  */
 mxr_result_t mxr_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_vlan_t *out);
+
+/**
+ * Fills `out` with the PTP state a V2IP device last reported about itself.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported one, and while
+ * it has none to report: no PTP on its video processor, or in power save. A
+ * change is announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_ptp_t`.
+ */
+mxr_result_t mxr_v2ip_ptp(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_ptp_t *out);
 
 /**
  * Fills `out` with the test card a V2IP sink last reported.

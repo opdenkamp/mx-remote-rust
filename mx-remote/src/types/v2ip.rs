@@ -7,10 +7,10 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipPtpMode, V2ipTestPattern,
-    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, V2IP_AUDIO_DEFAULT_CHANNELS,
-    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX,
-    V2IP_IR_PROFILE_NOT_SET,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipPtpFlag, V2ipPtpLock,
+    V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
+    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
 };
 
 /// Which of a V2IP device's streams an address describes.
@@ -803,6 +803,42 @@ impl V2ipDeviceSettings {
             valid = valid.without(V2ipDeviceSetting::PTP_DOMAIN);
         }
         Self { valid, ..self }
+    }
+}
+
+/// A V2IP device's PTP state, as it reports it about itself.
+///
+/// Only the device can read its own video processor, so this is never written
+/// to a device, and a controller's frame about one carries none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipPtpState {
+    /// The block's flags.
+    pub flags: V2ipPtpFlag,
+    /// The mode the video processor runs.
+    pub mode: V2ipPtpMode,
+    /// The domain the video processor runs in.
+    pub domain: u8,
+    /// The IEEE 1588 portState.
+    pub port_state: u8,
+    /// How far the clock has locked.
+    pub lock: V2ipPtpLock,
+    /// The device's own clock identity.
+    pub clock_identity: [u8; 8],
+    /// The clock identity of the grandmaster the device runs on, all zero
+    /// while it runs on none.
+    pub grandmaster_identity: [u8; 8],
+}
+
+impl V2ipPtpState {
+    /// Whether the device locked to a master since its PTP started, so its
+    /// mesh holds a time.
+    pub const fn followed(&self) -> bool {
+        self.flags.has(V2ipPtpFlag::FOLLOWED)
+    }
+
+    /// The grandmaster the device runs on, `None` while it runs on none.
+    pub fn grandmaster(&self) -> Option<[u8; 8]> {
+        (self.grandmaster_identity != [0; 8]).then_some(self.grandmaster_identity)
     }
 }
 
