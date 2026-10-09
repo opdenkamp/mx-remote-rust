@@ -15,6 +15,7 @@ mod multiviewer;
 mod network;
 mod stats;
 mod svd;
+mod unit;
 
 #[cfg(test)]
 mod tests;
@@ -193,6 +194,8 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::SET_INSTALLER => commands::set_installer(state, rx, ev),
         op::BAY_FILTER_STATUS => commands::filter_status(state, rx, ev),
         op::BAY_STATUS => handlers::bay_status(state, rx, ev),
+        op::SYS_UNIT_STATUS => unit::unit_status(state, rx, ev),
+        op::SYS_UNIT_COMMAND => unit::unit_command(state, rx, ev),
         op::SYS_FACTORY_RESET => commands::factory_reset(state, rx, ev),
         op::MESH_OPERATION => handlers::mesh_operation(state, rx, ev),
         op::V2IP_DEVICE_CFG => handlers::v2ip_device_configuration(state, rx, ev),

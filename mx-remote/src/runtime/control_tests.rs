@@ -18,10 +18,10 @@ use crate::event::EventHandler;
 use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n, vlan_block, Cfg};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
-    EdidProfileChange, EdidRequest, KeyTransmitRequest, V2ipAudioFormat, V2ipOutputMode, V2ipRoute,
-    V2ipRouteTarget, V2ipVlan, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX,
-    VOLUME_UNCHANGED,
+    EdidProfileChange, EdidRequest, KeyTransmitRequest, UnitNetConfig, V2ipAudioFormat,
+    V2ipOutputMode, V2ipRoute, V2ipRouteTarget, V2ipVlan, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX,
+    V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -2548,6 +2548,138 @@ fn a_ptp_write_carries_its_value_behind_its_bit() {
         Err(ControlError::InvalidRequest(_))
     ));
     assert!(f.tap.frames().is_empty(), "a refused write was sent");
+}
+
+/// Each unit command names its unit, then carries the command and its flags,
+/// stamped 0x2C. A network change appends five addresses in network byte
+/// order, each with four distinct bytes so a reversed one shows.
+#[test]
+fn a_unit_command_names_its_unit_and_carries_its_command() {
+    let f = Fixture::new();
+    let uid = uid_n(231);
+    f.everything(uid, 0x2C, "UC0001");
+    f.connect();
+
+    let sent = |f: &Fixture| {
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[20..22], &op::SYS_UNIT_COMMAND.0.to_le_bytes());
+        assert_eq!(&frame[2..4], &0x2Cu16.to_le_bytes(), "the stamp");
+        frame[HEADER_LEN..].to_vec()
+    };
+
+    f.tap.clear();
+    f.remote.clear_unit_status(uid).expect("sent");
+    let p = sent(&f);
+    assert_eq!(p.len(), 20);
+    assert_eq!(&p[..16], uid.as_bytes(), "the unit");
+    assert_eq!(&p[16..20], &[0, 0, 0, 0], "clear status, no flags");
+
+    f.tap.clear();
+    f.remote.upgrade_unit_fpga(uid, true).expect("sent");
+    assert_eq!(&sent(&f)[16..18], &[1, 1], "upgrade, forced");
+    f.tap.clear();
+    f.remote.upgrade_unit_fpga(uid, false).expect("sent");
+    assert_eq!(&sent(&f)[16..18], &[1, 0], "upgrade, not forced");
+
+    f.tap.clear();
+    f.remote.confirm_unit_network(uid).expect("sent");
+    assert_eq!(&sent(&f)[16..18], &[3, 0], "confirm");
+
+    f.tap.clear();
+    f.remote
+        .set_unit_network(
+            uid,
+            UnitNetConfig {
+                ip: Ipv4Addr::new(10, 1, 2, 3),
+                netmask: Ipv4Addr::new(255, 255, 254, 0),
+                gateway: Ipv4Addr::new(10, 1, 2, 254),
+                dns1: Ipv4Addr::new(8, 8, 4, 4),
+                dns2: Ipv4Addr::new(9, 9, 9, 10),
+            },
+        )
+        .expect("sent");
+    let p = sent(&f);
+    assert_eq!(p.len(), 40);
+    assert_eq!(&p[16..18], &[2, 0], "a static network");
+    assert_eq!(
+        &p[20..40],
+        &[10, 1, 2, 3, 255, 255, 254, 0, 10, 1, 2, 254, 8, 8, 4, 4, 9, 9, 9, 10]
+    );
+
+    f.tap.clear();
+    f.remote.set_unit_dhcp(uid).expect("sent");
+    let p = sent(&f);
+    assert_eq!(p.len(), 40, "a network change carries its addresses");
+    assert_eq!(&p[16..18], &[2, 2], "DHCP");
+    assert_eq!(&p[20..40], &[0; 20]);
+}
+
+/// A unit command goes only to a V2IP unit new enough to take it, and a
+/// network a unit cannot hold is refused before anything is sent.
+#[test]
+fn a_unit_command_the_unit_would_not_take_is_refused() {
+    let f = Fixture::new();
+    let old = uid_n(232);
+    f.everything(old, 0x2B, "UC0002");
+    assert!(refused(&f.remote.clear_unit_status(old)));
+
+    let matrix = uid_n(233);
+    f.feed(
+        matrix,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x2C,
+            "FF88",
+            "UC0003",
+            "4.8.0",
+            DeviceFeature::VIDEO_ROUTING,
+        ),
+    );
+    assert!(matches!(
+        f.remote.clear_unit_status(matrix),
+        Err(ControlError::Unsupported(_))
+    ));
+
+    let unit = uid_n(234);
+    f.everything(unit, 0x2C, "UC0004");
+    let good = UnitNetConfig {
+        ip: Ipv4Addr::new(10, 1, 2, 3),
+        netmask: Ipv4Addr::new(255, 255, 255, 0),
+        ..UnitNetConfig::default()
+    };
+    let bad = [
+        UnitNetConfig {
+            ip: Ipv4Addr::UNSPECIFIED,
+            ..good
+        },
+        UnitNetConfig {
+            ip: Ipv4Addr::new(239, 1, 2, 3),
+            ..good
+        },
+        UnitNetConfig {
+            ip: Ipv4Addr::BROADCAST,
+            ..good
+        },
+        UnitNetConfig {
+            netmask: Ipv4Addr::new(255, 0, 255, 0),
+            ..good
+        },
+        UnitNetConfig {
+            netmask: Ipv4Addr::UNSPECIFIED,
+            ..good
+        },
+    ];
+    f.tap.clear();
+    for network in bad {
+        assert!(
+            matches!(
+                f.remote.set_unit_network(unit, network),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{network:?}"
+        );
+    }
+    assert!(f.tap.frames().is_empty(), "a refused command was sent");
 }
 
 /// Settings for every device go out as the bare settings block, to everyone,

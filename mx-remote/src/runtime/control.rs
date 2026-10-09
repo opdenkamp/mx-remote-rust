@@ -31,27 +31,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, V2ipAudioFormat,
-    V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute, V2ipRouteTarget,
-    V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan,
-    VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_PORT_SFP,
-    VIDEO_WALL_CLEARED,
+    AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, UnitNetConfig,
+    V2ipAudioFormat, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute,
+    V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
+    V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation, build_rc_action,
     build_rc_key, build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
-    build_time_zone, build_v2ip_device_settings, build_v2ip_manual_source_switch,
-    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard,
-    build_v2ip_vlan, build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, testcard_part,
-    testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
-    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
-    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
-    V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
-    V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_time_zone, build_unit_command, build_v2ip_device_settings,
+    build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_settings_all,
+    build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan, build_video_wall, mesh_op,
+    mv_cmd_payload, mv_sub, op, testcard_part, testcard_type, Addressee, BayUid, DeviceFeature,
+    DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
+    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
+    MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError,
+    StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode,
+    V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
+    TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -822,7 +823,9 @@ impl Remote {
     /// Reboots a device.
     ///
     /// The device is marked as rebooting once the frame is away, so the
-    /// silence that follows does not read as one that went offline.
+    /// silence that follows does not read as one that went offline. A device
+    /// on protocol 0x2C or later takes it only from its mesh controller or a
+    /// management application, which this client announces itself as.
     pub fn reboot(&self, device: DeviceUid) -> Result<(), ControlError> {
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
@@ -885,6 +888,112 @@ impl Remote {
                 Addressee::device(d),
                 op::MESH_OPERATION,
                 build_mesh_operation(mesh_op::AUTO_ADDRESSES, d.uid),
+            ))
+        })
+    }
+
+    // ---- units ----
+
+    /// Clears a unit's current system status.
+    ///
+    /// The terms of [`Remote::upgrade_unit_fpga`] apply.
+    pub fn clear_unit_status(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.unit_command(
+            device,
+            UnitCommandKind::CLEAR_STATUS,
+            UnitCommandFlag::NONE,
+            None,
+        )
+    }
+
+    /// Upgrades a unit's video processor to the latest image it holds, or
+    /// flashes that image again when `force` is set and it already runs it.
+    ///
+    /// The unit takes a command only from its mesh controller or a management
+    /// application, which this client announces itself as. Nothing
+    /// acknowledges it: [`Remote::unit_status`] reads what the unit reports
+    /// next. Refused for a device that is not a V2IP unit, and for one below
+    /// protocol 0x2C, which predates the command.
+    pub fn upgrade_unit_fpga(&self, device: DeviceUid, force: bool) -> Result<(), ControlError> {
+        let flags = if force {
+            UnitCommandFlag::FORCE
+        } else {
+            UnitCommandFlag::NONE
+        };
+        self.unit_command(device, UnitCommandKind::FPGA_UPGRADE, flags, None)
+    }
+
+    /// Switches a unit to an IP configuration from DHCP.
+    ///
+    /// The terms of [`Remote::set_unit_network`] apply.
+    pub fn set_unit_dhcp(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.unit_command(
+            device,
+            UnitCommandKind::NET_CONFIG,
+            UnitCommandFlag::DHCP,
+            Some(UnitNetConfig::default()),
+        )
+    }
+
+    /// Gives a unit a static IP configuration.
+    ///
+    /// The address must be one a unit can hold and the netmask a run of ones
+    /// from the top; anything else is refused before it is sent.
+    ///
+    /// The unit applies the change at once and reverts it unless its mesh
+    /// controller, hearing the unit report it, confirms it in time.
+    /// [`UnitStatus::network_pending`](crate::UnitStatus::network_pending) says
+    /// whether it still waits, and
+    /// [`Remote::confirm_unit_network`] confirms it. Otherwise as
+    /// [`Remote::upgrade_unit_fpga`].
+    pub fn set_unit_network(
+        &self,
+        device: DeviceUid,
+        network: UnitNetConfig,
+    ) -> Result<(), ControlError> {
+        if !network.is_valid() {
+            return Err(ControlError::InvalidRequest(
+                "not an address and netmask a unit can hold",
+            ));
+        }
+        self.unit_command(
+            device,
+            UnitCommandKind::NET_CONFIG,
+            UnitCommandFlag::NONE,
+            Some(network),
+        )
+    }
+
+    /// Keeps a unit's pending IP configuration, as its mesh controller does
+    /// when it hears the unit at its new address.
+    ///
+    /// The terms of [`Remote::upgrade_unit_fpga`] apply.
+    pub fn confirm_unit_network(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.unit_command(
+            device,
+            UnitCommandKind::NET_CONFIRM,
+            UnitCommandFlag::NONE,
+            None,
+        )
+    }
+
+    /// The one send behind the unit command methods.
+    fn unit_command(
+        &self,
+        device: DeviceUid,
+        command: UnitCommandKind,
+        flags: UnitCommandFlag,
+        network: Option<UnitNetConfig>,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.is_v2ip() {
+                return Err(ControlError::Unsupported("the device is not a V2IP unit"));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::SYS_UNIT_COMMAND,
+                build_unit_command(d.uid, command, flags, network.as_ref()),
             ))
         })
     }

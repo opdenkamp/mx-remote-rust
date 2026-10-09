@@ -342,6 +342,72 @@ bitmask! {
 }
 
 bitmask! {
+    /// The flags of a unit's status report.
+    UnitFlag {
+        /// A changed setting takes effect after a reboot.
+        REBOOT_REQUIRED = 1 << 0;
+        /// A newer video processor image is available.
+        FPGA_UPGRADE = 1 << 1;
+        /// The IP configuration comes from DHCP.
+        DHCP = 1 << 2;
+        /// The IP configuration was changed through the mesh, and is reverted
+        /// unless the mesh controller confirms it in time.
+        NET_PENDING = 1 << 3;
+        /// The fan runs in quiet mode.
+        FAN_QUIET = 1 << 4;
+        /// Powered by an external supply rather than PoE.
+        EXTERNAL_PSU = 1 << 5;
+        /// The video processor runs with its IP configured. Without it the
+        /// encoder and decoder health carry nothing.
+        FPGA_CONFIGURED = 1 << 6;
+        /// The encoder is enabled.
+        ENCODER_ACTIVE = 1 << 7;
+        /// The decoder is enabled.
+        DECODER_ACTIVE = 1 << 8;
+        /// The decoder disables itself without a display.
+        AUTO_DISABLE = 1 << 9;
+        /// The decoder disabled itself without a display.
+        AUTO_DISABLE_ACTIVE = 1 << 10;
+        /// The HDMI output switches off without a signal.
+        OFF_NO_SIGNAL = 1 << 11;
+        /// The HDMI output switched off without a signal.
+        OFF_NO_SIGNAL_ACTIVE = 1 << 12;
+        /// Display power is checked before the decoder is enabled.
+        POWER_CHECK = 1 << 13;
+        /// The boot count is reported.
+        BOOT_COUNT = 1 << 14;
+        /// The fan speed is reported.
+        FAN_SPEED = 1 << 15;
+    }
+}
+
+wire_enum! {
+    /// What a unit command asks of its unit.
+    UnitCommandKind: u8 {
+        /// Clear the current system status.
+        CLEAR_STATUS = 0;
+        /// Upgrade the video processor to the latest image.
+        FPGA_UPGRADE = 1;
+        /// Change the IP configuration.
+        NET_CONFIG = 2;
+        /// Keep a pending IP configuration.
+        NET_CONFIRM = 3;
+    }
+}
+
+bitmask! {
+    /// The flags of a unit command.
+    UnitCommandFlag: u8 {
+        /// With [`UnitCommandKind::FPGA_UPGRADE`]: flash the image even if it
+        /// is running already.
+        FORCE = 1 << 0;
+        /// With [`UnitCommandKind::NET_CONFIG`]: use DHCP, ignoring the
+        /// addresses.
+        DHCP = 1 << 1;
+    }
+}
+
+bitmask! {
     /// The flags of a V2IP device's PTP state.
     V2ipPtpFlag: u8 {
         /// The device runs PTP and the block holds its state. A block without

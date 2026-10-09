@@ -372,6 +372,13 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_vlan)
     }
 
+    /// The health and IP configuration a unit last reported, `None` until it
+    /// has reported them.
+    pub fn unit_status(&self, uid: DeviceUid) -> Option<UnitStatus> {
+        self.shared
+            .read(|state| state.device(uid)?.unit_status.clone())
+    }
+
     /// The PTP state a V2IP device last reported about itself, `None` until
     /// it has reported one, and while it has no PTP to report: none on its
     /// video processor, or in power save.

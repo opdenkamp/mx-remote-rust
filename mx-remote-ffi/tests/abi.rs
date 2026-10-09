@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 23] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 24] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -510,6 +510,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             &[],
             6,
         ),
+        ("MXR_UNIT_", core_bits(&enums, "UnitFlag"), &[], 16),
         (
             "MXR_V2IP_PTP_MODE_",
             core_bits(&enums, "V2ipPtpMode"),
@@ -722,6 +723,70 @@ fn the_device_settings_calls_check_their_arguments_first() {
         rc,
         mxr_result_t::MXR_ERR_NOT_CONNECTED,
         "a switch needs no power save"
+    );
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// The unit calls answer a caller's mistake as an argument error and a device
+/// never heard from as not found, before anything is sent.
+#[test]
+fn the_unit_calls_check_their_arguments_first() {
+    let remote = client(c"abi-unit", c"00000022.00000000.00000000.000000a9");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_unit_status(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_unit_status_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_unit_status(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: a live handle.
+    let calls = unsafe {
+        [
+            mxr_clear_unit_status(remote, uid_n(9)),
+            mxr_upgrade_unit_fpga(remote, uid_n(9), true),
+            mxr_set_unit_dhcp(remote, uid_n(9)),
+            mxr_confirm_unit_network(remote, uid_n(9)),
+        ]
+    };
+    assert_eq!(calls, [mxr_result_t::MXR_ERR_NOT_FOUND; 4]);
+
+    let net = |ip: &CStr, mask: &CStr, gw: *const c_char| {
+        // SAFETY: a live handle and NUL-terminated strings or null.
+        unsafe {
+            mxr_set_unit_network(
+                remote,
+                uid_n(9),
+                ip.as_ptr(),
+                mask.as_ptr(),
+                gw,
+                ptr::null(),
+                ptr::null(),
+            )
+        }
+    };
+    assert_eq!(
+        net(c"10.1.2", c"255.255.255.0", ptr::null()),
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "an address that does not parse"
+    );
+    assert_eq!(
+        net(c"10.1.2.3", c"255.0.255.0", ptr::null()),
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a netmask with a hole"
+    );
+    assert_eq!(
+        net(c"10.1.2.3", c"255.255.255.0", c"gateway".as_ptr()),
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a gateway that does not parse"
+    );
+    assert_eq!(
+        net(c"10.1.2.3", c"255.255.255.0", ptr::null()),
+        mxr_result_t::MXR_ERR_NOT_FOUND,
+        "a valid network, for a device never heard from"
     );
 
     // SAFETY: created above and not yet freed.

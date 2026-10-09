@@ -20,9 +20,10 @@ use crate::types::{
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode,
-    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION,
-    V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, UnitCommandFlag, UnitCommandKind, UnitFlag, V2ipDeviceSetting,
+    V2ipFpgaFeature, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag,
+    V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, vlan_block, Cfg};
@@ -3142,4 +3143,134 @@ fn only_a_whole_testcard_state_is_recorded() {
     h.feed(op::V2IP_TESTCARD, &testcard_frame(sink, 1));
     h.feed_as(sink, op::V2IP_TESTCARD, &testcard_frame(sink, 2)[..55]);
     assert_eq!(h.state.device(sink).and_then(|d| d.v2ip_testcard), None);
+}
+
+/// A unit status report with every field distinct: counters above 0xFFFF so a
+/// narrowed read shows, addresses whose four bytes differ so a reversed one
+/// shows, nine temperatures claimed where six fit, and a message that fills
+/// its 48 bytes with no terminator.
+fn unit_status_report() -> Vec<u8> {
+    let mut p = Vec::with_capacity(104);
+    let flags = UnitFlag::DHCP | UnitFlag::BOOT_COUNT | UnitFlag::FAN_SPEED;
+    for word in [
+        flags.bits(),
+        0x0001_0203,
+        0x0002_0304,
+        0x0003_0405,
+        0x0004_0506,
+        0x0005_0607,
+    ] {
+        p.extend_from_slice(&word.to_le_bytes());
+    }
+    for ip in [
+        [10, 1, 2, 3],
+        [255, 255, 254, 0],
+        [10, 1, 2, 254],
+        [8, 8, 4, 4],
+        [9, 9, 9, 10],
+    ] {
+        p.extend_from_slice(&ip);
+    }
+    p.extend_from_slice(&0x0A0Bu16.to_le_bytes());
+    p.extend_from_slice(&[55, 3, 17, 9]);
+    p.extend_from_slice(&[41, -5i8 as u8, 60, 61, 62, 63]);
+    p.extend_from_slice(&[b'm'; 48]);
+    p
+}
+
+/// Every field of a unit status report sits at its own offset.
+#[test]
+fn a_unit_status_report_is_read_field_by_field() {
+    let mut h = command_device(124);
+    h.feed_proto(op::SYS_UNIT_STATUS, 0x2C, &unit_status_report());
+
+    let s = h
+        .device()
+        .unit_status
+        .clone()
+        .expect("no unit status was read");
+    assert!(s.flags.has(UnitFlag::DHCP));
+    assert_eq!(s.uptime, 0x0001_0203);
+    assert_eq!(s.boot_count(), Some(0x0002_0304));
+    assert_eq!(s.reboot_count, 0x0003_0405);
+    assert_eq!(s.encoder_health, 0x0004_0506);
+    assert_eq!(s.decoder_health, 0x0005_0607);
+    assert_eq!(s.network.ip, Ipv4Addr::new(10, 1, 2, 3));
+    assert_eq!(s.network.netmask, Ipv4Addr::new(255, 255, 254, 0));
+    assert_eq!(s.network.gateway, Ipv4Addr::new(10, 1, 2, 254));
+    assert_eq!(s.network.dns1, Ipv4Addr::new(8, 8, 4, 4));
+    assert_eq!(s.network.dns2, Ipv4Addr::new(9, 9, 9, 10));
+    assert_eq!(s.fan_rpm(), Some(0x0A0B));
+    assert_eq!((s.fan_duty, s.status, s.net_revert_s), (55, 3, 17));
+    assert_eq!(
+        s.temperatures,
+        [41, -5, 60, 61, 62, 63],
+        "nine claimed, six fit"
+    );
+    assert_eq!(s.status_message, "m".repeat(48));
+}
+
+/// The report grows at the back, so a short one is read as far as it goes and
+/// what it does not reach reads as zero.
+#[test]
+fn a_short_unit_status_report_is_read_as_far_as_it_goes() {
+    let mut h = command_device(125);
+    let report = unit_status_report();
+    h.feed_proto(op::SYS_UNIT_STATUS, 0x2C, &report[..44]);
+
+    let s = h
+        .device()
+        .unit_status
+        .clone()
+        .expect("no unit status was read");
+    assert_eq!(s.network.dns2, Ipv4Addr::new(9, 9, 9, 10));
+    assert_eq!(s.fan_rpm, 0);
+    assert!(s.temperatures.is_empty());
+    assert_eq!(s.status_message, "");
+}
+
+/// A command for one unit reaches the caller with its addresses, and one too
+/// short to name a unit does not.
+#[test]
+fn a_unit_command_is_reported_with_its_network() {
+    let mut h = command_device(126);
+    let target = uid_n(127);
+    let asked = |h: &Harness| {
+        h.events.iter().find_map(|e| match e {
+            Event::UnitCommandRequested { command, .. } => Some(*command),
+            _ => None,
+        })
+    };
+
+    let mut p = target.as_bytes().to_vec();
+    p.extend_from_slice(&[2, UnitCommandFlag::DHCP.bits(), 0xA5, 0x5A]);
+    h.feed_proto(op::SYS_UNIT_COMMAND, 0x2C, &p[..19]);
+    assert_eq!(asked(&h), None, "a command too short to hold its fields");
+
+    h.feed_proto(op::SYS_UNIT_COMMAND, 0x2C, &p);
+    let c = asked(&h).expect("no command was reported");
+    assert_eq!(c.target, target);
+    assert_eq!(c.command, UnitCommandKind::NET_CONFIG);
+    assert_eq!(c.flags, UnitCommandFlag::DHCP);
+    assert_eq!(c.network, None, "a command without addresses");
+
+    h.events.clear();
+    for ip in [
+        [10, 1, 2, 3],
+        [255, 255, 254, 0],
+        [10, 1, 2, 254],
+        [8, 8, 4, 4],
+        [9, 9, 9, 10],
+    ] {
+        p.extend_from_slice(&ip);
+    }
+    h.feed_proto(op::SYS_UNIT_COMMAND, 0x2C, &p);
+    let n = asked(&h)
+        .and_then(|c| c.network)
+        .expect("the addresses were not read");
+    assert_eq!(n.ip, Ipv4Addr::new(10, 1, 2, 3));
+    assert_eq!(n.netmask, Ipv4Addr::new(255, 255, 254, 0));
+    assert_eq!(n.gateway, Ipv4Addr::new(10, 1, 2, 254));
+    assert_eq!(n.dns1, Ipv4Addr::new(8, 8, 4, 4));
+    assert_eq!(n.dns2, Ipv4Addr::new(9, 9, 9, 10));
 }

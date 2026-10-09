@@ -15,14 +15,16 @@
 //! changed nothing.
 
 use std::ffi::c_char;
+use std::net::Ipv4Addr;
 use std::time::{Duration, UNIX_EPOCH};
 
 use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, V2ipAudioFormat, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMode,
-    V2ipRoute, V2ipRouteTarget, V2ipTestPattern, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
+    MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, UnitNetConfig, V2ipAudioFormat,
+    V2ipColourSpace, V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule,
+    V2ipPtpMode, V2ipRoute, V2ipRouteTarget, V2ipTestPattern, V2ipVlan, V2ipVlanFlag,
+    VideoWallWindow,
 };
 
 use crate::abi::{
@@ -1279,6 +1281,142 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_settings(
             ptp_priority1: ptp.priority1,
             ..V2ipDeviceSettings::default()
         }))
+    })
+}
+
+/// Clears a unit's current system status. As `mxr_upgrade_unit_fpga()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_clear_unit_status(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.clear_unit_status(device.into()))
+    })
+}
+
+/// Upgrades a unit's video processor to the latest image it holds, or
+/// flashes that image again when `force` is set and it already runs it.
+///
+/// The unit takes a command only from its mesh controller or a management
+/// application, which this client announces itself as. Nothing acknowledges
+/// it: `mxr_unit_status()` reads what the unit reports next.
+/// `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP unit, and
+/// `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2C.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_upgrade_unit_fpga(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    force: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.upgrade_unit_fpga(device.into(), force))
+    })
+}
+
+/// Switches a unit to an IP configuration from DHCP. As
+/// `mxr_set_unit_network()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_unit_dhcp(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_unit_dhcp(device.into()))
+    })
+}
+
+/// Gives a unit a static IP configuration, each address a dotted quad.
+///
+/// `ip` and `netmask` are required; a null or empty gateway or DNS server is
+/// sent as 0.0.0.0. `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for text
+/// that is not an address, an address a unit cannot hold, or a netmask that
+/// is not a run of ones from the top.
+///
+/// The unit applies the change at once and reverts it unless its mesh
+/// controller confirms it in time; `mxr_unit_status()` reports
+/// `MXR_UNIT_NET_PENDING` meanwhile, and `mxr_confirm_unit_network()`
+/// confirms it. Otherwise as `mxr_upgrade_unit_fpga()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and each address
+/// is null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_unit_network(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    ip: *const c_char,
+    netmask: *const c_char,
+    gateway: *const c_char,
+    dns1: *const c_char,
+    dns2: *const c_char,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let read = |text: *const c_char, what: &str| -> Result<Ipv4Addr, mxr_result_t> {
+            // SAFETY: the caller guarantees a NUL-terminated string or null.
+            let text = unsafe { opt_str(text) }?.unwrap_or_default();
+            if text.is_empty() {
+                return Ok(Ipv4Addr::UNSPECIFIED);
+            }
+            text.parse().map_err(|_| {
+                fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    &format!("{what} is not an IPv4 address: {text:?}"),
+                )
+            })
+        };
+        let network = (|| {
+            Ok(UnitNetConfig {
+                ip: read(ip, "ip")?,
+                netmask: read(netmask, "netmask")?,
+                gateway: read(gateway, "gateway")?,
+                dns1: read(dns1, "dns1")?,
+                dns2: read(dns2, "dns2")?,
+            })
+        })();
+        match network {
+            Ok(network) => from_control(r.remote.set_unit_network(device.into(), network)),
+            Err(code) => code,
+        }
+    })
+}
+
+/// Keeps a unit's pending IP configuration, as its mesh controller does when
+/// it hears the unit at its new address. As `mxr_upgrade_unit_fpga()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_confirm_unit_network(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.confirm_unit_network(device.into()))
     })
 }
 

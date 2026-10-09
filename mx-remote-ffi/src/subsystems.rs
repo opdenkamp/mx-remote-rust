@@ -19,10 +19,11 @@ use std::time::UNIX_EPOCH;
 
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UtpCableStatus,
-    V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature, V2ipPtpState,
-    V2ipRxStats, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
-    V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
+    MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UnitStatus,
+    UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature,
+    V2ipPtpState, V2ipRxStats, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
+    V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus,
+    MULTIVIEWER_INPUTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -1238,6 +1239,112 @@ pub unsafe extern "C" fn mxr_v2ip_vlan(
             });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "VLAN configuration", value) }
+    })
+}
+
+/// The most temperatures a unit reports.
+pub const MXR_UNIT_MAX_TEMPERATURES: usize = 6;
+/// Bytes in `mxr_unit_status_t.status_message`, its NUL included.
+pub const MXR_UNIT_STATUS_MESSAGE_LEN: usize = 49;
+
+const _: () = assert!(MXR_UNIT_MAX_TEMPERATURES == mx_remote::UNIT_MAX_TEMPERATURES);
+
+/// A unit's health and IP configuration, as it last reported them.
+/// Addresses are dotted quads.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_unit_status_t {
+    /// `MXR_UNIT_*` bits.
+    pub flags: u32,
+    /// Seconds since the unit booted.
+    pub uptime: u32,
+    /// How often the unit has booted, when `flags` has `MXR_UNIT_BOOT_COUNT`.
+    pub boot_count: u32,
+    /// How often the unit has rebooted.
+    pub reboot_count: u32,
+    /// The encoder's health, a mask of the unit's encoder status bits.
+    pub encoder_health: u32,
+    /// The decoder's health, a mask of the unit's decoder status and state
+    /// bits.
+    pub decoder_health: u32,
+    /// The address in use.
+    pub ip: [c_char; MXR_IP_STRING_LEN],
+    /// The netmask in use.
+    pub netmask: [c_char; MXR_IP_STRING_LEN],
+    /// The gateway in use.
+    pub gateway: [c_char; MXR_IP_STRING_LEN],
+    /// The primary DNS server in use.
+    pub dns1: [c_char; MXR_IP_STRING_LEN],
+    /// The secondary DNS server in use.
+    pub dns2: [c_char; MXR_IP_STRING_LEN],
+    /// The fan speed in RPM, when `flags` has `MXR_UNIT_FAN_SPEED`.
+    pub fan_rpm: u16,
+    /// The fan duty cycle, in percent.
+    pub fan_duty: u8,
+    /// The unit's system status.
+    pub status: u8,
+    /// Seconds before a pending IP configuration is reverted.
+    pub net_revert_s: u8,
+    /// How many of `temperatures` are reported.
+    pub nb_temperatures: u8,
+    /// Temperatures, in degrees Celsius.
+    pub temperatures: [i8; MXR_UNIT_MAX_TEMPERATURES],
+    /// The message of the current system status.
+    pub status_message: [c_char; MXR_UNIT_STATUS_MESSAGE_LEN],
+}
+
+/// Fills `out` with the health and IP configuration a unit last reported.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the unit has reported them. A change
+/// is announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_unit_status_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_unit_status(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_unit_status_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r.remote.unit_status(uid.into()).map(|s: UnitStatus| {
+            let mut out = mxr_unit_status_t {
+                flags: s.flags.bits(),
+                uptime: s.uptime,
+                boot_count: s.boot_count,
+                reboot_count: s.reboot_count,
+                encoder_health: s.encoder_health,
+                decoder_health: s.decoder_health,
+                ip: [0; MXR_IP_STRING_LEN],
+                netmask: [0; MXR_IP_STRING_LEN],
+                gateway: [0; MXR_IP_STRING_LEN],
+                dns1: [0; MXR_IP_STRING_LEN],
+                dns2: [0; MXR_IP_STRING_LEN],
+                fan_rpm: s.fan_rpm,
+                fan_duty: s.fan_duty,
+                status: s.status,
+                net_revert_s: s.net_revert_s,
+                nb_temperatures: s.temperatures.len() as u8,
+                temperatures: [0; MXR_UNIT_MAX_TEMPERATURES],
+                status_message: [0; MXR_UNIT_STATUS_MESSAGE_LEN],
+            };
+            put_ip(&mut out.ip, Some(s.network.ip));
+            put_ip(&mut out.netmask, Some(s.network.netmask));
+            put_ip(&mut out.gateway, Some(s.network.gateway));
+            put_ip(&mut out.dns1, Some(s.network.dns1));
+            put_ip(&mut out.dns2, Some(s.network.dns2));
+            for (slot, t) in out.temperatures.iter_mut().zip(&s.temperatures) {
+                *slot = *t;
+            }
+            put_str(&mut out.status_message, &s.status_message);
+            out
+        });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "unit status", value) }
     })
 }
 

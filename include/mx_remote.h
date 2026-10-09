@@ -1141,6 +1141,88 @@
 #define MXR_V2IP_PTP_MODE_AUTO 2
 
 /**
+ * A changed setting takes effect after a reboot.
+ */
+#define MXR_UNIT_REBOOT_REQUIRED (1 << 0)
+
+/**
+ * A newer video processor image is available.
+ */
+#define MXR_UNIT_FPGA_UPGRADE (1 << 1)
+
+/**
+ * The IP configuration comes from DHCP.
+ */
+#define MXR_UNIT_DHCP (1 << 2)
+
+/**
+ * The IP configuration was changed through the mesh, and is reverted unless
+ * the mesh controller confirms it within `net_revert_s`.
+ */
+#define MXR_UNIT_NET_PENDING (1 << 3)
+
+/**
+ * The fan runs in quiet mode.
+ */
+#define MXR_UNIT_FAN_QUIET (1 << 4)
+
+/**
+ * Powered by an external supply rather than PoE.
+ */
+#define MXR_UNIT_EXTERNAL_PSU (1 << 5)
+
+/**
+ * The video processor runs with its IP configured. Without it
+ * `encoder_health` and `decoder_health` carry nothing.
+ */
+#define MXR_UNIT_FPGA_CONFIGURED (1 << 6)
+
+/**
+ * The encoder is enabled.
+ */
+#define MXR_UNIT_ENCODER_ACTIVE (1 << 7)
+
+/**
+ * The decoder is enabled.
+ */
+#define MXR_UNIT_DECODER_ACTIVE (1 << 8)
+
+/**
+ * The decoder disables itself without a display.
+ */
+#define MXR_UNIT_AUTO_DISABLE (1 << 9)
+
+/**
+ * The decoder disabled itself without a display.
+ */
+#define MXR_UNIT_AUTO_DISABLE_ACTIVE (1 << 10)
+
+/**
+ * The HDMI output switches off without a signal.
+ */
+#define MXR_UNIT_OFF_NO_SIGNAL (1 << 11)
+
+/**
+ * The HDMI output switched off without a signal.
+ */
+#define MXR_UNIT_OFF_NO_SIGNAL_ACTIVE (1 << 12)
+
+/**
+ * Display power is checked before the decoder is enabled.
+ */
+#define MXR_UNIT_POWER_CHECK (1 << 13)
+
+/**
+ * `boot_count` is reported.
+ */
+#define MXR_UNIT_BOOT_COUNT (1 << 14)
+
+/**
+ * `fan_rpm` is reported.
+ */
+#define MXR_UNIT_FAN_SPEED (1 << 15)
+
+/**
  * The device runs PTP and the block holds its state.
  */
 #define MXR_V2IP_PTP_VALID (1 << 0)
@@ -1476,6 +1558,16 @@
  * The highest VLAN id: 0 means untagged, and 4095 is reserved by IEEE 802.1Q.
  */
 #define MXR_V2IP_VLAN_ID_MAX 4094
+
+/**
+ * The most temperatures a unit reports.
+ */
+#define MXR_UNIT_MAX_TEMPERATURES 6
+
+/**
+ * Bytes in `mxr_unit_status_t.status_message`, its NUL included.
+ */
+#define MXR_UNIT_STATUS_MESSAGE_LEN 49
 
 /**
  * The lowest test tone frequency, in Hz.
@@ -3826,6 +3918,86 @@ typedef struct {
 } mxr_time_zone_t;
 
 /**
+ * A unit's health and IP configuration, as it last reported them.
+ * Addresses are dotted quads.
+ */
+typedef struct {
+  /**
+   * `MXR_UNIT_*` bits.
+   */
+  uint32_t flags;
+  /**
+   * Seconds since the unit booted.
+   */
+  uint32_t uptime;
+  /**
+   * How often the unit has booted, when `flags` has `MXR_UNIT_BOOT_COUNT`.
+   */
+  uint32_t boot_count;
+  /**
+   * How often the unit has rebooted.
+   */
+  uint32_t reboot_count;
+  /**
+   * The encoder's health, a mask of the unit's encoder status bits.
+   */
+  uint32_t encoder_health;
+  /**
+   * The decoder's health, a mask of the unit's decoder status and state
+   * bits.
+   */
+  uint32_t decoder_health;
+  /**
+   * The address in use.
+   */
+  char ip[MXR_IP_STRING_LEN];
+  /**
+   * The netmask in use.
+   */
+  char netmask[MXR_IP_STRING_LEN];
+  /**
+   * The gateway in use.
+   */
+  char gateway[MXR_IP_STRING_LEN];
+  /**
+   * The primary DNS server in use.
+   */
+  char dns1[MXR_IP_STRING_LEN];
+  /**
+   * The secondary DNS server in use.
+   */
+  char dns2[MXR_IP_STRING_LEN];
+  /**
+   * The fan speed in RPM, when `flags` has `MXR_UNIT_FAN_SPEED`.
+   */
+  uint16_t fan_rpm;
+  /**
+   * The fan duty cycle, in percent.
+   */
+  uint8_t fan_duty;
+  /**
+   * The unit's system status.
+   */
+  uint8_t status;
+  /**
+   * Seconds before a pending IP configuration is reverted.
+   */
+  uint8_t net_revert_s;
+  /**
+   * How many of `temperatures` are reported.
+   */
+  uint8_t nb_temperatures;
+  /**
+   * Temperatures, in degrees Celsius.
+   */
+  int8_t temperatures[MXR_UNIT_MAX_TEMPERATURES];
+  /**
+   * The message of the current system status.
+   */
+  char status_message[MXR_UNIT_STATUS_MESSAGE_LEN];
+} mxr_unit_status_t;
+
+/**
  * A V2IP device's PTP state, as it reported it about itself.
  */
 typedef struct {
@@ -4993,6 +5165,77 @@ mxr_result_t mxr_set_all_v2ip_ptp_settings(const mxr_remote_t *remote,
                                            const mxr_v2ip_ptp_settings_t *ptp);
 
 /**
+ * Clears a unit's current system status. As `mxr_upgrade_unit_fpga()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_clear_unit_status(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Upgrades a unit's video processor to the latest image it holds, or
+ * flashes that image again when `force` is set and it already runs it.
+ *
+ * The unit takes a command only from its mesh controller or a management
+ * application, which this client announces itself as. Nothing acknowledges
+ * it: `mxr_unit_status()` reads what the unit reports next.
+ * `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP unit, and
+ * `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2C.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_upgrade_unit_fpga(const mxr_remote_t *remote, mxr_uid_t device, bool force);
+
+/**
+ * Switches a unit to an IP configuration from DHCP. As
+ * `mxr_set_unit_network()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_unit_dhcp(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Gives a unit a static IP configuration, each address a dotted quad.
+ *
+ * `ip` and `netmask` are required; a null or empty gateway or DNS server is
+ * sent as 0.0.0.0. `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for text
+ * that is not an address, an address a unit cannot hold, or a netmask that
+ * is not a run of ones from the top.
+ *
+ * The unit applies the change at once and reverts it unless its mesh
+ * controller confirms it in time; `mxr_unit_status()` reports
+ * `MXR_UNIT_NET_PENDING` meanwhile, and `mxr_confirm_unit_network()`
+ * confirms it. Otherwise as `mxr_upgrade_unit_fpga()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and each address
+ * is null or a NUL-terminated string.
+ */
+mxr_result_t mxr_set_unit_network(const mxr_remote_t *remote,
+                                  mxr_uid_t device,
+                                  const char *ip,
+                                  const char *netmask,
+                                  const char *gateway,
+                                  const char *dns1,
+                                  const char *dns2);
+
+/**
+ * Keeps a unit's pending IP configuration, as its mesh controller does when
+ * it hears the unit at its new address. As `mxr_upgrade_unit_fpga()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_confirm_unit_network(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
  * Changes a V2IP device's VLAN configuration.
  *
  * Sends `vlan`'s ids, its `uplink` and its `MXR_V2IP_VLAN_TRUNK` bit; its
@@ -5891,6 +6134,19 @@ mxr_result_t mxr_device_clock(const mxr_remote_t *remote, mxr_uid_t uid, uint64_
  * `mxr_v2ip_vlan_t`.
  */
 mxr_result_t mxr_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_vlan_t *out);
+
+/**
+ * Fills `out` with the health and IP configuration a unit last reported.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the unit has reported them. A change
+ * is announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_unit_status_t`.
+ */
+mxr_result_t mxr_unit_status(const mxr_remote_t *remote, mxr_uid_t uid, mxr_unit_status_t *out);
 
 /**
  * Fills `out` with the PTP state a V2IP device last reported about itself.

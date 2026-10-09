@@ -180,6 +180,8 @@ events! {
         V2ipDeviceSettingsChanged => on_v2ip_device_settings_changed(settings: V2ipDeviceSettings);
         /// The device reported a different VLAN configuration.
         V2ipVlanChanged => on_v2ip_vlan_changed(vlan: V2ipVlan);
+        /// The unit reported a different status.
+        UnitStatusChanged => on_unit_status_changed(status: UnitStatus);
         /// The device reported a different PTP state, or stopped reporting
         /// one.
         V2ipPtpChanged => on_v2ip_ptp_changed(ptp: Option<V2ipPtpState>);
@@ -217,6 +219,8 @@ events! {
         EdidProfileChangeRequested => on_edid_profile_change_requested(change: EdidProfileChange);
         /// A peer asked a device to reboot.
         RebootRequested => on_reboot_requested(request: RebootRequest);
+        /// A peer sent a command to one unit.
+        UnitCommandRequested => on_unit_command_requested(command: UnitCommand);
         /// A peer asked devices to factory-reset.
         FactoryResetRequested => on_factory_reset_requested(request: FactoryResetRequest);
         /// A device sent its monitoring pulse.

@@ -10,12 +10,12 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, V2ipAudioFormat, V2ipDeviceSettings, V2ipTestcard, V2ipVlan, VideoWallOp,
-    VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipTestcard, V2ipVlan,
+    VideoWallOp, VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
 };
 
 use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN};
-use super::enums::{EdidProfile, MxrSignalType, RcAction, RcKey};
+use super::enums::{EdidProfile, MxrSignalType, RcAction, RcKey, UnitCommandFlag, UnitCommandKind};
 use super::opcode::audio_sub;
 use super::uid::DeviceUid;
 
@@ -204,6 +204,29 @@ pub(crate) fn build_set_bay_name(target: DeviceUid, port: u16, name: &str) -> Ve
 /// whole request is "you".
 pub(crate) fn build_target_only(target: DeviceUid) -> Vec<u8> {
     target.as_bytes().to_vec()
+}
+
+/// Builds the `SYS_UNIT_COMMAND` (0x50) payload: the target uid, the command
+/// at 16, its flags at 17 and two reserved bytes, 20 in all. A command
+/// carrying an IP configuration appends it as five addresses in network byte
+/// order, 40 in all.
+pub(crate) fn build_unit_command(
+    target: DeviceUid,
+    command: UnitCommandKind,
+    flags: UnitCommandFlag,
+    network: Option<&UnitNetConfig>,
+) -> Vec<u8> {
+    let mut p = Vec::with_capacity(40);
+    p.extend_from_slice(target.as_bytes());
+    p.push(command.to_wire());
+    p.push(flags.bits());
+    p.extend_from_slice(&[0, 0]);
+    if let Some(n) = network {
+        for addr in [n.ip, n.netmask, n.gateway, n.dns1, n.dns2] {
+            p.extend_from_slice(&addr.octets());
+        }
+    }
+    p
 }
 
 /// Builds the `BAY_EDID_PROFILE` (0x34) payload.

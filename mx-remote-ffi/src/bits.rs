@@ -730,6 +730,43 @@ pub const MXR_V2IP_PTP_MODE_FOLLOWER: u8 = 1;
 /// Follows a grandmaster, or becomes one when there is none.
 pub const MXR_V2IP_PTP_MODE_AUTO: u8 = 2;
 
+// ---- unit status flags, in `mxr_unit_status_t::flags` ----
+
+/// A changed setting takes effect after a reboot.
+pub const MXR_UNIT_REBOOT_REQUIRED: u32 = 1 << 0;
+/// A newer video processor image is available.
+pub const MXR_UNIT_FPGA_UPGRADE: u32 = 1 << 1;
+/// The IP configuration comes from DHCP.
+pub const MXR_UNIT_DHCP: u32 = 1 << 2;
+/// The IP configuration was changed through the mesh, and is reverted unless
+/// the mesh controller confirms it within `net_revert_s`.
+pub const MXR_UNIT_NET_PENDING: u32 = 1 << 3;
+/// The fan runs in quiet mode.
+pub const MXR_UNIT_FAN_QUIET: u32 = 1 << 4;
+/// Powered by an external supply rather than PoE.
+pub const MXR_UNIT_EXTERNAL_PSU: u32 = 1 << 5;
+/// The video processor runs with its IP configured. Without it
+/// `encoder_health` and `decoder_health` carry nothing.
+pub const MXR_UNIT_FPGA_CONFIGURED: u32 = 1 << 6;
+/// The encoder is enabled.
+pub const MXR_UNIT_ENCODER_ACTIVE: u32 = 1 << 7;
+/// The decoder is enabled.
+pub const MXR_UNIT_DECODER_ACTIVE: u32 = 1 << 8;
+/// The decoder disables itself without a display.
+pub const MXR_UNIT_AUTO_DISABLE: u32 = 1 << 9;
+/// The decoder disabled itself without a display.
+pub const MXR_UNIT_AUTO_DISABLE_ACTIVE: u32 = 1 << 10;
+/// The HDMI output switches off without a signal.
+pub const MXR_UNIT_OFF_NO_SIGNAL: u32 = 1 << 11;
+/// The HDMI output switched off without a signal.
+pub const MXR_UNIT_OFF_NO_SIGNAL_ACTIVE: u32 = 1 << 12;
+/// Display power is checked before the decoder is enabled.
+pub const MXR_UNIT_POWER_CHECK: u32 = 1 << 13;
+/// `boot_count` is reported.
+pub const MXR_UNIT_BOOT_COUNT: u32 = 1 << 14;
+/// `fan_rpm` is reported.
+pub const MXR_UNIT_FAN_SPEED: u32 = 1 << 15;
+
 // ---- V2IP PTP state, in `mxr_v2ip_ptp_t` ----
 
 /// The device runs PTP and the block holds its state.

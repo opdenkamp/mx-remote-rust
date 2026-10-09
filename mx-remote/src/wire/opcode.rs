@@ -92,6 +92,8 @@ pub(crate) mod op {
     pub(crate) const V2IP_SETTINGS_ALL: Opcode = Opcode(0x4C);
     pub(crate) const TIME: Opcode = Opcode(0x4D);
     pub(crate) const V2IP_TESTCARD: Opcode = Opcode(0x4E);
+    pub(crate) const SYS_UNIT_STATUS: Opcode = Opcode(0x4F);
+    pub(crate) const SYS_UNIT_COMMAND: Opcode = Opcode(0x50);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -186,6 +188,8 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::V2IP_SETTINGS_ALL => 0x2A,
         op::TIME => 0x2A,
         op::V2IP_TESTCARD => 0x2B,
+        op::SYS_UNIT_STATUS => 0x2C,
+        op::SYS_UNIT_COMMAND => 0x2C,
         Opcode(_) => return None,
     })
 }
