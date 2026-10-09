@@ -390,6 +390,50 @@ fn bay_targeted_handlers_reach_the_bay_they_name() {
     );
 }
 
+/// 0x39 BAY_STATUS packs one 32-byte record per bay, so a frame reports every
+/// bay it holds rather than the first alone. The padding behind each record's
+/// 28 bytes of fields is poisoned, and the middle record names a port no bay
+/// sits on, which skips that record without ending the frame.
+#[test]
+fn a_bay_status_frame_reports_every_bay_it_holds() {
+    let mut h = bay_state(117);
+    let record = |port: u16, desc: &[u8; 14], status: BayStatus, features: BayFeatures| {
+        let mut r = poisoned(32);
+        r[0..2].copy_from_slice(&port.to_le_bytes());
+        r[2..16].copy_from_slice(desc);
+        r[20..24].copy_from_slice(&status.bits().to_le_bytes());
+        r[24..28].copy_from_slice(&features.bits().to_le_bytes());
+        r
+    };
+    let mut frame = record(
+        1,
+        b"1080p60 444 8b",
+        BayStatus::SIGNAL_DETECTED,
+        BayFeatures::HDMI_IN,
+    );
+    frame.extend(record(
+        9,
+        b"480i60 422 12 ",
+        BayStatus::SIGNAL_DETECTED,
+        BayFeatures::HDMI_IN,
+    ));
+    frame.extend(record(
+        3,
+        b"2160p50 420 10",
+        BayStatus::SIGNAL_DETECTED,
+        BayFeatures::HDMI_IN,
+    ));
+    h.feed(op::BAY_STATUS, &frame);
+
+    assert_eq!(h.bay(1).signal_type.as_deref(), Some("1080p60 444 8b"));
+    assert_eq!(
+        h.bay(3).signal_type.as_deref(),
+        Some("2160p50 420 10"),
+        "a record behind the first was not read"
+    );
+    assert_eq!(h.bay(3).signal_detected, Some(true));
+}
+
 /// A unit with the bays the captured 0x08 frames name: inputs on 6 and 8, an
 /// output on 16.
 fn captured_route_unit(n: u8) -> Harness {

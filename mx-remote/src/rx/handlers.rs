@@ -684,17 +684,29 @@ pub(super) fn bay_hide(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     }
 }
 
-/// Applies a bay status report.
+/// Width of one `mxr_bay_status` record: 28 bytes of fields, padded to 8.
+const BAY_STATUS_RECORD: usize = 32;
+
+/// Applies a bay status report, one record per bay.
+///
+/// A frame packs as many records as the sender has bays to report, so every
+/// whole record is read rather than only the first. A frame shorter than one
+/// record still carries its one bay, read as far as it goes.
+pub(super) fn bay_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
+    for record in rx.frame.payload().chunks(BAY_STATUS_RECORD) {
+        bay_status_record(state, rx.sender(), record, ev);
+    }
+}
+
+/// Applies one bay status record.
 ///
 /// `mxr_bay_status.local_bay` is an `mbay_port_id`, so it is a `u16` at 0.
 /// Reading its high byte at 1 yields zero for every real port and finds no bay
 /// at all.
-pub(super) fn bay_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    let f = &rx.frame;
-    let Some(port) = f.u16(0) else {
+fn bay_status_record(state: &mut State, sender: DeviceUid, record: &[u8], ev: &mut Vec<Event>) {
+    let Some(port) = record.get(..2).map(|_| u16_at(record, 0)) else {
         return;
     };
-    let sender = rx.sender();
     let Some(device) = state.device(sender) else {
         return;
     };
@@ -702,13 +714,16 @@ pub(super) fn bay_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         return;
     }
     let is_v2ip = device.is_v2ip();
-    let features = f.u32(24);
-    let Some(status) = f.u32(20).map(BayStatus::from_bits) else {
+    let features = record.get(24..28).map(|_| u32_at(record, 24));
+    let Some(status) = record
+        .get(20..24)
+        .map(|_| BayStatus::from_bits(u32_at(record, 20)))
+    else {
         return;
     };
     // `mxr_cfg_signal` is a 14-byte description followed by a 2-byte signal
     // type, so the description stops at 14 rather than running into the type.
-    let description = f.str(2, 14);
+    let description = record.get(2..16).map(cstr);
 
     if let Some(bay) = state.bay_mut(BayUid::new(sender, port)) {
         if let Some(features) = features {
