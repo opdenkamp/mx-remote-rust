@@ -20,10 +20,10 @@ use crate::types::{
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
-    RcAction, RcKey, UnitCommandFlag, UnitCommandKind, UnitFlag, V2ipDeviceSetting,
-    V2ipFpgaFeature, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag,
-    V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET,
-    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    RcAction, RcKey, UnitCommandFlag, UnitCommandKind, UnitFlag, UnitPowerSave, V2ipDeviceSetting,
+    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern,
+    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, vlan_block, Cfg};
@@ -2490,6 +2490,48 @@ fn a_controller_ptp_write_out_of_range_is_not_cached() {
     assert_eq!(s.ptp_domain(), Some(3), "a domain past the last was cached");
 }
 
+/// The power save level is the settings block's last byte, read only from a
+/// frame that reaches it, and a controller's write of a level with no name is
+/// not cached.
+#[test]
+fn the_power_save_level_is_the_last_byte_of_the_settings() {
+    let mut h = command_device(128);
+    let subject = h.sender;
+    let cfg = Cfg::addresses(subject, "239.1.2.3");
+    let valid = V2ipDeviceSetting::POWER_SAVE_LEVEL | V2ipDeviceSetting::AUTO_POWER_SAVE;
+    let mut frame = ptp_settings_frame(&cfg, valid, [7, 7, 7]);
+    frame[175] = 2;
+    h.feed(op::V2IP_DEVICE_CFG, &frame[..175]);
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.power_save_level(), None, "a frame that stops short of it");
+
+    h.feed(op::V2IP_DEVICE_CFG, &frame);
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(s.power_save_level(), Some(V2ipPowerSaveLevel::LOW));
+
+    let controller = uid_n(85);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2C, "Ctrl", "CTRL0009", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = 0;
+    let mut frame = ptp_settings_frame(&write, valid, [0, 0, 0]);
+    frame[175] = 4;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &frame);
+    let s = h
+        .state
+        .device(subject)
+        .and_then(|d| d.v2ip_settings)
+        .expect("the subject's settings are gone");
+    assert_eq!(
+        s.power_save_level(),
+        Some(V2ipPowerSaveLevel::LOW),
+        "a level with no name was cached"
+    );
+}
+
 /// Whether a device's clock is set is only the device's to say: a
 /// controller's frame about it carrying the bit changes nothing.
 #[test]
@@ -3189,6 +3231,11 @@ fn a_unit_status_report_is_read_field_by_field() {
         .unit_status
         .clone()
         .expect("no unit status was read");
+    assert_eq!(
+        s.power_save,
+        [UnitPowerSave::NONE; 4],
+        "a report that predates them"
+    );
     assert!(s.flags.has(UnitFlag::DHCP));
     assert_eq!(s.uptime, 0x0001_0203);
     assert_eq!(s.boot_count(), Some(0x0002_0304));
@@ -3273,4 +3320,41 @@ fn a_unit_command_is_reported_with_its_network() {
     assert_eq!(n.gateway, Ipv4Addr::new(10, 1, 2, 254));
     assert_eq!(n.dns1, Ipv4Addr::new(8, 8, 4, 4));
     assert_eq!(n.dns2, Ipv4Addr::new(9, 9, 9, 10));
+}
+
+/// What a unit offers at each power save level follows its status message,
+/// one byte per level from the lowest up.
+#[test]
+fn a_unit_reports_what_it_offers_at_each_power_save_level() {
+    let mut h = command_device(129);
+    let mut report = unit_status_report();
+    report.extend_from_slice(&[0x01, 0x03, 0x05, 0x00]);
+    h.feed_proto(op::SYS_UNIT_STATUS, 0x2C, &report);
+
+    let s = h
+        .device()
+        .unit_status
+        .clone()
+        .expect("no unit status was read");
+    assert_eq!(
+        s.status_message,
+        "m".repeat(48),
+        "the message ran into the levels"
+    );
+    assert_eq!(
+        s.power_save_level(V2ipPowerSaveLevel::REDUCED),
+        UnitPowerSave::SUPPORTED
+    );
+    assert_eq!(
+        s.power_save_level(V2ipPowerSaveLevel::LOW),
+        UnitPowerSave::SUPPORTED | UnitPowerSave::INPUT_WAKE
+    );
+    assert_eq!(
+        s.power_save_level(V2ipPowerSaveLevel::OFF),
+        UnitPowerSave::SUPPORTED | UnitPowerSave::OUTPUT_WAKE
+    );
+    assert_eq!(
+        s.power_save_level(V2ipPowerSaveLevel::NONE),
+        UnitPowerSave::NONE
+    );
 }

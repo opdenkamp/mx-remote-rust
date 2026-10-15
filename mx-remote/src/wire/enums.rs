@@ -278,6 +278,38 @@ bitmask! {
         PTP_DOMAIN = 1 << 15;
         /// The priority1 the device announces as a PTP grandmaster.
         PTP_PRIORITY1 = 1 << 16;
+        /// Sends the source's audio as an AES67 flow, where the source allows.
+        AES67 = 1 << 17;
+        /// The power save level the device powers down to.
+        POWER_SAVE_LEVEL = 1 << 18;
+    }
+}
+
+wire_enum! {
+    /// How far a V2IP device powers down in power save, each level saving more
+    /// than the one before.
+    V2ipPowerSaveLevel: u8 {
+        /// No level.
+        NONE = 0;
+        /// Part of the video processing powers down.
+        REDUCED = 1;
+        /// All of the video processing powers down.
+        LOW = 2;
+        /// Everything but the network powers down.
+        OFF = 3;
+    }
+}
+
+bitmask! {
+    /// What a unit offers at one power save level.
+    UnitPowerSave: u8 {
+        /// The unit can power down to this level.
+        SUPPORTED = 1 << 0;
+        /// A signal on the HDMI input wakes the unit.
+        INPUT_WAKE = 1 << 1;
+        /// The display powering on wakes the unit, and the unit can power it
+        /// on.
+        OUTPUT_WAKE = 1 << 2;
     }
 }
 
@@ -460,7 +492,7 @@ bitmask! {
 impl V2ipDeviceSetting {
     /// The settings that are on or off, as opposed to carrying a value, and
     /// that can be written.
-    pub const SWITCHES: Self = Self(0xFF);
+    pub const SWITCHES: Self = Self(0xFF | Self::AES67.0);
 
     /// The settings only a device reports about itself, which no write
     /// carries.

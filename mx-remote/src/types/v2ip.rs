@@ -7,8 +7,8 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipPtpFlag, V2ipPtpLock,
-    V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipPowerSaveLevel, V2ipPtpFlag,
+    V2ipPtpLock, V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
     V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET,
     V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
 };
@@ -666,6 +666,8 @@ pub struct V2ipDeviceSettings {
     pub ptp_domain: u8,
     /// The priority1 the device announces as a PTP grandmaster, lower winning.
     pub ptp_priority1: u8,
+    /// The level the device powers down to in power save.
+    pub power_save_level: V2ipPowerSaveLevel,
 }
 
 impl V2ipDeviceSettings {
@@ -745,6 +747,14 @@ impl V2ipDeviceSettings {
         Some(self.ptp_priority1)
     }
 
+    /// The power save level, `None` while it is not reported.
+    pub const fn power_save_level(&self) -> Option<V2ipPowerSaveLevel> {
+        if !self.valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL) {
+            return None;
+        }
+        Some(self.power_save_level)
+    }
+
     /// Folds a received settings block onto the cached one.
     ///
     /// Each bit in the frame's [`valid`](Self::valid) replaces its own setting
@@ -780,6 +790,9 @@ impl V2ipDeviceSettings {
         if valid.has(V2ipDeviceSetting::PTP_PRIORITY1) {
             out.ptp_priority1 = self.ptp_priority1;
         }
+        if valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL) {
+            out.power_save_level = self.power_save_level;
+        }
         out
     }
 
@@ -801,6 +814,9 @@ impl V2ipDeviceSettings {
         }
         if self.ptp_domain > V2IP_PTP_DOMAIN_MAX {
             valid = valid.without(V2ipDeviceSetting::PTP_DOMAIN);
+        }
+        if self.power_save_level > V2ipPowerSaveLevel::OFF {
+            valid = valid.without(V2ipDeviceSetting::POWER_SAVE_LEVEL);
         }
         Self { valid, ..self }
     }

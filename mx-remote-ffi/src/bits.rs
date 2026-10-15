@@ -728,6 +728,33 @@ pub const MXR_V2IP_SETTING_PTP_DOMAIN: u32 = 1 << 15;
 /// `priority1`.
 pub const MXR_V2IP_SETTING_PTP_PRIORITY1: u32 = 1 << 16;
 
+/// The source's audio goes out as an AES67 flow, where the source allows. An
+/// on/off setting.
+pub const MXR_V2IP_SETTING_AES67: u32 = 1 << 17;
+
+/// The power save level, read with `mxr_v2ip_power_save_level()`.
+pub const MXR_V2IP_SETTING_POWER_SAVE_LEVEL: u32 = 1 << 18;
+
+// ---- V2IP power save levels ----
+
+/// No level.
+pub const MXR_V2IP_POWER_SAVE_LEVEL_NONE: u8 = 0;
+/// Part of the video processing powers down.
+pub const MXR_V2IP_POWER_SAVE_LEVEL_REDUCED: u8 = 1;
+/// All of the video processing powers down.
+pub const MXR_V2IP_POWER_SAVE_LEVEL_LOW: u8 = 2;
+/// Everything but the network powers down.
+pub const MXR_V2IP_POWER_SAVE_LEVEL_OFF: u8 = 3;
+
+// ---- what a unit offers at a power save level, in `mxr_unit_power_save_t` ----
+
+/// The unit can power down to this level.
+pub const MXR_UNIT_POWER_SAVE_SUPPORTED: u8 = 1 << 0;
+/// A signal on the HDMI input wakes the unit.
+pub const MXR_UNIT_POWER_SAVE_INPUT_WAKE: u8 = 1 << 1;
+/// The display powering on wakes the unit, and the unit can power it on.
+pub const MXR_UNIT_POWER_SAVE_OUTPUT_WAKE: u8 = 1 << 2;
+
 // ---- V2IP PTP modes, in `mxr_v2ip_ptp_settings_t::mode` ----
 
 /// No PTP.

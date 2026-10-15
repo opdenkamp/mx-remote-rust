@@ -29,10 +29,11 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
-    V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
-    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
-    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
+    V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams,
+    V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION,
+    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -2680,6 +2681,54 @@ fn a_unit_command_the_unit_would_not_take_is_refused() {
         );
     }
     assert!(f.tap.frames().is_empty(), "a refused command was sent");
+}
+
+/// The power save level goes out as the settings block's last byte, and AES67
+/// is switched like any on/off setting.
+#[test]
+fn a_power_save_level_and_aes67_write_carry_their_bits() {
+    let f = Fixture::new();
+    let uid = uid_n(235);
+    f.everything(uid, 0x2C, "PL0001");
+    report_settings(
+        &f,
+        uid,
+        V2ipDeviceSetting::POWER_SAVE_LEVEL | V2ipDeviceSetting::AES67,
+    );
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_power_save_level(uid, V2ipPowerSaveLevel::OFF)
+        .expect("the device has reported the setting");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let block = &frame[HEADER_LEN + 128..];
+    assert_eq!(block.len(), 48);
+    assert_eq!(&block[..4], &(1u32 << 18).to_le_bytes(), "valid");
+    assert_eq!(block[47], 3, "the level");
+    assert!(matches!(
+        f.remote
+            .set_v2ip_power_save_level(uid, V2ipPowerSaveLevel::from_wire(4)),
+        Err(ControlError::InvalidRequest(_))
+    ));
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_device_setting(uid, V2ipDeviceSetting::AES67, true)
+        .expect("AES67 is an on/off setting");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let block = &frame[HEADER_LEN + 128..];
+    assert_eq!(&block[..4], &(1u32 << 17).to_le_bytes(), "valid");
+    assert_eq!(&block[4..8], &(1u32 << 17).to_le_bytes(), "on");
+
+    assert!(matches!(
+        f.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::POWER_SAVE_LEVEL,
+            power_save_level: V2ipPowerSaveLevel::from_wire(4),
+            ..V2ipDeviceSettings::default()
+        }),
+        Err(ControlError::InvalidRequest(_))
+    ));
 }
 
 /// Settings for every device go out as the bare settings block, to everyone,

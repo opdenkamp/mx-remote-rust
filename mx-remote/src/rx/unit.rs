@@ -7,21 +7,26 @@ use std::net::Ipv4Addr;
 
 use crate::event::Event;
 use crate::state::State;
-use crate::types::{UnitCommand, UnitNetConfig, UnitStatus, UNIT_MAX_TEMPERATURES};
-use crate::wire::{cstr, UnitCommandFlag, UnitCommandKind, UnitFlag, UID_LEN};
+use crate::types::{
+    UnitCommand, UnitNetConfig, UnitStatus, UNIT_MAX_TEMPERATURES, UNIT_POWER_SAVE_LEVELS,
+};
+use crate::wire::{cstr, UnitCommandFlag, UnitCommandKind, UnitFlag, UnitPowerSave, UID_LEN};
 
 use super::handlers::{u16_at, u32_at, uid_at};
 use super::Rx;
 
 /// Width of `mxr_unit_status`. Its fields are naturally aligned, so it has no
 /// padding.
-const UNIT_STATUS_SIZE: usize = 104;
+const UNIT_STATUS_SIZE: usize = UNIT_POWER_SAVE_AT + UNIT_POWER_SAVE_LEVELS;
 
 /// Where the temperatures start, behind their count at 49.
 const UNIT_TEMPERATURES_AT: usize = 50;
 
 /// Where the status message starts, behind the temperatures.
 const UNIT_MESSAGE_AT: usize = UNIT_TEMPERATURES_AT + UNIT_MAX_TEMPERATURES;
+
+/// Where the power save levels start, behind the 48-byte status message.
+const UNIT_POWER_SAVE_AT: usize = UNIT_MESSAGE_AT + 48;
 
 /// Width of `mxr_unit_command`: the target uid, the command and its flags,
 /// and two reserved bytes.
@@ -54,7 +59,8 @@ pub(super) fn unit_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             .iter()
             .map(|t| *t as i8)
             .collect(),
-        status_message: cstr(&p[UNIT_MESSAGE_AT..UNIT_STATUS_SIZE]),
+        status_message: cstr(&p[UNIT_MESSAGE_AT..UNIT_POWER_SAVE_AT]),
+        power_save: core::array::from_fn(|i| UnitPowerSave::from_bits(p[UNIT_POWER_SAVE_AT + i])),
     };
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_unit_status(status, ev);

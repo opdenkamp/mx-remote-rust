@@ -49,10 +49,10 @@ use crate::wire::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError,
-    StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpMode,
-    V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
-    TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature,
+    V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
+    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1346,6 +1346,28 @@ impl Remote {
         )
     }
 
+    /// Sets the level a V2IP device powers down to in power save. A level the
+    /// unit does not offer is one its [`UnitStatus`](crate::UnitStatus)
+    /// reports without [`SUPPORTED`](crate::UnitPowerSave::SUPPORTED). The
+    /// terms of [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_power_save_level(
+        &self,
+        device: DeviceUid,
+        level: V2ipPowerSaveLevel,
+    ) -> Result<(), ControlError> {
+        if level > V2ipPowerSaveLevel::OFF {
+            return Err(ControlError::InvalidRequest("no such power save level"));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: V2ipDeviceSetting::POWER_SAVE_LEVEL,
+                power_save_level: level,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
     /// Sets the PTP mode a V2IP device runs. The terms of
     /// [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_mode(
@@ -1406,9 +1428,9 @@ impl Remote {
     /// [`valid`](V2ipDeviceSettings::valid), as a device reports them. Each
     /// device applies those it has and ignores the rest, and none that
     /// predates the frame applies any. A setting only a device reports about
-    /// itself, a profile, PTP mode or PTP domain out of range and a schedule
-    /// time that is not a time of day are refused here, since every device
-    /// would ignore them.
+    /// itself, a profile, PTP mode, PTP domain or power save level out of
+    /// range and a schedule time that is not a time of day are refused here,
+    /// since every device would ignore them.
     ///
     /// Nothing is cached: each device that applies a change reports its
     /// settings, and [`Remote::v2ip_device_settings`] reads that.
@@ -1445,6 +1467,11 @@ impl Remote {
         }
         if valid.has(V2ipDeviceSetting::PTP_DOMAIN) && settings.ptp_domain > V2IP_PTP_DOMAIN_MAX {
             return Err(ControlError::InvalidRequest("no such PTP domain"));
+        }
+        if valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL)
+            && settings.power_save_level > V2ipPowerSaveLevel::OFF
+        {
+            return Err(ControlError::InvalidRequest("no such power save level"));
         }
         self.shared.send(
             &Addressee::Broadcast,

@@ -18,9 +18,9 @@ use crate::types::{
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPtpFlag, V2ipPtpLock,
-    V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE,
-    FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel,
+    V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode,
+    V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
 };
 
 use super::Rx;
@@ -469,6 +469,9 @@ const V2IP_SCHEDULE_SIZE: usize = 28;
 const V2IP_PTP_SETTINGS_AT: usize = V2IP_SCHEDULE_AT + V2IP_SCHEDULE_SIZE;
 const V2IP_PTP_SETTINGS_SIZE: usize = 3;
 
+/// The power save level, the last byte of the settings block.
+const V2IP_POWER_SAVE_LEVEL_AT: usize = V2IP_PTP_SETTINGS_AT + V2IP_PTP_SETTINGS_SIZE;
+
 /// The VLAN configuration, behind the whole 48-byte settings block.
 const V2IP_VLAN_AT: usize = V2IP_SETTINGS_AT + 48;
 const V2IP_VLAN_SIZE: usize = 16;
@@ -635,6 +638,7 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             ptp_mode: V2ipPtpMode::OFF,
             ptp_domain: 0,
             ptp_priority1: 0,
+            power_save_level: V2ipPowerSaveLevel::NONE,
         };
         match p.get(V2IP_SCHEDULE_AT..V2IP_SCHEDULE_AT + V2IP_SCHEDULE_SIZE) {
             Some(w) => {
@@ -656,6 +660,12 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             }
             None => {
                 frame.valid = frame.valid.without(V2ipDeviceSetting::PTP_SETTINGS);
+            }
+        }
+        match p.get(V2IP_POWER_SAVE_LEVEL_AT) {
+            Some(level) => frame.power_save_level = V2ipPowerSaveLevel::from_wire(*level),
+            None => {
+                frame.valid = frame.valid.without(V2ipDeviceSetting::POWER_SAVE_LEVEL);
             }
         }
         if let Some(device) = state.device_mut(subject) {

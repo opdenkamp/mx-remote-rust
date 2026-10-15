@@ -577,7 +577,8 @@ pub(crate) fn build_v2ip_settings_all(settings: &V2ipDeviceSettings) -> Vec<u8> 
 /// `valid` u32 at 0, `flags` u32 at 4, `ir_profiles` u32 at 8, the two
 /// profiles as one signed byte each at 12 and 13, the idle minutes u16 at 14,
 /// the schedule's seven start times at 16 and seven end times at 30, all u16,
-/// the PTP mode, domain and priority1 at 44, 45 and 46, and a reserved byte.
+/// the PTP mode, domain and priority1 at 44, 45 and 46, and the power save
+/// level at 47.
 fn build_v2ip_settings_block(settings: &V2ipDeviceSettings) -> Vec<u8> {
     let mut p = Vec::with_capacity(48);
     p.extend_from_slice(&settings.valid.bits().to_le_bytes());
@@ -597,6 +598,6 @@ fn build_v2ip_settings_block(settings: &V2ipDeviceSettings) -> Vec<u8> {
     p.push(settings.ptp_mode.to_wire());
     p.push(settings.ptp_domain);
     p.push(settings.ptp_priority1);
-    p.resize(48, 0);
+    p.push(settings.power_save_level.to_wire());
     p
 }

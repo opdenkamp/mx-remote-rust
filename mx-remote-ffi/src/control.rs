@@ -22,9 +22,9 @@ use mx_remote::{
     DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
     MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
     MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, UnitNetConfig, V2ipAudioFormat,
-    V2ipColourSpace, V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule,
-    V2ipPtpMode, V2ipRoute, V2ipRouteTarget, V2ipTestPattern, V2ipVlan, V2ipVlanFlag,
-    VideoWallWindow,
+    V2ipColourSpace, V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveLevel,
+    V2ipPowerSaveSchedule, V2ipPtpMode, V2ipRoute, V2ipRouteTarget, V2ipTestPattern, V2ipVlan,
+    V2ipVlanFlag, VideoWallWindow,
 };
 
 use crate::abi::{
@@ -1113,7 +1113,8 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_schedule(
 ///
 /// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
 /// when one only a device reports is, for a PTP setting, which
-/// `mxr_set_all_v2ip_ptp_settings()` carries, for a profile out of range or a
+/// `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
+/// `mxr_set_all_v2ip_power_save_level()` carries, for a profile out of range or a
 /// schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
 /// device that applies a change reports it.
 ///
@@ -1145,6 +1146,12 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
                 "PTP settings go through mxr_set_all_v2ip_ptp_settings()",
             );
         }
+        if valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL) {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the power save level goes through mxr_set_all_v2ip_power_save_level()",
+            );
+        }
         let needs_power_save = valid.has(V2ipDeviceSetting::AUTO_POWER_SAVE)
             || valid.has(V2ipDeviceSetting::POWER_SAVE_SCHEDULE);
         // SAFETY: the caller guarantees an initialised struct or null.
@@ -1173,6 +1180,54 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
                 start: power_save.start,
                 end: power_save.end,
             },
+            ..V2ipDeviceSettings::default()
+        }))
+    })
+}
+
+/// Sets the level a V2IP device powers down to in power save,
+/// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT` for a level with no
+/// name. `mxr_unit_power_save()` says which levels the unit offers. Otherwise
+/// as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_power_save_level(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    level: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(
+            r.remote
+                .set_v2ip_power_save_level(device.into(), V2ipPowerSaveLevel::from_wire(level)),
+        )
+    })
+}
+
+/// Sets the power save level of every V2IP device of the mesh with one frame,
+/// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT`, sending nothing,
+/// for a level with no name. Otherwise as `mxr_set_all_v2ip_device_settings()`,
+/// which carries the other settings.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_all_v2ip_power_save_level(
+    remote: *const mxr_remote_t,
+    level: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::POWER_SAVE_LEVEL,
+            power_save_level: V2ipPowerSaveLevel::from_wire(level),
             ..V2ipDeviceSettings::default()
         }))
     })

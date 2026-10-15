@@ -1348,6 +1348,77 @@ pub unsafe extern "C" fn mxr_unit_status(
     })
 }
 
+/// Fills `out` with the level a V2IP device powers down to in power save,
+/// `MXR_V2IP_POWER_SAVE_LEVEL_*`.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+/// `mxr_v2ip_device_settings()` says whether it has this one.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable byte.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_power_save_level(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_device_settings(uid.into())
+            .map(|s: V2ipDeviceSettings| s.power_save_level.to_wire());
+        // SAFETY: the caller guarantees a writable byte or null.
+        unsafe { fill(r, uid, out, "device settings", value) }
+    })
+}
+
+/// The power save levels a unit reports what it offers at.
+pub const MXR_UNIT_POWER_SAVE_LEVELS: usize = 4;
+
+const _: () = assert!(MXR_UNIT_POWER_SAVE_LEVELS == mx_remote::UNIT_POWER_SAVE_LEVELS);
+
+/// What a unit offers at each power save level.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_unit_power_save_t {
+    /// `MXR_UNIT_POWER_SAVE_*` bits of each level, `level[i]` for
+    /// `MXR_V2IP_POWER_SAVE_LEVEL_*` i + 1. All zero for a unit that predates
+    /// them.
+    pub level: [u8; MXR_UNIT_POWER_SAVE_LEVELS],
+}
+
+/// Fills `out` with what a unit offers at each power save level, as its last
+/// status report carried it.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the unit has reported its status.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_unit_power_save_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_unit_power_save(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_unit_power_save_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .unit_status(uid.into())
+            .map(|s| mxr_unit_power_save_t {
+                level: s.power_save.map(|p| p.bits()),
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "unit status", value) }
+    })
+}
+
 /// A V2IP device's PTP state, as it reported it about itself.
 #[repr(C)]
 #[derive(Clone, Copy)]

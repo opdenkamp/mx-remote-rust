@@ -32,7 +32,9 @@ pub use status::{
     FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TimeZone, TopologyEntry,
     VolumeMuteStatus, VOLUME_UNCHANGED,
 };
-pub use unit::{UnitCommand, UnitNetConfig, UnitStatus, UNIT_MAX_TEMPERATURES};
+pub use unit::{
+    UnitCommand, UnitNetConfig, UnitStatus, UNIT_MAX_TEMPERATURES, UNIT_POWER_SAVE_LEVELS,
+};
 pub use v2ip::{
     DeviceV2ipDetails, DeviceV2ipSink, StreamKind, V2ipAudioFormat, V2ipDecoderDetail,
     V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderReport, V2ipDecoderState, V2ipDeviceSettings,

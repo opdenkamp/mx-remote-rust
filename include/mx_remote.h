@@ -1137,6 +1137,52 @@
 #define MXR_V2IP_SETTING_PTP_PRIORITY1 (1 << 16)
 
 /**
+ * The source's audio goes out as an AES67 flow, where the source allows. An
+ * on/off setting.
+ */
+#define MXR_V2IP_SETTING_AES67 (1 << 17)
+
+/**
+ * The power save level, read with `mxr_v2ip_power_save_level()`.
+ */
+#define MXR_V2IP_SETTING_POWER_SAVE_LEVEL (1 << 18)
+
+/**
+ * No level.
+ */
+#define MXR_V2IP_POWER_SAVE_LEVEL_NONE 0
+
+/**
+ * Part of the video processing powers down.
+ */
+#define MXR_V2IP_POWER_SAVE_LEVEL_REDUCED 1
+
+/**
+ * All of the video processing powers down.
+ */
+#define MXR_V2IP_POWER_SAVE_LEVEL_LOW 2
+
+/**
+ * Everything but the network powers down.
+ */
+#define MXR_V2IP_POWER_SAVE_LEVEL_OFF 3
+
+/**
+ * The unit can power down to this level.
+ */
+#define MXR_UNIT_POWER_SAVE_SUPPORTED (1 << 0)
+
+/**
+ * A signal on the HDMI input wakes the unit.
+ */
+#define MXR_UNIT_POWER_SAVE_INPUT_WAKE (1 << 1)
+
+/**
+ * The display powering on wakes the unit, and the unit can power it on.
+ */
+#define MXR_UNIT_POWER_SAVE_OUTPUT_WAKE (1 << 2)
+
+/**
  * No PTP.
  */
 #define MXR_V2IP_PTP_MODE_OFF 0
@@ -1579,6 +1625,11 @@
  * Bytes in `mxr_unit_status_t.status_message`, its NUL included.
  */
 #define MXR_UNIT_STATUS_MESSAGE_LEN 49
+
+/**
+ * The power save levels a unit reports what it offers at.
+ */
+#define MXR_UNIT_POWER_SAVE_LEVELS 4
 
 /**
  * The lowest test tone frequency, in Hz.
@@ -4011,6 +4062,18 @@ typedef struct {
 } mxr_unit_status_t;
 
 /**
+ * What a unit offers at each power save level.
+ */
+typedef struct {
+  /**
+   * `MXR_UNIT_POWER_SAVE_*` bits of each level, `level[i]` for
+   * `MXR_V2IP_POWER_SAVE_LEVEL_*` i + 1. All zero for a unit that predates
+   * them.
+   */
+  uint8_t level[MXR_UNIT_POWER_SAVE_LEVELS];
+} mxr_unit_power_save_t;
+
+/**
  * A V2IP device's PTP state, as it reported it about itself.
  */
 typedef struct {
@@ -5112,7 +5175,8 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
  *
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
  * when one only a device reports is, for a PTP setting, which
- * `mxr_set_all_v2ip_ptp_settings()` carries, for a profile out of range or a
+ * `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
+ * `mxr_set_all_v2ip_power_save_level()` carries, for a profile out of range or a
  * schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
  * device that applies a change reports it.
  *
@@ -5125,6 +5189,32 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
 mxr_result_t mxr_set_all_v2ip_device_settings(const mxr_remote_t *remote,
                                               const mxr_v2ip_device_settings_t *settings,
                                               const mxr_v2ip_power_save_t *power_save);
+
+/**
+ * Sets the level a V2IP device powers down to in power save,
+ * `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT` for a level with no
+ * name. `mxr_unit_power_save()` says which levels the unit offers. Otherwise
+ * as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
+                                           mxr_uid_t device,
+                                           uint8_t level);
+
+/**
+ * Sets the power save level of every V2IP device of the mesh with one frame,
+ * `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT`, sending nothing,
+ * for a level with no name. Otherwise as `mxr_set_all_v2ip_device_settings()`,
+ * which carries the other settings.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_all_v2ip_power_save_level(const mxr_remote_t *remote, uint8_t level);
 
 /**
  * Sets the PTP mode a V2IP device runs, `MXR_V2IP_PTP_MODE_*`.
@@ -6160,6 +6250,34 @@ mxr_result_t mxr_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_v
  * `mxr_unit_status_t`.
  */
 mxr_result_t mxr_unit_status(const mxr_remote_t *remote, mxr_uid_t uid, mxr_unit_status_t *out);
+
+/**
+ * Fills `out` with the level a V2IP device powers down to in power save,
+ * `MXR_V2IP_POWER_SAVE_LEVEL_*`.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+ * `mxr_v2ip_device_settings()` says whether it has this one.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable byte.
+ */
+mxr_result_t mxr_v2ip_power_save_level(const mxr_remote_t *remote, mxr_uid_t uid, uint8_t *out);
+
+/**
+ * Fills `out` with what a unit offers at each power save level, as its last
+ * status report carried it.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the unit has reported its status.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_unit_power_save_t`.
+ */
+mxr_result_t mxr_unit_power_save(const mxr_remote_t *remote,
+                                 mxr_uid_t uid,
+                                 mxr_unit_power_save_t *out);
 
 /**
  * Fills `out` with the PTP state a V2IP device last reported about itself.

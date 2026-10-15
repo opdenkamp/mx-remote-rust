@@ -5,10 +5,16 @@
 
 use std::net::Ipv4Addr;
 
-use crate::wire::{DeviceUid, UnitCommandFlag, UnitCommandKind, UnitFlag};
+use crate::wire::{
+    DeviceUid, UnitCommandFlag, UnitCommandKind, UnitFlag, UnitPowerSave, V2ipPowerSaveLevel,
+};
 
 /// The most temperature sensors a unit reports.
 pub const UNIT_MAX_TEMPERATURES: usize = 6;
+
+/// The power save levels a unit reports what it offers at, from
+/// [`REDUCED`](V2ipPowerSaveLevel::REDUCED) up.
+pub const UNIT_POWER_SAVE_LEVELS: usize = 4;
 
 /// A unit's health and IP configuration, as it last reported them.
 ///
@@ -46,6 +52,11 @@ pub struct UnitStatus {
     pub temperatures: Vec<i8>,
     /// The message of the current system status.
     pub status_message: String,
+    /// What the unit offers at each power save level, from
+    /// [`REDUCED`](V2ipPowerSaveLevel::REDUCED) up; empty for a unit that
+    /// predates the field. A route change or a command wakes the unit at every
+    /// level it supports.
+    pub power_save: [UnitPowerSave; UNIT_POWER_SAVE_LEVELS],
 }
 
 impl UnitStatus {
@@ -63,6 +74,15 @@ impl UnitStatus {
             return None;
         }
         Some(self.fan_rpm)
+    }
+
+    /// What the unit offers at a power save level, empty for
+    /// [`NONE`](V2ipPowerSaveLevel::NONE) or a level it does not report.
+    pub fn power_save_level(&self, level: V2ipPowerSaveLevel) -> UnitPowerSave {
+        usize::from(level.to_wire())
+            .checked_sub(1)
+            .and_then(|i| self.power_save.get(i).copied())
+            .unwrap_or_default()
     }
 
     /// Whether an IP configuration changed through the mesh waits for the
