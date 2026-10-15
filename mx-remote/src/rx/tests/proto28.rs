@@ -735,6 +735,33 @@ fn a_captured_input_report_decodes_to_the_mode_it_names() {
     assert!(!d.scaling.is_set());
 }
 
+/// Compressed audio leaves the stream's channel count at zero, and the
+/// infoframe's count stands in for it. Without an infoframe there is none.
+#[test]
+fn an_iec61937_report_takes_its_channels_from_the_infoframe() {
+    let mut h = captured_unit();
+    let mut report = CAPTURED_INPUT_BAY;
+    report[24 + 1] = 0x05; // infoframe: coding type 0, channel count 6
+    report[24 + 10] = 3; // IEC 61937
+    report[24 + 11] = 0; // no stream channel count
+    h.feed(op::BAY_SIGNAL_STATUS, &report);
+    let audio = h
+        .bay(0)
+        .signal_details
+        .and_then(|d| d.audio)
+        .expect("no audio block");
+    assert_eq!((audio.format, audio.channels), (3, 6));
+
+    report[2] &= !(1 << 4); // the infoframe support flag
+    h.feed(op::BAY_SIGNAL_STATUS, &report);
+    let audio = h
+        .bay(0)
+        .signal_details
+        .and_then(|d| d.audio)
+        .expect("no audio block");
+    assert_eq!(audio.channels, 0, "no infoframe to stand in");
+}
+
 #[test]
 fn a_captured_output_report_decodes_to_the_mode_it_names() {
     let mut h = captured_unit();

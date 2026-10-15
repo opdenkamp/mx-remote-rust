@@ -251,9 +251,11 @@ pub struct BaySignalDetails {
 /// The audio a bay signal report describes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BayAudioDetails {
-    /// How the stream is encoded: 0 unknown, 1 L-PCM, 2 high bit rate.
+    /// How the stream is encoded: 0 unknown, 1 L-PCM, 2 high bit rate, 3
+    /// IEC 61937 (compressed audio in two-channel frames).
     pub format: u8,
-    /// Channel count.
+    /// Channel count: the stream's, or the infoframe's where the stream
+    /// gives none, and 0 where neither does.
     pub channels: u8,
     /// Sample rate in Hz.
     pub sample_rate: u32,

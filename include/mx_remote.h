@@ -2568,11 +2568,13 @@ typedef struct {
  */
 typedef struct {
   /**
-   * How the stream is encoded: 0 unknown, 1 L-PCM, 2 high bit rate.
+   * How the stream is encoded: 0 unknown, 1 L-PCM, 2 high bit rate, 3
+   * IEC 61937 (compressed audio in two-channel frames).
    */
   uint8_t format;
   /**
-   * Channel count.
+   * Channel count: the stream's, or the infoframe's where the stream
+   * gives none, and 0 where neither does.
    */
   uint8_t channels;
   /**

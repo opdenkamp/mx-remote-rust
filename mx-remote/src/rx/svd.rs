@@ -138,13 +138,22 @@ fn audio_details(audio: &[u8], support_flags: u8) -> Option<BayAudioDetails> {
     if support_flags & SUPPORT_AUDIO_VALID == 0 {
         return None;
     }
+    let infoframe = support_flags & SUPPORT_AUDIO_INFOFRAME != 0;
+    // Compressed audio commonly leaves the stream's count at zero and the
+    // infoframe's at "refer to the stream header", so the stream's count is
+    // taken first and the infoframe's, CTA-861 CC at bits 2:0 of its first
+    // data byte, stands in for it.
+    let channels = match audio[11] {
+        0 if infoframe => (audio[1] & 0x07) + 1,
+        n => n,
+    };
     Some(BayAudioDetails {
         format: audio[10],
-        channels: audio[11],
+        channels,
         sample_rate: u32_at(audio, 12),
         // Without an infoframe the whole field is zero, and zero is also a
         // coding type a source can claim, so absence is the honest answer.
-        coding: (support_flags & SUPPORT_AUDIO_INFOFRAME != 0).then(|| audio[1] >> 4),
+        coding: infoframe.then(|| audio[1] >> 4),
     })
 }
 
