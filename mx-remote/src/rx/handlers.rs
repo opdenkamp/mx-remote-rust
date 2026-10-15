@@ -10,9 +10,9 @@ use crate::state::{Device, HelloInfo, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
-    V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipPtpState, V2ipScalingSettings, V2ipStreamSource,
-    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
-    VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE,
+    V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState, V2ipScalingSettings,
+    V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
+    V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_MATCH_SOURCE,
     SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
     VOLUME_UNCHANGED,
 };
@@ -480,6 +480,22 @@ const V2IP_VLAN_SIZE: usize = 16;
 const V2IP_PTP_AT: usize = V2IP_VLAN_AT + V2IP_VLAN_SIZE;
 const V2IP_PTP_SIZE: usize = 24;
 
+/// The PTP message settings, behind the PTP state.
+const V2IP_PTP_MESSAGES_AT: usize = V2IP_PTP_AT + V2IP_PTP_SIZE;
+const V2IP_PTP_MESSAGES_SIZE: usize = 8;
+
+/// Reads a PTP message settings block: the three intervals as signed bytes,
+/// the announce timeout and the DSCP, then three reserved bytes.
+pub(super) fn ptp_messages(m: &[u8]) -> V2ipPtpMessages {
+    V2ipPtpMessages {
+        log_announce_interval: m[0] as i8,
+        log_sync_interval: m[1] as i8,
+        log_delay_req_interval: m[2] as i8,
+        announce_timeout: m[3],
+        dscp: m[4],
+    }
+}
+
 /// Applies a device's V2IP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
 ///
@@ -639,6 +655,7 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             ptp_domain: 0,
             ptp_priority1: 0,
             power_save_level: V2ipPowerSaveLevel::NONE,
+            ptp_messages: V2ipPtpMessages::default(),
         };
         match p.get(V2IP_SCHEDULE_AT..V2IP_SCHEDULE_AT + V2IP_SCHEDULE_SIZE) {
             Some(w) => {
@@ -666,6 +683,14 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             Some(level) => frame.power_save_level = V2ipPowerSaveLevel::from_wire(*level),
             None => {
                 frame.valid = frame.valid.without(V2ipDeviceSetting::POWER_SAVE_LEVEL);
+            }
+        }
+        // The message settings' values travel in a block of their own behind
+        // the PTP state, so their bits mean nothing in a frame without it.
+        match p.get(V2IP_PTP_MESSAGES_AT..V2IP_PTP_MESSAGES_AT + V2IP_PTP_MESSAGES_SIZE) {
+            Some(m) => frame.ptp_messages = ptp_messages(m),
+            None => {
+                frame.valid = frame.valid.without(V2ipDeviceSetting::PTP_MESSAGES);
             }
         }
         if let Some(device) = state.device_mut(subject) {

@@ -2973,6 +2973,86 @@ fn a_controller_frame_does_not_change_a_device_ptp_state() {
     assert_eq!(h.state.device(controller).and_then(|d| d.v2ip_ptp), None);
 }
 
+/// A 0x3C carrying PTP message settings: the PTP state frame with a settings
+/// block carrying `valid`, then the message block at 216 with negative
+/// intervals, so a read that loses the sign shows, and poisoned reserved bytes.
+fn ptp_messages_frame(cfg: &Cfg, valid: V2ipDeviceSetting, dscp: u8) -> Vec<u8> {
+    let mut p = ptp_state_frame(cfg, V2ipPtpFlag::VALID.bits());
+    p[128..132].copy_from_slice(&valid.bits().to_le_bytes());
+    p.extend_from_slice(&[(-3i8) as u8, (-2i8) as u8, 1, 4, dscp]);
+    p.extend_from_slice(&poisoned(3));
+    p
+}
+
+/// The PTP message settings are read from the block behind the PTP state,
+/// and their bits mean nothing in a frame too short to hold it.
+#[test]
+fn ptp_message_settings_are_read_from_their_own_block() {
+    let mut h = command_device(130);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let valid = V2ipDeviceSetting::PTP_MESSAGES | V2ipDeviceSetting::AUTO_POWER_SAVE;
+    let frame = ptp_messages_frame(&cfg, valid, 46);
+    assert_eq!(frame.len(), 224);
+
+    h.feed(op::V2IP_DEVICE_CFG, &frame[..223]);
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(
+        s.ptp_messages(),
+        None,
+        "a frame that stops short of the block"
+    );
+
+    h.feed(op::V2IP_DEVICE_CFG, &frame);
+    let m = h
+        .device()
+        .v2ip_settings
+        .and_then(|s| s.ptp_messages())
+        .expect("no PTP message settings were read");
+    assert_eq!(
+        (
+            m.log_announce_interval,
+            m.log_sync_interval,
+            m.log_delay_req_interval
+        ),
+        (-3, -2, 1)
+    );
+    assert_eq!((m.announce_timeout, m.dscp), (4, 46));
+}
+
+/// A controller's write of a PTP DSCP past 63 is not cached; the rest of the
+/// write is.
+#[test]
+fn a_controller_ptp_dscp_write_out_of_range_is_not_cached() {
+    let mut h = command_device(131);
+    let subject = h.sender;
+    let has = V2ipDeviceSetting::PTP_MESSAGES;
+    h.feed(
+        op::V2IP_DEVICE_CFG,
+        &ptp_messages_frame(&Cfg::addresses(subject, "239.1.2.3"), has, 46),
+    );
+
+    let controller = uid_n(86);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2E, "Ctrl", "CTRL0010", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let mut write = Cfg::addresses(subject, "0.0.0.0");
+    write.flags = 0;
+    let mut frame = ptp_messages_frame(&write, has, 64);
+    frame[216 + 3] = 9;
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &frame);
+
+    let m = h
+        .state
+        .device(subject)
+        .and_then(|d| d.v2ip_settings)
+        .and_then(|s| s.ptp_messages())
+        .expect("the subject's settings are gone");
+    assert_eq!(m.announce_timeout, 9, "the write itself did not land");
+    assert_eq!(m.dscp, 46, "a DSCP past 63 was cached");
+}
+
 /// A sink announcing that it initialises its configuration, as `uid_n(n)`,
 /// with a manual mode configured and auto scaling on.
 fn sink_with_a_mode(n: u8, serial: &str) -> Harness {

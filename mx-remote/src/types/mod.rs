@@ -38,8 +38,8 @@ pub use unit::{
 pub use v2ip::{
     DeviceV2ipDetails, DeviceV2ipSink, StreamKind, V2ipAudioFormat, V2ipDecoderDetail,
     V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderReport, V2ipDecoderState, V2ipDeviceSettings,
-    V2ipDeviceStats, V2ipDscpConfig, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpState,
-    V2ipRoute, V2ipRouteTarget, V2ipRxStats, V2ipScalingSettings, V2ipStreamSource,
+    V2ipDeviceStats, V2ipDscpConfig, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages,
+    V2ipPtpState, V2ipRoute, V2ipRouteTarget, V2ipRxStats, V2ipScalingSettings, V2ipStreamSource,
     V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTxStats, V2ipVlan,
     SCALING_FLAGS_DEFINED, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE,
     SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,

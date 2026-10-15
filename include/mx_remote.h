@@ -1148,6 +1148,33 @@
 #define MXR_V2IP_SETTING_POWER_SAVE_LEVEL (1 << 18)
 
 /**
+ * The interval between PTP announce messages, carried in
+ * `mxr_v2ip_ptp_messages_t`'s `log_announce_interval`.
+ */
+#define MXR_V2IP_SETTING_PTP_ANNOUNCE (1 << 19)
+
+/**
+ * The interval between PTP sync messages, in `log_sync_interval`.
+ */
+#define MXR_V2IP_SETTING_PTP_SYNC (1 << 20)
+
+/**
+ * The interval between PTP delay requests, in `log_delay_req_interval`.
+ */
+#define MXR_V2IP_SETTING_PTP_DELAY_REQ (1 << 21)
+
+/**
+ * The announce intervals before a silent PTP master is dropped, in
+ * `announce_timeout`.
+ */
+#define MXR_V2IP_SETTING_PTP_ANNOUNCE_TIMEOUT (1 << 22)
+
+/**
+ * The DSCP of the PTP messages, in `dscp`.
+ */
+#define MXR_V2IP_SETTING_PTP_DSCP (1 << 23)
+
+/**
  * No level.
  */
 #define MXR_V2IP_POWER_SAVE_LEVEL_NONE 0
@@ -2111,6 +2138,35 @@ typedef struct {
    */
   int8_t ir_profile_sink;
 } mxr_v2ip_device_settings_t;
+
+/**
+ * How a V2IP device paces its PTP messages. Intervals are base-2 logarithms
+ * of seconds, so -3 is 125 ms and 1 is 2 s. Each value is meaningful only
+ * behind its `MXR_V2IP_SETTING_PTP_*` bit in `mxr_v2ip_device_settings_t`'s
+ * `valid`.
+ */
+typedef struct {
+  /**
+   * Between announce messages.
+   */
+  int8_t log_announce_interval;
+  /**
+   * Between sync messages.
+   */
+  int8_t log_sync_interval;
+  /**
+   * Between delay requests.
+   */
+  int8_t log_delay_req_interval;
+  /**
+   * The announce intervals before a silent master is dropped.
+   */
+  uint8_t announce_timeout;
+  /**
+   * The DSCP of the messages, at most 63.
+   */
+  uint8_t dscp;
+} mxr_v2ip_ptp_messages_t;
 
 /**
  * A V2IP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
@@ -5176,7 +5232,8 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
  * when one only a device reports is, for a PTP setting, which
  * `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
- * `mxr_set_all_v2ip_power_save_level()` carries, for a profile out of range or a
+ * `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message setting,
+ * which `mxr_set_all_v2ip_ptp_messages()` carries, for a profile out of range or a
  * schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
  * device that applies a change reports it.
  *
@@ -5215,6 +5272,37 @@ mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_set_all_v2ip_power_save_level(const mxr_remote_t *remote, uint8_t level);
+
+/**
+ * Sets how a V2IP device paces its PTP messages: the values of `messages`
+ * behind the `MXR_V2IP_SETTING_PTP_*` message bits in `valid`.
+ * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `messages`, for no
+ * such bit or any other bit in `valid`, or for a DSCP above 63. Otherwise as
+ * `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `messages`
+ * is null or points at an initialised `mxr_v2ip_ptp_messages_t`.
+ */
+mxr_result_t mxr_set_v2ip_ptp_messages(const mxr_remote_t *remote,
+                                       mxr_uid_t device,
+                                       uint32_t valid,
+                                       const mxr_v2ip_ptp_messages_t *messages);
+
+/**
+ * Changes how every V2IP device of the mesh paces its PTP messages, with one
+ * frame. As `mxr_set_v2ip_ptp_messages()` for its arguments, and otherwise as
+ * `mxr_set_all_v2ip_device_settings()`, which carries the other settings.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `messages`
+ * is null or points at an initialised `mxr_v2ip_ptp_messages_t`.
+ */
+mxr_result_t mxr_set_all_v2ip_ptp_messages(const mxr_remote_t *remote,
+                                           uint32_t valid,
+                                           const mxr_v2ip_ptp_messages_t *messages);
 
 /**
  * Sets the PTP mode a V2IP device runs, `MXR_V2IP_PTP_MODE_*`.
@@ -6263,6 +6351,21 @@ mxr_result_t mxr_unit_status(const mxr_remote_t *remote, mxr_uid_t uid, mxr_unit
  * `remote` is null or a live handle, and `out` points at a writable byte.
  */
 mxr_result_t mxr_v2ip_power_save_level(const mxr_remote_t *remote, mxr_uid_t uid, uint8_t *out);
+
+/**
+ * Fills `out` with how a V2IP device paces its PTP messages.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+ * `mxr_v2ip_device_settings()` says which of these it has.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_ptp_messages_t`.
+ */
+mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
+                                   mxr_uid_t uid,
+                                   mxr_v2ip_ptp_messages_t *out);
 
 /**
  * Fills `out` with what a unit offers at each power save level, as its last

@@ -10,12 +10,15 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipTestcard, V2ipVlan,
-    VideoWallOp, VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipPtpMessages,
+    V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
 };
 
 use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN};
-use super::enums::{EdidProfile, MxrSignalType, RcAction, RcKey, UnitCommandFlag, UnitCommandKind};
+use super::enums::{
+    EdidProfile, MxrSignalType, RcAction, RcKey, UnitCommandFlag, UnitCommandKind,
+    V2ipDeviceSetting,
+};
 use super::opcode::audio_sub;
 use super::uid::DeviceUid;
 
@@ -452,6 +455,11 @@ pub(crate) fn build_v2ip_scaling(
 /// The settings go out whole. A receiver whose block ends at the idle minutes
 /// takes a frame of 144 bytes or more; one with the schedule ignores the
 /// settings of a frame shorter than 176.
+///
+/// Settings that carry a PTP message setting run on to 224 bytes: a zeroed
+/// VLAN block at 176, which without its valid bit carries nothing, a zeroed
+/// PTP state at 192, which a receiver takes only from a device describing
+/// itself, and the PTP message block at 216.
 pub(crate) fn build_v2ip_device_settings(
     target: DeviceUid,
     settings: &V2ipDeviceSettings,
@@ -466,7 +474,32 @@ pub(crate) fn build_v2ip_device_settings(
     // block and feature word.
     p.resize(128, 0);
     p.extend_from_slice(&build_v2ip_settings_block(settings));
+    if carries_ptp_messages(settings) {
+        p.resize(216, 0);
+        p.extend_from_slice(&build_ptp_messages_block(&settings.ptp_messages));
+    }
     p
+}
+
+/// Whether settings carry a value only the PTP message block can hold.
+fn carries_ptp_messages(settings: &V2ipDeviceSettings) -> bool {
+    !(settings.valid & V2ipDeviceSetting::PTP_MESSAGES).is_empty()
+}
+
+/// The 8-byte PTP message block: the announce, sync and delay request
+/// intervals as signed bytes at 0, 1 and 2, the announce timeout at 3, the
+/// DSCP at 4 and three reserved bytes.
+fn build_ptp_messages_block(m: &V2ipPtpMessages) -> [u8; 8] {
+    [
+        m.log_announce_interval as u8,
+        m.log_sync_interval as u8,
+        m.log_delay_req_interval as u8,
+        m.announce_timeout,
+        m.dscp,
+        0,
+        0,
+        0,
+    ]
 }
 
 /// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's VLAN
@@ -567,9 +600,14 @@ pub(crate) fn build_time_zone(zone: &str, rule: &str) -> Vec<u8> {
 }
 
 /// Builds the `V2IP_SETTINGS_ALL` (0x4C) payload, the settings every device of
-/// the mesh applies: the settings block alone.
+/// the mesh applies: the settings block, and behind it the PTP message block
+/// when the settings carry a PTP message setting.
 pub(crate) fn build_v2ip_settings_all(settings: &V2ipDeviceSettings) -> Vec<u8> {
-    build_v2ip_settings_block(settings)
+    let mut p = build_v2ip_settings_block(settings);
+    if carries_ptp_messages(settings) {
+        p.extend_from_slice(&build_ptp_messages_block(&settings.ptp_messages));
+    }
+    p
 }
 
 /// The 48-byte device settings block.

@@ -33,8 +33,8 @@ use crate::abi::{
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
 use crate::subsystems::{
-    mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_settings_t,
-    mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t,
+    mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t,
+    mxr_v2ip_ptp_settings_t, mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t,
 };
 
 /// A stream's sample rate and channel count.
@@ -1114,7 +1114,8 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_schedule(
 /// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
 /// when one only a device reports is, for a PTP setting, which
 /// `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
-/// `mxr_set_all_v2ip_power_save_level()` carries, for a profile out of range or a
+/// `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message setting,
+/// which `mxr_set_all_v2ip_ptp_messages()` carries, for a profile out of range or a
 /// schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
 /// device that applies a change reports it.
 ///
@@ -1150,6 +1151,12 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
             return fail(
                 mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
                 "the power save level goes through mxr_set_all_v2ip_power_save_level()",
+            );
+        }
+        if !(valid & V2ipDeviceSetting::PTP_MESSAGES).is_empty() {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "PTP message settings go through mxr_set_all_v2ip_ptp_messages()",
             );
         }
         let needs_power_save = valid.has(V2ipDeviceSetting::AUTO_POWER_SAVE)
@@ -1228,6 +1235,80 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_power_save_level(
         from_control(r.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
             valid: V2ipDeviceSetting::POWER_SAVE_LEVEL,
             power_save_level: V2ipPowerSaveLevel::from_wire(level),
+            ..V2ipDeviceSettings::default()
+        }))
+    })
+}
+
+/// Sets how a V2IP device paces its PTP messages: the values of `messages`
+/// behind the `MXR_V2IP_SETTING_PTP_*` message bits in `valid`.
+/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `messages`, for no
+/// such bit or any other bit in `valid`, or for a DSCP above 63. Otherwise as
+/// `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `messages`
+/// is null or points at an initialised `mxr_v2ip_ptp_messages_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_ptp_messages(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    valid: u32,
+    messages: *const mxr_v2ip_ptp_messages_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(messages) = (unsafe { messages.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the PTP messages pointer is null",
+            );
+        };
+        from_control(r.remote.set_v2ip_ptp_messages(
+            device.into(),
+            V2ipDeviceSetting::from_bits(valid),
+            (*messages).into(),
+        ))
+    })
+}
+
+/// Changes how every V2IP device of the mesh paces its PTP messages, with one
+/// frame. As `mxr_set_v2ip_ptp_messages()` for its arguments, and otherwise as
+/// `mxr_set_all_v2ip_device_settings()`, which carries the other settings.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `messages`
+/// is null or points at an initialised `mxr_v2ip_ptp_messages_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_messages(
+    remote: *const mxr_remote_t,
+    valid: u32,
+    messages: *const mxr_v2ip_ptp_messages_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(messages) = (unsafe { messages.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the PTP messages pointer is null",
+            );
+        };
+        let valid = V2ipDeviceSetting::from_bits(valid);
+        if valid.is_empty() || !V2ipDeviceSetting::PTP_MESSAGES.has(valid) {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "only PTP message settings are carried here",
+            );
+        }
+        from_control(r.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+            valid,
+            ptp_messages: (*messages).into(),
             ..V2ipDeviceSettings::default()
         }))
     })

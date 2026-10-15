@@ -32,8 +32,8 @@ use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, UnitNetConfig,
-    V2ipAudioFormat, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipRoute,
-    V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
+    V2ipAudioFormat, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages,
+    V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
     V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
     V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
@@ -51,7 +51,7 @@ use crate::wire::{
     MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError,
     StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature,
     V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
-    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_IR_PROFILE_MAX,
+    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX,
     V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
@@ -1368,6 +1368,35 @@ impl Remote {
         )
     }
 
+    /// Sets how a V2IP device paces its PTP messages: the values of `messages`
+    /// behind the bits of `which`, each one of
+    /// [`PTP_MESSAGES`](V2ipDeviceSetting::PTP_MESSAGES). A DSCP above
+    /// [`V2IP_DSCP_MAX`](crate::V2IP_DSCP_MAX) is refused. The terms of
+    /// [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_ptp_messages(
+        &self,
+        device: DeviceUid,
+        which: V2ipDeviceSetting,
+        messages: V2ipPtpMessages,
+    ) -> Result<(), ControlError> {
+        if which.is_empty() || !V2ipDeviceSetting::PTP_MESSAGES.has(which) {
+            return Err(ControlError::InvalidRequest(
+                "only PTP message settings are carried here",
+            ));
+        }
+        if which.has(V2ipDeviceSetting::PTP_DSCP) && messages.dscp > V2IP_DSCP_MAX {
+            return Err(ControlError::InvalidRequest("a DSCP above 63"));
+        }
+        self.set_v2ip_device_settings(
+            device,
+            V2ipDeviceSettings {
+                valid: which,
+                ptp_messages: messages,
+                ..V2ipDeviceSettings::default()
+            },
+        )
+    }
+
     /// Sets the PTP mode a V2IP device runs. The terms of
     /// [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_mode(
@@ -1428,9 +1457,9 @@ impl Remote {
     /// [`valid`](V2ipDeviceSettings::valid), as a device reports them. Each
     /// device applies those it has and ignores the rest, and none that
     /// predates the frame applies any. A setting only a device reports about
-    /// itself, a profile, PTP mode, PTP domain or power save level out of
-    /// range and a schedule time that is not a time of day are refused here,
-    /// since every device would ignore them.
+    /// itself, a profile, PTP mode, PTP domain, power save level or PTP DSCP
+    /// out of range and a schedule time that is not a time of day are refused
+    /// here, since every device would ignore them.
     ///
     /// Nothing is cached: each device that applies a change reports its
     /// settings, and [`Remote::v2ip_device_settings`] reads that.
@@ -1472,6 +1501,9 @@ impl Remote {
             && settings.power_save_level > V2ipPowerSaveLevel::OFF
         {
             return Err(ControlError::InvalidRequest("no such power save level"));
+        }
+        if valid.has(V2ipDeviceSetting::PTP_DSCP) && settings.ptp_messages.dscp > V2IP_DSCP_MAX {
+            return Err(ControlError::InvalidRequest("a DSCP above 63"));
         }
         self.shared.send(
             &Addressee::Broadcast,

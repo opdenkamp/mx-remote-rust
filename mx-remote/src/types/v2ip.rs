@@ -668,6 +668,55 @@ pub struct V2ipDeviceSettings {
     pub ptp_priority1: u8,
     /// The level the device powers down to in power save.
     pub power_save_level: V2ipPowerSaveLevel,
+    /// The device's PTP message settings.
+    pub ptp_messages: V2ipPtpMessages,
+}
+
+/// How a V2IP device paces its PTP messages, each value behind its own bit
+/// of [`V2ipDeviceSettings::valid`].
+///
+/// Intervals are base-2 logarithms of seconds, so -3 is 125 ms and 1 is 2 s.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipPtpMessages {
+    /// Between announce messages, behind
+    /// [`PTP_ANNOUNCE`](V2ipDeviceSetting::PTP_ANNOUNCE).
+    pub log_announce_interval: i8,
+    /// Between sync messages, behind [`PTP_SYNC`](V2ipDeviceSetting::PTP_SYNC).
+    pub log_sync_interval: i8,
+    /// Between delay requests, behind
+    /// [`PTP_DELAY_REQ`](V2ipDeviceSetting::PTP_DELAY_REQ).
+    pub log_delay_req_interval: i8,
+    /// The announce intervals before a silent master is dropped, behind
+    /// [`PTP_ANNOUNCE_TIMEOUT`](V2ipDeviceSetting::PTP_ANNOUNCE_TIMEOUT).
+    pub announce_timeout: u8,
+    /// The DSCP of the messages, at most [`V2IP_DSCP_MAX`], behind
+    /// [`PTP_DSCP`](V2ipDeviceSetting::PTP_DSCP).
+    pub dscp: u8,
+}
+
+impl V2ipPtpMessages {
+    /// The values behind the bits of `which` copied from `from`, the rest
+    /// kept.
+    #[must_use]
+    pub(crate) fn merge(self, from: Self, which: V2ipDeviceSetting) -> Self {
+        let mut out = self;
+        if which.has(V2ipDeviceSetting::PTP_ANNOUNCE) {
+            out.log_announce_interval = from.log_announce_interval;
+        }
+        if which.has(V2ipDeviceSetting::PTP_SYNC) {
+            out.log_sync_interval = from.log_sync_interval;
+        }
+        if which.has(V2ipDeviceSetting::PTP_DELAY_REQ) {
+            out.log_delay_req_interval = from.log_delay_req_interval;
+        }
+        if which.has(V2ipDeviceSetting::PTP_ANNOUNCE_TIMEOUT) {
+            out.announce_timeout = from.announce_timeout;
+        }
+        if which.has(V2ipDeviceSetting::PTP_DSCP) {
+            out.dscp = from.dscp;
+        }
+        out
+    }
 }
 
 impl V2ipDeviceSettings {
@@ -755,6 +804,13 @@ impl V2ipDeviceSettings {
         Some(self.power_save_level)
     }
 
+    /// The PTP message settings the device has reported, `None` while it has
+    /// reported none of them; each value is meaningful only behind its own bit
+    /// of [`valid`](Self::valid).
+    pub fn ptp_messages(&self) -> Option<V2ipPtpMessages> {
+        (!(self.valid & V2ipDeviceSetting::PTP_MESSAGES).is_empty()).then_some(self.ptp_messages)
+    }
+
     /// Folds a received settings block onto the cached one.
     ///
     /// Each bit in the frame's [`valid`](Self::valid) replaces its own setting
@@ -793,6 +849,7 @@ impl V2ipDeviceSettings {
         if valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL) {
             out.power_save_level = self.power_save_level;
         }
+        out.ptp_messages = previous.ptp_messages.merge(self.ptp_messages, valid);
         out
     }
 
@@ -817,6 +874,9 @@ impl V2ipDeviceSettings {
         }
         if self.power_save_level > V2ipPowerSaveLevel::OFF {
             valid = valid.without(V2ipDeviceSetting::POWER_SAVE_LEVEL);
+        }
+        if self.ptp_messages.dscp > V2IP_DSCP_MAX {
+            valid = valid.without(V2ipDeviceSetting::PTP_DSCP);
         }
         Self { valid, ..self }
     }

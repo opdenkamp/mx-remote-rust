@@ -19,9 +19,9 @@ use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n,
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
     EdidProfileChange, EdidRequest, KeyTransmitRequest, UnitNetConfig, V2ipAudioFormat,
-    V2ipOutputMode, V2ipRoute, V2ipRouteTarget, V2ipVlan, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX,
-    V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
+    V2ipOutputMode, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipVlan,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -2127,14 +2127,14 @@ fn an_auto_scaling_write_leaves_a_configured_mode_alone() {
     );
 }
 
-/// Has `uid` report the device settings in `valid`, all of them off.
+/// Has `uid` report the device settings in `valid`, all of them off, in a
+/// frame long enough to hold the PTP message block. The VLAN block and PTP
+/// state ahead of that block are zero, so they carry nothing.
 fn report_settings(f: &Fixture, uid: DeviceUid, valid: V2ipDeviceSetting) {
     let cfg = Cfg::addresses(uid, "239.1.2.3");
-    f.feed(
-        uid,
-        op::V2IP_DEVICE_CFG,
-        &cfg.bytes_with_power_save(valid.bits(), 0, 0, &V2ipPowerSaveSchedule::default()),
-    );
+    let mut p = cfg.bytes_with_power_save(valid.bits(), 0, 0, &V2ipPowerSaveSchedule::default());
+    p.resize(224, 0);
+    f.feed(uid, op::V2IP_DEVICE_CFG, &p);
 }
 
 /// A settings write carries nothing but the settings block.
@@ -2729,6 +2729,121 @@ fn a_power_save_level_and_aes67_write_carry_their_bits() {
         }),
         Err(ControlError::InvalidRequest(_))
     ));
+}
+
+/// A PTP message write runs the frame on to its block at 216, past a VLAN
+/// block and a PTP state that carry nothing; the same write for every device
+/// puts the block behind the settings.
+#[test]
+fn a_ptp_message_write_carries_its_block() {
+    let f = Fixture::new();
+    let uid = uid_n(236);
+    f.everything(uid, 0x2E, "PM0001");
+    report_settings(&f, uid, V2ipDeviceSetting::PTP_MESSAGES);
+    f.connect();
+
+    let messages = V2ipPtpMessages {
+        log_announce_interval: -3,
+        log_sync_interval: -2,
+        log_delay_req_interval: 1,
+        announce_timeout: 4,
+        dscp: 46,
+    };
+    let which = V2ipDeviceSetting::PTP_SYNC | V2ipDeviceSetting::PTP_DSCP;
+    f.tap.clear();
+    f.remote
+        .set_v2ip_ptp_messages(uid, which, messages)
+        .expect("the device has reported the settings");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 224);
+    assert_eq!(&p[128..132], &which.bits().to_le_bytes(), "valid");
+    assert!(
+        p[176..216].iter().all(|b| *b == 0),
+        "a VLAN block or PTP state is set"
+    );
+    assert_eq!(&p[216..224], &[0xFD, 0xFE, 1, 4, 46, 0, 0, 0]);
+
+    f.remote
+        .set_v2ip_ptp_messages(
+            uid,
+            V2ipDeviceSetting::PTP_SYNC,
+            V2ipPtpMessages {
+                log_announce_interval: 2,
+                log_sync_interval: -5,
+                log_delay_req_interval: 3,
+                announce_timeout: 9,
+                dscp: 7,
+            },
+        )
+        .expect("the device has reported the settings");
+    let cached = f
+        .remote
+        .v2ip_device_settings(uid)
+        .and_then(|s| s.ptp_messages())
+        .expect("no settings");
+    assert_eq!(cached.log_sync_interval, -5, "the one value carried");
+    assert_eq!(
+        cached.dscp, 46,
+        "a value the write did not carry was replaced"
+    );
+    assert_eq!(
+        (
+            cached.log_announce_interval,
+            cached.log_delay_req_interval,
+            cached.announce_timeout
+        ),
+        (0, 0, 0),
+        "a value the write did not carry was replaced"
+    );
+
+    f.tap.clear();
+    let _ = f.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+        valid: which,
+        ptp_messages: messages,
+        ..V2ipDeviceSettings::default()
+    });
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 56);
+    assert_eq!(&p[48..56], &[0xFD, 0xFE, 1, 4, 46, 0, 0, 0]);
+
+    f.tap.clear();
+    let refused = [
+        (V2ipDeviceSetting::NONE, messages),
+        (
+            V2ipDeviceSetting::PTP_SYNC | V2ipDeviceSetting::STATUS_LED,
+            messages,
+        ),
+        (
+            V2ipDeviceSetting::PTP_DSCP,
+            V2ipPtpMessages {
+                dscp: 64,
+                ..messages
+            },
+        ),
+    ];
+    for (which, messages) in refused {
+        assert!(
+            matches!(
+                f.remote.set_v2ip_ptp_messages(uid, which, messages),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{which:?}"
+        );
+    }
+    assert!(matches!(
+        f.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+            valid: V2ipDeviceSetting::PTP_DSCP,
+            ptp_messages: V2ipPtpMessages {
+                dscp: 64,
+                ..messages
+            },
+            ..V2ipDeviceSettings::default()
+        }),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused write was sent");
 }
 
 /// Settings for every device go out as the bare settings block, to everyone,

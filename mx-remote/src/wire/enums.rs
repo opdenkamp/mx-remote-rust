@@ -282,6 +282,16 @@ bitmask! {
         AES67 = 1 << 17;
         /// The power save level the device powers down to.
         POWER_SAVE_LEVEL = 1 << 18;
+        /// The interval between the device's PTP announce messages.
+        PTP_ANNOUNCE = 1 << 19;
+        /// The interval between the device's PTP sync messages.
+        PTP_SYNC = 1 << 20;
+        /// The interval between the device's PTP delay requests.
+        PTP_DELAY_REQ = 1 << 21;
+        /// The announce intervals before the device drops a silent PTP master.
+        PTP_ANNOUNCE_TIMEOUT = 1 << 22;
+        /// The DSCP of the device's PTP messages.
+        PTP_DSCP = 1 << 23;
     }
 }
 
@@ -501,6 +511,16 @@ impl V2ipDeviceSetting {
     /// The PTP settings.
     pub const PTP_SETTINGS: Self =
         Self(Self::PTP_MODE.0 | Self::PTP_DOMAIN.0 | Self::PTP_PRIORITY1.0);
+
+    /// The PTP message settings, whose values a frame carries in a block of
+    /// their own behind the rest.
+    pub const PTP_MESSAGES: Self = Self(
+        Self::PTP_ANNOUNCE.0
+            | Self::PTP_SYNC.0
+            | Self::PTP_DELAY_REQ.0
+            | Self::PTP_ANNOUNCE_TIMEOUT.0
+            | Self::PTP_DSCP.0,
+    );
 
     /// These bits with every bit of `other` cleared.
     pub(crate) const fn without(self, other: Self) -> Self {

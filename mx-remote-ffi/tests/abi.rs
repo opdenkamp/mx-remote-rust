@@ -866,6 +866,75 @@ fn the_power_save_level_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// The PTP message calls answer a caller's mistake as an argument error and a
+/// device never heard from as not found, before anything is sent, and the
+/// mesh-wide settings call leaves them to their own.
+#[test]
+fn the_ptp_message_calls_check_their_arguments_first() {
+    let remote = client(c"abi-ptpm", c"00000022.00000000.00000000.000000ab");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_ptp_messages(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_ptp_messages_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_ptp_messages(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    let messages = mxr_v2ip_ptp_messages_t {
+        log_announce_interval: 1,
+        log_sync_interval: -3,
+        log_delay_req_interval: 0,
+        announce_timeout: 3,
+        dscp: 46,
+    };
+    let dscp = MXR_V2IP_SETTING_PTP_DSCP;
+    // SAFETY: a live handle; a null struct is what is under test.
+    let rc = unsafe { mxr_set_v2ip_ptp_messages(remote, uid_n(9), dscp, ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no values");
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe {
+        mxr_set_v2ip_ptp_messages(
+            remote,
+            uid_n(9),
+            dscp | MXR_V2IP_SETTING_STATUS_LED,
+            &messages,
+        )
+    };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a bit that is not one"
+    );
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_v2ip_ptp_messages(remote, uid_n(9), dscp, &messages) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, 0, &messages) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no bit");
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, dscp, &messages) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
+
+    let all = mxr_v2ip_device_settings_t {
+        valid: MXR_V2IP_SETTING_PTP_SYNC,
+        flags: 0,
+        ir_profiles: 0,
+        ir_profile: 0,
+        ir_profile_sink: 0,
+    };
+    // SAFETY: a live handle and an initialised settings struct.
+    let rc = unsafe { mxr_set_all_v2ip_device_settings(remote, &all, ptr::null()) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a PTP message bit with no values"
+    );
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// The PTP calls answer a caller's mistake as an argument error and a device
 /// never heard from as not found, before anything is sent, and the mesh-wide
 /// settings call leaves PTP to its own.

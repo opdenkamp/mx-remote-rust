@@ -21,8 +21,8 @@ use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UnitStatus,
     UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature,
-    V2ipPtpState, V2ipRxStats, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
-    V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus,
+    V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipStreamSource, V2ipStreamSources, V2ipTestSync,
+    V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus,
     MULTIVIEWER_INPUTS,
 };
 
@@ -1371,6 +1371,76 @@ pub unsafe extern "C" fn mxr_v2ip_power_save_level(
             .v2ip_device_settings(uid.into())
             .map(|s: V2ipDeviceSettings| s.power_save_level.to_wire());
         // SAFETY: the caller guarantees a writable byte or null.
+        unsafe { fill(r, uid, out, "device settings", value) }
+    })
+}
+
+/// How a V2IP device paces its PTP messages. Intervals are base-2 logarithms
+/// of seconds, so -3 is 125 ms and 1 is 2 s. Each value is meaningful only
+/// behind its `MXR_V2IP_SETTING_PTP_*` bit in `mxr_v2ip_device_settings_t`'s
+/// `valid`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_ptp_messages_t {
+    /// Between announce messages.
+    pub log_announce_interval: i8,
+    /// Between sync messages.
+    pub log_sync_interval: i8,
+    /// Between delay requests.
+    pub log_delay_req_interval: i8,
+    /// The announce intervals before a silent master is dropped.
+    pub announce_timeout: u8,
+    /// The DSCP of the messages, at most 63.
+    pub dscp: u8,
+}
+
+impl From<V2ipPtpMessages> for mxr_v2ip_ptp_messages_t {
+    fn from(m: V2ipPtpMessages) -> Self {
+        Self {
+            log_announce_interval: m.log_announce_interval,
+            log_sync_interval: m.log_sync_interval,
+            log_delay_req_interval: m.log_delay_req_interval,
+            announce_timeout: m.announce_timeout,
+            dscp: m.dscp,
+        }
+    }
+}
+
+impl From<mxr_v2ip_ptp_messages_t> for V2ipPtpMessages {
+    fn from(m: mxr_v2ip_ptp_messages_t) -> Self {
+        Self {
+            log_announce_interval: m.log_announce_interval,
+            log_sync_interval: m.log_sync_interval,
+            log_delay_req_interval: m.log_delay_req_interval,
+            announce_timeout: m.announce_timeout,
+            dscp: m.dscp,
+        }
+    }
+}
+
+/// Fills `out` with how a V2IP device paces its PTP messages.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
+/// `mxr_v2ip_device_settings()` says which of these it has.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_ptp_messages_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_ptp_messages(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_ptp_messages_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_device_settings(uid.into())
+            .map(|s: V2ipDeviceSettings| s.ptp_messages.into());
+        // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "device settings", value) }
     })
 }

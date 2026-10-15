@@ -735,6 +735,23 @@ pub const MXR_V2IP_SETTING_AES67: u32 = 1 << 17;
 /// The power save level, read with `mxr_v2ip_power_save_level()`.
 pub const MXR_V2IP_SETTING_POWER_SAVE_LEVEL: u32 = 1 << 18;
 
+/// The interval between PTP announce messages, carried in
+/// `mxr_v2ip_ptp_messages_t`'s `log_announce_interval`.
+pub const MXR_V2IP_SETTING_PTP_ANNOUNCE: u32 = 1 << 19;
+
+/// The interval between PTP sync messages, in `log_sync_interval`.
+pub const MXR_V2IP_SETTING_PTP_SYNC: u32 = 1 << 20;
+
+/// The interval between PTP delay requests, in `log_delay_req_interval`.
+pub const MXR_V2IP_SETTING_PTP_DELAY_REQ: u32 = 1 << 21;
+
+/// The announce intervals before a silent PTP master is dropped, in
+/// `announce_timeout`.
+pub const MXR_V2IP_SETTING_PTP_ANNOUNCE_TIMEOUT: u32 = 1 << 22;
+
+/// The DSCP of the PTP messages, in `dscp`.
+pub const MXR_V2IP_SETTING_PTP_DSCP: u32 = 1 << 23;
+
 // ---- V2IP power save levels ----
 
 /// No level.
