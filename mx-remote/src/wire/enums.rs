@@ -188,6 +188,12 @@ bitmask! {
         /// Tags its uplink by the VLAN configuration it reports, and takes one
         /// written to it.
         VLAN = 1 << 28;
+        /// Copies the overlay settings and logos of another unit when asked.
+        OSD_SYNC = 1 << 29;
+        /// Is downloading or installing a firmware or video processor
+        /// upgrade. [`STATUS_REBOOT`](Self::STATUS_REBOOT) follows when it
+        /// reboots to complete it.
+        STATUS_UPGRADING = 1 << 30;
         /// Flips on every reboot, so a peer that sees it change knows the device restarted.
         BOOT_BIT = 1 << 31;
     }
