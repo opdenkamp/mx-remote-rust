@@ -11,9 +11,9 @@ use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    RcSettings, TimeZone, TopologyEntry, UnitStatus, V2ipDeviceSettings, V2ipDeviceStats,
-    V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources, V2ipTestcard,
-    V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
+    OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry, UnitStatus, V2ipDeviceSettings,
+    V2ipDeviceStats, V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources,
+    V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
 
@@ -137,6 +137,8 @@ pub(crate) struct Device {
     pub(crate) unit_status: Option<UnitStatus>,
     /// What the output last reported playing from a session description.
     pub(crate) v2ip_sink_sdp: Option<V2ipSinkSdp>,
+    pub(crate) osd_sync: Option<OsdSync>,
+    pub(crate) osd_sync_report: Option<OsdSyncReport>,
     /// The PTP state the device last reported about itself, `None` while it
     /// reports none.
     pub(crate) v2ip_ptp: Option<V2ipPtpState>,
@@ -190,6 +192,8 @@ impl Device {
             v2ip_ptp: None,
             unit_status: None,
             v2ip_sink_sdp: None,
+            osd_sync: None,
+            osd_sync_report: None,
             v2ip_testcard: None,
             v2ip_stats: None,
             setup_done: None,
@@ -1090,6 +1094,28 @@ impl Device {
         ev.push(Event::UnitStatusChanged {
             device: self.uid,
             status,
+        });
+    }
+
+    pub(crate) fn set_osd_sync(&mut self, sync: OsdSync, ev: &mut Vec<Event>) {
+        if self.osd_sync.as_ref() == Some(&sync) {
+            return;
+        }
+        self.osd_sync = Some(sync.clone());
+        ev.push(Event::OsdSyncChanged {
+            device: self.uid,
+            sync,
+        });
+    }
+
+    pub(crate) fn set_osd_sync_report(&mut self, report: OsdSyncReport, ev: &mut Vec<Event>) {
+        if self.osd_sync_report.as_ref() == Some(&report) {
+            return;
+        }
+        self.osd_sync_report = Some(report.clone());
+        ev.push(Event::OsdSyncReportChanged {
+            device: self.uid,
+            report,
         });
     }
 

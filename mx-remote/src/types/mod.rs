@@ -8,6 +8,7 @@ mod audio;
 mod commands;
 mod multiviewer;
 mod network;
+mod osd;
 mod status;
 mod unit;
 mod v2ip;
@@ -27,6 +28,10 @@ pub use commands::{
 };
 pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{MacAddress, NetworkPortStatus, UtpCableStatus, UtpLinkErrors, VctStatus};
+pub use osd::{
+    OsdCaption, OsdLogo, OsdSync, OsdSyncReport, OsdSyncRequest, OsdSyncSetting, OsdSyncSlot,
+    OsdSyncValue, OSD_SYNC_SLOTS,
+};
 pub use status::{
     ArcStatus, BayAudioDetails, BayContentField, BayMirrorStatus, BaySignalDetails, ConnectStatus,
     DeviceStatus, FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TimeZone, TopologyEntry,

@@ -96,6 +96,7 @@ pub(crate) mod op {
     pub(crate) const SYS_UNIT_COMMAND: Opcode = Opcode(0x50);
     pub(crate) const BAY_CONTENT: Opcode = Opcode(0x51);
     pub(crate) const V2IP_SINK_SDP: Opcode = Opcode(0x52);
+    pub(crate) const V2IP_OSD_SYNC: Opcode = Opcode(0x53);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -194,6 +195,7 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::SYS_UNIT_COMMAND => 0x2C,
         op::BAY_CONTENT => 0x2D,
         op::V2IP_SINK_SDP => 0x2E,
+        op::V2IP_OSD_SYNC => 0x2F,
         Opcode(_) => return None,
     })
 }
@@ -304,5 +306,16 @@ mod tests {
         // And the paired direction, so the assertion above is not one that
         // would hold for a table returning None for everything.
         assert_eq!(stamp_for(op::SYS_HELLO), Some(0x01));
+    }
+
+    /// This client announces the newest version any opcode it handles is
+    /// stamped at, which is what a peer's device listing shows it supporting.
+    #[test]
+    fn the_announced_version_is_the_newest_stamp() {
+        let newest = (0..=0xFF)
+            .filter_map(|o| stamp_for(Opcode(o)))
+            .max()
+            .expect("an empty table");
+        assert_eq!(crate::wire::PROTOCOL_VERSION, newest);
     }
 }

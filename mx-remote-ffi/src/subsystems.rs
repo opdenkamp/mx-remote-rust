@@ -19,11 +19,12 @@ use std::time::UNIX_EPOCH;
 
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UnitStatus,
-    UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature,
-    V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipSinkSdp, V2ipStreamSource, V2ipStreamSources,
-    V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats,
-    V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
+    MultiviewerStatus, NetworkPortStatus, OsdSync, OsdSyncReport, RcSettings, StreamKind,
+    TopologyEntry, UnitStatus, UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings,
+    V2ipDeviceStats, V2ipFpgaFeature, V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipSinkSdp,
+    V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
+    V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
+    OSD_SYNC_SLOTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -1537,6 +1538,146 @@ pub unsafe extern "C" fn mxr_v2ip_sink_sdp(
         });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "session description status", value) }
+    })
+}
+
+/// The logo slots an overlay sync can copy.
+pub const MXR_OSD_SYNC_SLOTS: usize = 4;
+/// Bytes in `mxr_osd_sync_report_t.reason`, its NUL included.
+pub const MXR_OSD_SYNC_REASON_LEN: usize = 65;
+
+const _: () = assert!(MXR_OSD_SYNC_SLOTS == OSD_SYNC_SLOTS);
+
+/// One logo slot, as an overlay sync describes it.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct mxr_osd_sync_slot_t {
+    /// The PNG's size in bytes; zero empties the slot.
+    pub bytes: u32,
+    /// The PNG's CRC-32.
+    pub crc32: u32,
+    /// The size it is shown at, in percent.
+    pub percent: u8,
+}
+
+/// The overlay sync a management unit last sent.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_osd_sync_t {
+    /// The sync's number at its source.
+    pub seq: u16,
+    /// The unit it is for, or zero for every unit.
+    pub target: mxr_uid_t,
+    /// `MXR_OSD_SYNC_WHAT_*` bits.
+    pub what: u8,
+    /// The source's HTTP port, zero meaning 80.
+    pub http_port: u16,
+    /// The source's address as a dotted quad, `0.0.0.0` meaning the
+    /// sender's.
+    pub source_ip: [c_char; MXR_IP_STRING_LEN],
+    /// How many settings follow.
+    pub records: u16,
+    /// The logo slots, filled when `what` has
+    /// `MXR_OSD_SYNC_WHAT_LOGO_SLOTS` and zero otherwise. A unit fetches a
+    /// slot whose size or CRC differs from
+    /// `http://source_ip:http_port/osd-sync/slotN.png`, N being 1 to 4.
+    pub slots: [mxr_osd_sync_slot_t; MXR_OSD_SYNC_SLOTS],
+}
+
+/// How a unit last reported getting on with an overlay sync.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_osd_sync_report_t {
+    /// The sync it reports on, numbered by the source that sent it.
+    pub seq: u16,
+    /// `MXR_OSD_SYNC_STATE_*`.
+    pub state: u8,
+    /// The settings it wrote.
+    pub written: u16,
+    /// The settings it refused.
+    pub refused: u16,
+    /// Why it failed or refused any.
+    pub reason: [c_char; MXR_OSD_SYNC_REASON_LEN],
+}
+
+/// Fills `out` with the overlay sync a management unit last sent.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until it has sent one. A new sync is
+/// announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_osd_sync_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_osd_sync(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_osd_sync_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r.remote.osd_sync(uid.into()).map(|s: OsdSync| {
+            let mut out = mxr_osd_sync_t {
+                seq: s.seq,
+                target: s.target.into(),
+                what: s.what.bits(),
+                http_port: s.http_port,
+                source_ip: [0; MXR_IP_STRING_LEN],
+                records: s.records,
+                slots: [mxr_osd_sync_slot_t::default(); MXR_OSD_SYNC_SLOTS],
+            };
+            put_ip(&mut out.source_ip, Some(s.source_ip));
+            for (o, slot) in out.slots.iter_mut().zip(s.slots.iter().flatten()) {
+                *o = mxr_osd_sync_slot_t {
+                    bytes: slot.bytes,
+                    crc32: slot.crc32,
+                    percent: slot.percent,
+                };
+            }
+            out
+        });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "overlay sync", value) }
+    })
+}
+
+/// Fills `out` with how a unit last reported getting on with an overlay
+/// sync. Match it to the sync by `seq` and the sync's source.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the unit has reported. A change is
+/// announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_osd_sync_report_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_osd_sync_report(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_osd_sync_report_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .osd_sync_report(uid.into())
+            .map(|s: OsdSyncReport| {
+                let mut out = mxr_osd_sync_report_t {
+                    seq: s.seq,
+                    state: s.state.to_wire(),
+                    written: s.written,
+                    refused: s.refused,
+                    reason: [0; MXR_OSD_SYNC_REASON_LEN],
+                };
+                put_str(&mut out.reason, &s.reason);
+                out
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "overlay sync report", value) }
     })
 }
 

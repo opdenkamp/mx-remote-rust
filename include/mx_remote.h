@@ -1571,6 +1571,46 @@
 #define MXR_V2IP_TESTCARD_SYNC_PENDING (1 << 5)
 
 /**
+ * The sync copies captions.
+ */
+#define MXR_OSD_SYNC_WHAT_CAPTIONS (1 << 0)
+
+/**
+ * Which logo is shown, and where.
+ */
+#define MXR_OSD_SYNC_WHAT_LOGO (1 << 1)
+
+/**
+ * Background colours.
+ */
+#define MXR_OSD_SYNC_WHAT_BACKGROUNDS (1 << 2)
+
+/**
+ * The logo images in the four slots.
+ */
+#define MXR_OSD_SYNC_WHAT_LOGO_SLOTS (1 << 3)
+
+/**
+ * The unit is taking the sync.
+ */
+#define MXR_OSD_SYNC_STATE_TAKING 0
+
+/**
+ * Every setting written and committed.
+ */
+#define MXR_OSD_SYNC_STATE_DONE 1
+
+/**
+ * Failed, for the reason the report gives.
+ */
+#define MXR_OSD_SYNC_STATE_FAILED 2
+
+/**
+ * Kept for later, as the unit's video processor is off in power save.
+ */
+#define MXR_OSD_SYNC_STATE_DEFERRED 3
+
+/**
  * The colour space a V2IP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -1797,6 +1837,16 @@
  * Bytes in `mxr_v2ip_sink_sdp_t.layout`, its NUL included.
  */
 #define MXR_V2IP_SDP_LAYOUT_LEN 8
+
+/**
+ * The logo slots an overlay sync can copy.
+ */
+#define MXR_OSD_SYNC_SLOTS 4
+
+/**
+ * Bytes in `mxr_osd_sync_report_t.reason`, its NUL included.
+ */
+#define MXR_OSD_SYNC_REASON_LEN 65
 
 /**
  * The power save levels a unit reports what it offers at.
@@ -4347,6 +4397,88 @@ typedef struct {
 } mxr_v2ip_sink_sdp_t;
 
 /**
+ * One logo slot, as an overlay sync describes it.
+ */
+typedef struct {
+  /**
+   * The PNG's size in bytes; zero empties the slot.
+   */
+  uint32_t bytes;
+  /**
+   * The PNG's CRC-32.
+   */
+  uint32_t crc32;
+  /**
+   * The size it is shown at, in percent.
+   */
+  uint8_t percent;
+} mxr_osd_sync_slot_t;
+
+/**
+ * The overlay sync a management unit last sent.
+ */
+typedef struct {
+  /**
+   * The sync's number at its source.
+   */
+  uint16_t seq;
+  /**
+   * The unit it is for, or zero for every unit.
+   */
+  mxr_uid_t target;
+  /**
+   * `MXR_OSD_SYNC_WHAT_*` bits.
+   */
+  uint8_t what;
+  /**
+   * The source's HTTP port, zero meaning 80.
+   */
+  uint16_t http_port;
+  /**
+   * The source's address as a dotted quad, `0.0.0.0` meaning the
+   * sender's.
+   */
+  char source_ip[MXR_IP_STRING_LEN];
+  /**
+   * How many settings follow.
+   */
+  uint16_t records;
+  /**
+   * The logo slots, filled when `what` has
+   * `MXR_OSD_SYNC_WHAT_LOGO_SLOTS` and zero otherwise. A unit fetches a
+   * slot whose size or CRC differs from
+   * `http://source_ip:http_port/osd-sync/slotN.png`, N being 1 to 4.
+   */
+  mxr_osd_sync_slot_t slots[MXR_OSD_SYNC_SLOTS];
+} mxr_osd_sync_t;
+
+/**
+ * How a unit last reported getting on with an overlay sync.
+ */
+typedef struct {
+  /**
+   * The sync it reports on, numbered by the source that sent it.
+   */
+  uint16_t seq;
+  /**
+   * `MXR_OSD_SYNC_STATE_*`.
+   */
+  uint8_t state;
+  /**
+   * The settings it wrote.
+   */
+  uint16_t written;
+  /**
+   * The settings it refused.
+   */
+  uint16_t refused;
+  /**
+   * Why it failed or refused any.
+   */
+  char reason[MXR_OSD_SYNC_REASON_LEN];
+} mxr_osd_sync_report_t;
+
+/**
  * What a unit offers at each power save level.
  */
 typedef struct {
@@ -6679,6 +6811,35 @@ mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
  * `mxr_v2ip_sink_sdp_t`.
  */
 mxr_result_t mxr_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_sink_sdp_t *out);
+
+/**
+ * Fills `out` with the overlay sync a management unit last sent.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until it has sent one. A new sync is
+ * announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_osd_sync_t`.
+ */
+mxr_result_t mxr_osd_sync(const mxr_remote_t *remote, mxr_uid_t uid, mxr_osd_sync_t *out);
+
+/**
+ * Fills `out` with how a unit last reported getting on with an overlay
+ * sync. Match it to the sync by `seq` and the sync's source.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the unit has reported. A change is
+ * announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_osd_sync_report_t`.
+ */
+mxr_result_t mxr_osd_sync_report(const mxr_remote_t *remote,
+                                 mxr_uid_t uid,
+                                 mxr_osd_sync_report_t *out);
 
 /**
  * Fills `out` with what a unit offers at each power save level, as its last

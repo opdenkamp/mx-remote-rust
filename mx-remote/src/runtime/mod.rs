@@ -379,6 +379,20 @@ impl Remote {
             .read(|state| state.device(uid)?.v2ip_sink_sdp.clone())
     }
 
+    /// The overlay sync a management unit last sent, `None` until it has
+    /// sent one.
+    pub fn osd_sync(&self, uid: DeviceUid) -> Option<OsdSync> {
+        self.shared
+            .read(|state| state.device(uid)?.osd_sync.clone())
+    }
+
+    /// How a unit last reported getting on with an overlay sync, `None` until
+    /// it has reported. Match it to the sync by `seq` and the sync's source.
+    pub fn osd_sync_report(&self, uid: DeviceUid) -> Option<OsdSyncReport> {
+        self.shared
+            .read(|state| state.device(uid)?.osd_sync_report.clone())
+    }
+
     /// The health and IP configuration a unit last reported, `None` until it
     /// has reported them.
     pub fn unit_status(&self, uid: DeviceUid) -> Option<UnitStatus> {

@@ -183,6 +183,15 @@ events! {
         /// The output reported something different about what it plays from
         /// a session description.
         V2ipSinkSdpChanged => on_v2ip_sink_sdp_changed(sdp: V2ipSinkSdp);
+        /// The management unit sent a new overlay sync.
+        OsdSyncChanged => on_osd_sync_changed(sync: OsdSync);
+        /// The unit reported something different about the overlay sync it
+        /// takes.
+        OsdSyncReportChanged => on_osd_sync_report_changed(report: OsdSyncReport);
+        /// The unit asked for an overlay sync, or for settings of one.
+        OsdSyncRequested => on_osd_sync_requested(request: OsdSyncRequest);
+        /// The management unit sent one setting of an overlay sync to a unit.
+        OsdSyncSettingReceived => on_osd_sync_setting_received(setting: OsdSyncSetting);
         /// The unit reported a different status.
         UnitStatusChanged => on_unit_status_changed(status: UnitStatus);
         /// The device reported a different PTP state, or stopped reporting

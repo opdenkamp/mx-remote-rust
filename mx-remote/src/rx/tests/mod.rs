@@ -5,6 +5,7 @@
 
 mod commands;
 mod handlers;
+mod osd;
 mod proto28;
 mod state;
 mod subsystems;

@@ -950,6 +950,26 @@ pub const MXR_V2IP_TESTCARD_TONE_PENDING: u8 = 1 << 4;
 /// A lip-sync change has yet to reach the video processor.
 pub const MXR_V2IP_TESTCARD_SYNC_PENDING: u8 = 1 << 5;
 
+// ---- overlay sync, in `mxr_osd_sync_t` and `mxr_osd_sync_report_t` ----
+
+/// The sync copies captions.
+pub const MXR_OSD_SYNC_WHAT_CAPTIONS: u8 = 1 << 0;
+/// Which logo is shown, and where.
+pub const MXR_OSD_SYNC_WHAT_LOGO: u8 = 1 << 1;
+/// Background colours.
+pub const MXR_OSD_SYNC_WHAT_BACKGROUNDS: u8 = 1 << 2;
+/// The logo images in the four slots.
+pub const MXR_OSD_SYNC_WHAT_LOGO_SLOTS: u8 = 1 << 3;
+
+/// The unit is taking the sync.
+pub const MXR_OSD_SYNC_STATE_TAKING: u8 = 0;
+/// Every setting written and committed.
+pub const MXR_OSD_SYNC_STATE_DONE: u8 = 1;
+/// Failed, for the reason the report gives.
+pub const MXR_OSD_SYNC_STATE_FAILED: u8 = 2;
+/// Kept for later, as the unit's video processor is off in power save.
+pub const MXR_OSD_SYNC_STATE_DEFERRED: u8 = 3;
+
 // ---- reading the packed words ----
 
 /// The remote-control type a bay status word carries in bits 16-19.

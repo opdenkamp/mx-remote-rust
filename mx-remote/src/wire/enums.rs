@@ -1401,3 +1401,106 @@ impl fmt::Display for MxrSignalType {
         }
     }
 }
+
+bitmask! {
+    /// The kinds of overlay setting an overlay sync copies.
+    OsdSyncWhat: u8 {
+        /// Captions.
+        CAPTIONS = 1 << 0;
+        /// Which logo is shown, and where.
+        LOGO = 1 << 1;
+        /// Background colours.
+        BACKGROUNDS = 1 << 2;
+        /// The logo images in the four slots.
+        LOGO_SLOTS = 1 << 3;
+    }
+}
+
+wire_enum! {
+    /// How far a unit has got with taking an overlay sync.
+    OsdSyncState: u8 {
+        /// Taking it.
+        TAKING = 0;
+        /// Every setting written and committed.
+        DONE = 1;
+        /// Failed, for the reason the report gives.
+        FAILED = 2;
+        /// Kept for later, as the unit's video processor is off in power
+        /// save.
+        DEFERRED = 3;
+    }
+}
+
+wire_enum! {
+    /// The output size an overlay setting applies at.
+    OsdSyncSize: u8 {
+        /// Large outputs, which every value but `SMALL` also means.
+        LARGE = 1;
+        /// Small outputs.
+        SMALL = 2;
+    }
+}
+
+wire_enum! {
+    /// How a caption's lines are aligned.
+    OsdCaptionAlign: u8 {
+        /// To the left.
+        LEFT = 0;
+        /// Centred.
+        CENTRE = 1;
+        /// To the right.
+        RIGHT = 2;
+        /// The layout's default.
+        DEFAULT = 0xFF;
+    }
+}
+
+wire_enum! {
+    /// How a caption's text is read.
+    OsdCaptionFormat: u8 {
+        /// As plain text.
+        PLAIN = 0;
+        /// As Markdown.
+        MARKDOWN = 1;
+        /// The layout's default.
+        DEFAULT = 0xFF;
+    }
+}
+
+bitmask! {
+    /// The caption fields an overlay setting gives. A field left out keeps
+    /// what the unit has.
+    OsdCaptionField: u16 {
+        /// The font.
+        FONT = 1 << 0;
+        /// The size.
+        SIZE = 1 << 1;
+        /// The horizontal position.
+        X = 1 << 2;
+        /// The vertical position.
+        Y = 1 << 3;
+        /// The alignment.
+        ALIGN = 1 << 4;
+        /// The format.
+        FORMAT = 1 << 5;
+        /// The colour.
+        COLOUR = 1 << 6;
+        /// The wrap width.
+        WRAP = 1 << 7;
+        /// The text.
+        TEXT = 1 << 8;
+    }
+}
+
+bitmask! {
+    /// The logo fields an overlay setting gives. A field left out keeps what
+    /// the unit has.
+    OsdLogoField: u16 {
+        /// Which logo.
+        LOGO = 1 << 0;
+        /// The horizontal position.
+        X = 1 << 1;
+        /// The vertical position.
+        Y = 1 << 2;
+    }
+}

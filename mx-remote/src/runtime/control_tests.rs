@@ -3629,3 +3629,41 @@ fn a_bay_snapshot_carries_its_inputs_content() {
         }]
     );
 }
+
+/// The last overlay sync a management unit sent, and the last report a unit
+/// gave, are kept per device.
+#[test]
+fn an_overlay_sync_and_its_report_are_kept_per_device() {
+    let f = Fixture::new();
+    let (manager, unit) = (uid_n(151), uid_n(152));
+    f.feed(
+        manager,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "Manager", "MG0002", "4.8.0", DeviceFeature::MANAGER),
+    );
+    f.everything(unit, PROTOCOL_VERSION, "OS0001");
+    let header = |kind: u8, target: DeviceUid| {
+        let mut p = vec![2, kind, 0x34, 0x12];
+        p.extend_from_slice(target.as_bytes());
+        p
+    };
+    let mut sync = header(0, DeviceUid::ZERO);
+    sync.resize(80, 0);
+    sync[20] = 1;
+    f.feed(manager, op::V2IP_OSD_SYNC, &sync);
+    let mut report = header(3, unit);
+    report.resize(90, 0);
+    report[20] = 1;
+    f.feed(unit, op::V2IP_OSD_SYNC, &report);
+
+    let sync = f.remote.osd_sync(manager).expect("no sync was kept");
+    assert_eq!(
+        (sync.seq, sync.what),
+        (0x1234, crate::wire::OsdSyncWhat::CAPTIONS)
+    );
+    let report = f.remote.osd_sync_report(unit).expect("no report was kept");
+    assert_eq!(report.seq, 0x1234);
+    assert_eq!(report.state, crate::wire::OsdSyncState::DONE);
+    assert_eq!(f.remote.osd_sync(unit), None);
+    assert_eq!(f.remote.osd_sync_report(manager), None);
+}

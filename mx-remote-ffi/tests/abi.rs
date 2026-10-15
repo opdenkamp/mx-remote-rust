@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 32] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 34] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -593,6 +593,18 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             core_bits(&enums, "MultiviewerSource"),
             &[],
             5,
+        ),
+        (
+            "MXR_OSD_SYNC_WHAT_",
+            core_bits(&enums, "OsdSyncWhat"),
+            &[],
+            4,
+        ),
+        (
+            "MXR_OSD_SYNC_STATE_",
+            core_bits(&enums, "OsdSyncState"),
+            &[],
+            4,
         ),
     ];
 
@@ -1432,4 +1444,28 @@ fn bay_content_of_a_bay_never_heard_from_is_not_found() {
 
     // SAFETY: the handle came from mxr_remote_new and is freed once.
     unsafe { mxr_remote_free(handle) };
+}
+
+#[test]
+fn an_overlay_sync_of_a_device_never_heard_from_is_not_found() {
+    let remote = client(c"abi-osd", c"00000024.00000000.00000000.000000ae");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_osd_sync(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut sync = std::mem::MaybeUninit::<mxr_osd_sync_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_osd_sync(remote, uid_n(9), sync.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_osd_sync_report(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut report = std::mem::MaybeUninit::<mxr_osd_sync_report_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_osd_sync_report(remote, uid_n(9), report.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(remote) };
 }
