@@ -419,7 +419,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 26] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 32] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -509,6 +509,42 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             core_bits(&enums, "V2ipTestcardFlag"),
             &[],
             6,
+        ),
+        (
+            "MXR_V2IP_SDP_FLAG_",
+            core_bits(&enums, "V2ipSdpFlag"),
+            &[],
+            3,
+        ),
+        (
+            "MXR_V2IP_SDP_ENCODING_",
+            core_bits(&enums, "V2ipSdpEncoding"),
+            &[],
+            4,
+        ),
+        (
+            "MXR_V2IP_SDP_MEDIA_CLOCK_",
+            core_bits(&enums, "V2ipSdpMediaClock"),
+            &[],
+            3,
+        ),
+        (
+            "MXR_V2IP_SDP_REF_CLOCK_",
+            core_bits(&enums, "V2ipSdpRefClock"),
+            &[],
+            4,
+        ),
+        (
+            "MXR_V2IP_SDP_CLOCK_MODE_",
+            core_bits(&enums, "V2ipSdpClockMode"),
+            &[],
+            3,
+        ),
+        (
+            "MXR_V2IP_SDP_CLOCK_STATE_",
+            core_bits(&enums, "V2ipSdpClockState"),
+            &[],
+            7,
         ),
         (
             "MXR_UNIT_",
@@ -930,6 +966,45 @@ fn the_ptp_message_calls_check_their_arguments_first() {
         mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
         "a PTP message bit with no values"
     );
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// The session description calls answer a caller's mistake as an argument
+/// error and a device never heard from as not found, before anything is sent.
+#[test]
+fn the_sdp_calls_check_their_arguments_first() {
+    let remote = client(c"abi-sdp", c"00000022.00000000.00000000.000000ac");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_sink_sdp(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_sink_sdp_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_sink_sdp(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: a live handle; a null description is what is under test.
+    let rc = unsafe { mxr_play_v2ip_sdp(remote, uid_n(9), ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no description");
+    // SAFETY: a live handle and a NUL-terminated string.
+    let rc = unsafe { mxr_play_v2ip_sdp(remote, uid_n(9), c"".as_ptr()) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "an empty description"
+    );
+    // SAFETY: a live handle and a NUL-terminated string.
+    let calls = unsafe {
+        [
+            mxr_play_v2ip_sdp(remote, uid_n(9), c"v=0".as_ptr()),
+            mxr_stop_v2ip_sdp(remote, uid_n(9)),
+            mxr_set_v2ip_sdp_screen(remote, uid_n(9), 1),
+            mxr_request_v2ip_sink_sdp(remote, uid_n(9)),
+        ]
+    };
+    assert_eq!(calls, [mxr_result_t::MXR_ERR_NOT_FOUND; 4]);
 
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };

@@ -21,9 +21,9 @@ use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, RcSettings, StreamKind, TopologyEntry, UnitStatus,
     UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings, V2ipDeviceStats, V2ipFpgaFeature,
-    V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipStreamSource, V2ipStreamSources, V2ipTestSync,
-    V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus,
-    MULTIVIEWER_INPUTS,
+    V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipSinkSdp, V2ipStreamSource, V2ipStreamSources,
+    V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats,
+    V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -1442,6 +1442,101 @@ pub unsafe extern "C" fn mxr_v2ip_ptp_messages(
             .map(|s: V2ipDeviceSettings| s.ptp_messages.into());
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "device settings", value) }
+    })
+}
+
+/// The longest session description a V2IP output takes, in bytes.
+pub const MXR_V2IP_SDP_MAX: usize = 65535;
+/// Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.
+pub const MXR_V2IP_SDP_NAME_LEN: usize = 48;
+/// Bytes in `mxr_v2ip_sink_sdp_t.layout`, its NUL included.
+pub const MXR_V2IP_SDP_LAYOUT_LEN: usize = 8;
+
+const _: () = assert!(MXR_V2IP_SDP_MAX == mx_remote::V2IP_SDP_MAX);
+
+/// What a V2IP output plays from a session description, as it last reported
+/// it. The stream's fields are zero while it plays none.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_sink_sdp_t {
+    /// `MXR_V2IP_SDP_FLAG_*` bits.
+    pub flags: u8,
+    /// What the output shows while it plays audio alone.
+    pub screen: u8,
+    /// `MXR_V2IP_SDP_ENCODING_*`.
+    pub encoding: u8,
+    /// The channel count.
+    pub channels: u8,
+    /// The RTP payload type.
+    pub payload_type: u8,
+    /// `MXR_V2IP_SDP_MEDIA_CLOCK_*`.
+    pub media_clock: u8,
+    /// `MXR_V2IP_SDP_REF_CLOCK_*`.
+    pub ref_clock: u8,
+    /// `MXR_V2IP_SDP_CLOCK_MODE_*`, with `MXR_V2IP_SDP_FLAG_CLOCK`.
+    pub clock_mode: u8,
+    /// `MXR_V2IP_SDP_CLOCK_STATE_*`, with `MXR_V2IP_SDP_FLAG_CLOCK`.
+    pub clock_state: u8,
+    /// The destination UDP port.
+    pub port: u16,
+    /// The sample rate, in Hz.
+    pub rate_hz: u32,
+    /// The media clock offset.
+    pub media_clock_offset: u32,
+    /// The multicast group, as a dotted quad.
+    pub group: [c_char; MXR_IP_STRING_LEN],
+    /// The session name.
+    pub name: [c_char; MXR_V2IP_SDP_NAME_LEN],
+    /// The channel grouping it plays, empty without one.
+    pub layout: [c_char; MXR_V2IP_SDP_LAYOUT_LEN],
+}
+
+/// Fills `out` with what a V2IP output last reported playing from a session
+/// description.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the output has reported; it does when
+/// that changes, at least once a minute, and when asked with
+/// `mxr_request_v2ip_sink_sdp()`. A change is announced through
+/// `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_sink_sdp_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_sink_sdp(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_sink_sdp_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r.remote.v2ip_sink_sdp(uid.into()).map(|s: V2ipSinkSdp| {
+            let mut out = mxr_v2ip_sink_sdp_t {
+                flags: s.flags.bits(),
+                screen: s.screen,
+                encoding: s.encoding.to_wire(),
+                channels: s.channels,
+                payload_type: s.payload_type,
+                media_clock: s.media_clock.to_wire(),
+                ref_clock: s.ref_clock.to_wire(),
+                clock_mode: s.clock_mode.to_wire(),
+                clock_state: s.clock_state.to_wire(),
+                port: s.port,
+                rate_hz: s.rate_hz,
+                media_clock_offset: s.media_clock_offset,
+                group: [0; MXR_IP_STRING_LEN],
+                name: [0; MXR_V2IP_SDP_NAME_LEN],
+                layout: [0; MXR_V2IP_SDP_LAYOUT_LEN],
+            };
+            put_ip(&mut out.group, Some(s.group));
+            put_str(&mut out.name, &s.name);
+            put_str(&mut out.layout, &s.layout);
+            out
+        });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "session description status", value) }
     })
 }
 

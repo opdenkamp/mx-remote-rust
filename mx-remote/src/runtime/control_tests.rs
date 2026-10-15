@@ -2846,6 +2846,92 @@ fn a_ptp_message_write_carries_its_block() {
     assert!(f.tap.frames().is_empty(), "a refused write was sent");
 }
 
+/// A session description goes out in 1 KB pages, each naming the output and
+/// saying where it sits in the whole; the commands without one are the header
+/// alone. All are stamped 0x2E.
+#[test]
+fn a_session_description_goes_out_in_pages() {
+    let f = Fixture::new();
+    let uid = uid_n(237);
+    f.everything(uid, 0x2E, "SD0001");
+    f.connect();
+
+    let sdp: String = (0..2500).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+    f.tap.clear();
+    f.remote.play_v2ip_sdp(uid, &sdp).expect("sent");
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 3);
+    let mut joined = Vec::new();
+    for (i, frame) in frames.iter().enumerate() {
+        assert_eq!(&frame[20..22], &op::V2IP_SINK_SDP.0.to_le_bytes());
+        assert_eq!(&frame[2..4], &0x2Eu16.to_le_bytes(), "the stamp");
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(&p[..16], uid.as_bytes(), "the output");
+        assert_eq!(&p[16..20], &[1, 0, 0, 0], "a page");
+        let len = [1024u16, 1024, 452][i];
+        assert_eq!(&p[20..22], &2500u16.to_le_bytes(), "the whole");
+        assert_eq!(&p[22..24], &((i * 1024) as u16).to_le_bytes(), "the offset");
+        assert_eq!(&p[24..26], &len.to_le_bytes(), "the page");
+        assert_eq!(&p[26..28], &[0, 0]);
+        assert_eq!(p.len(), 28 + usize::from(len));
+        joined.extend_from_slice(&p[28..]);
+    }
+    assert_eq!(joined, sdp.as_bytes());
+
+    let header = |f: &Fixture| {
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        let p = frame[HEADER_LEN..].to_vec();
+        assert_eq!(p.len(), 20);
+        assert_eq!(&p[..16], uid.as_bytes());
+        [p[16], p[17], p[18], p[19]]
+    };
+    f.remote.stop_v2ip_sdp(uid).expect("sent");
+    assert_eq!(header(&f), [2, 0, 0, 0], "stop");
+    f.remote.set_v2ip_sdp_screen(uid, 0xC3).expect("sent");
+    assert_eq!(header(&f), [3, 0xC3, 0, 0], "screen");
+    f.remote.request_v2ip_sink_sdp(uid).expect("sent");
+    assert_eq!(header(&f), [4, 0, 0, 0], "request");
+}
+
+/// A description goes only to a V2IP output new enough to take it, and one
+/// no output could take is refused before anything is sent.
+#[test]
+fn a_session_description_the_output_would_not_take_is_refused() {
+    let f = Fixture::new();
+    let old = uid_n(238);
+    f.everything(old, 0x2D, "SD0002");
+    assert!(refused(&f.remote.stop_v2ip_sdp(old)));
+    assert!(refused(&f.remote.play_v2ip_sdp(old, "v=0")));
+
+    let matrix = uid_n(239);
+    f.feed(
+        matrix,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x2E,
+            "FF88",
+            "SD0003",
+            "4.8.0",
+            DeviceFeature::VIDEO_ROUTING,
+        ),
+    );
+    assert!(matches!(
+        f.remote.play_v2ip_sdp(matrix, "v=0"),
+        Err(ControlError::Unsupported(_))
+    ));
+
+    let unit = uid_n(240);
+    f.everything(unit, 0x2E, "SD0004");
+    f.tap.clear();
+    for sdp in [String::new(), "x".repeat(65536)] {
+        assert!(matches!(
+            f.remote.play_v2ip_sdp(unit, &sdp),
+            Err(ControlError::InvalidRequest(_))
+        ));
+    }
+    assert!(f.tap.frames().is_empty(), "a refused description was sent");
+}
+
 /// Settings for every device go out as the bare settings block, to everyone,
 /// and change nothing here until a device reports them.
 #[test]

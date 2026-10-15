@@ -752,6 +752,62 @@ pub const MXR_V2IP_SETTING_PTP_ANNOUNCE_TIMEOUT: u32 = 1 << 22;
 /// The DSCP of the PTP messages, in `dscp`.
 pub const MXR_V2IP_SETTING_PTP_DSCP: u32 = 1 << 23;
 
+// ---- what a V2IP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
+
+/// The output plays a stream from a description.
+pub const MXR_V2IP_SDP_FLAG_ACTIVE: u8 = 1 << 0;
+/// And nothing else, as no video is routed to it.
+pub const MXR_V2IP_SDP_FLAG_AUDIO_ONLY: u8 = 1 << 1;
+/// `clock_mode` and `clock_state` hold the video processor's answer.
+pub const MXR_V2IP_SDP_FLAG_CLOCK: u8 = 1 << 2;
+
+/// No encoding.
+pub const MXR_V2IP_SDP_ENCODING_NONE: u8 = 0;
+/// 16-bit linear PCM.
+pub const MXR_V2IP_SDP_ENCODING_L16: u8 = 1;
+/// 24-bit linear PCM.
+pub const MXR_V2IP_SDP_ENCODING_L24: u8 = 2;
+/// AM824.
+pub const MXR_V2IP_SDP_ENCODING_AM824: u8 = 3;
+
+/// No media clock given.
+pub const MXR_V2IP_SDP_MEDIA_CLOCK_NONE: u8 = 0;
+/// Direct, at an offset from the reference clock.
+pub const MXR_V2IP_SDP_MEDIA_CLOCK_DIRECT: u8 = 1;
+/// The sender's.
+pub const MXR_V2IP_SDP_MEDIA_CLOCK_SENDER: u8 = 2;
+
+/// No reference clock given.
+pub const MXR_V2IP_SDP_REF_CLOCK_NONE: u8 = 0;
+/// PTP.
+pub const MXR_V2IP_SDP_REF_CLOCK_PTP: u8 = 1;
+/// A traceable clock.
+pub const MXR_V2IP_SDP_REF_CLOCK_TRACEABLE: u8 = 2;
+/// The sender's local MAC.
+pub const MXR_V2IP_SDP_REF_CLOCK_LOCAL_MAC: u8 = 3;
+
+/// Timed by arrival.
+pub const MXR_V2IP_SDP_CLOCK_MODE_ARRIVAL: u8 = 0;
+/// Timed by PTP.
+pub const MXR_V2IP_SDP_CLOCK_MODE_PTP: u8 = 1;
+/// Timed by the sender.
+pub const MXR_V2IP_SDP_CLOCK_MODE_SENDER: u8 = 2;
+
+/// Idle.
+pub const MXR_V2IP_SDP_CLOCK_STATE_IDLE: u8 = 0;
+/// Running its servo.
+pub const MXR_V2IP_SDP_CLOCK_STATE_SERVO: u8 = 1;
+/// Aligning.
+pub const MXR_V2IP_SDP_CLOCK_STATE_ALIGNING: u8 = 2;
+/// Timed.
+pub const MXR_V2IP_SDP_CLOCK_STATE_TIMED: u8 = 3;
+/// Parked.
+pub const MXR_V2IP_SDP_CLOCK_STATE_PARKED: u8 = 4;
+/// Playing untimed.
+pub const MXR_V2IP_SDP_CLOCK_STATE_UNTIMED: u8 = 5;
+/// The timing is not supported.
+pub const MXR_V2IP_SDP_CLOCK_STATE_UNSUPPORTED: u8 = 6;
+
 // ---- V2IP power save levels ----
 
 /// No level.

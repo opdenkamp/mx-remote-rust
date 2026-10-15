@@ -1420,6 +1420,94 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_settings(
     })
 }
 
+/// Has a V2IP output play the stream a session description describes.
+///
+/// The description goes out in pages of up to 1 KB, and the output plays it
+/// once the last page is in. It takes them only from its mesh controller or a
+/// management application, which this client announces itself as. Nothing
+/// acknowledges the pages: `mxr_v2ip_sink_sdp()` reads what the output
+/// reports next. `MXR_ERR_INVALID_ARGUMENT` for a null or empty description or
+/// one longer than `MXR_V2IP_SDP_MAX` bytes, `MXR_ERR_UNSUPPORTED` for a device
+/// that is not a V2IP output and `MXR_ERR_PROTOCOL_TOO_OLD` for one below
+/// protocol 0x2E, sending nothing in each case.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `sdp` is
+/// null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_play_v2ip_sdp(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    sdp: *const c_char,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees a NUL-terminated string or null.
+        let text = match unsafe { req_str(sdp) } {
+            Ok(text) => text,
+            Err(code) => return code,
+        };
+        from_control(r.remote.play_v2ip_sdp(device.into(), text))
+    })
+}
+
+/// Stops the stream a V2IP output plays from a session description. As
+/// `mxr_play_v2ip_sdp()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_stop_v2ip_sdp(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.stop_v2ip_sdp(device.into()))
+    })
+}
+
+/// Sets what a V2IP output shows while it plays audio alone. As
+/// `mxr_play_v2ip_sdp()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_sdp_screen(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    screen: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_sdp_screen(device.into(), screen))
+    })
+}
+
+/// Asks a V2IP output what it plays from a session description now. As
+/// `mxr_play_v2ip_sdp()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_v2ip_sink_sdp(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_v2ip_sink_sdp(device.into()))
+    })
+}
+
 /// Clears a unit's current system status. As `mxr_upgrade_unit_fpga()`.
 ///
 /// # Safety

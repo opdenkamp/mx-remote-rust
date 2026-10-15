@@ -232,6 +232,50 @@ pub(crate) fn build_unit_command(
     p
 }
 
+/// Frame types of `V2IP_SINK_SDP` (0x52), the byte behind the output's uid.
+pub(crate) mod sdp_type {
+    pub(crate) const PAGE: u8 = 1;
+    pub(crate) const STOP: u8 = 2;
+    pub(crate) const SCREEN: u8 = 3;
+    pub(crate) const REQUEST: u8 = 4;
+}
+
+/// The most bytes of a session description one `V2IP_SINK_SDP` page carries.
+pub(crate) const SDP_PAGE_LEN: usize = 1024;
+
+/// Builds a `V2IP_SINK_SDP` (0x52) command without a description: the
+/// output's uid, the type at 16, its value at 17 and two reserved bytes.
+pub(crate) fn build_sink_sdp_command(target: DeviceUid, kind: u8, value: u8) -> Vec<u8> {
+    let mut p = Vec::with_capacity(20);
+    p.extend_from_slice(target.as_bytes());
+    p.extend_from_slice(&[kind, value, 0, 0]);
+    p
+}
+
+/// Builds the `V2IP_SINK_SDP` (0x52) pages that hand an output a session
+/// description, in order: each the page header of
+/// [`build_sink_sdp_command`], then the description's length, the page's
+/// offset into it and the page's length, all u16, two reserved bytes, and at
+/// most [`SDP_PAGE_LEN`] bytes of it. The output starts a description at
+/// offset 0 and plays it once the last byte has arrived.
+///
+/// `sdp` is at most 65535 bytes, which the caller checks.
+pub(crate) fn build_sink_sdp_pages(target: DeviceUid, sdp: &[u8]) -> Vec<Vec<u8>> {
+    let total = sdp.len() as u16;
+    sdp.chunks(SDP_PAGE_LEN)
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut p = build_sink_sdp_command(target, sdp_type::PAGE, 0);
+            p.extend_from_slice(&total.to_le_bytes());
+            p.extend_from_slice(&((i * SDP_PAGE_LEN) as u16).to_le_bytes());
+            p.extend_from_slice(&(chunk.len() as u16).to_le_bytes());
+            p.extend_from_slice(&[0, 0]);
+            p.extend_from_slice(chunk);
+            p
+        })
+        .collect()
+}
+
 /// Builds the `BAY_EDID_PROFILE` (0x34) payload.
 pub(crate) fn build_edid_profile(target: DeviceUid, profile: EdidProfile) -> Vec<u8> {
     let mut p = Vec::with_capacity(24);

@@ -8,9 +8,10 @@ use std::net::Ipv4Addr;
 
 use crate::wire::{
     DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipPowerSaveLevel, V2ipPtpFlag,
-    V2ipPtpLock, V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
-    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
+    V2ipPtpLock, V2ipPtpMode, V2ipSdpClockMode, V2ipSdpClockState, V2ipSdpEncoding, V2ipSdpFlag,
+    V2ipSdpMediaClock, V2ipSdpRefClock, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode,
+    V2ipVlanFlag, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX,
+    V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
 };
 
 /// Which of a V2IP device's streams an address describes.
@@ -879,6 +880,54 @@ impl V2ipDeviceSettings {
             valid = valid.without(V2ipDeviceSetting::PTP_DSCP);
         }
         Self { valid, ..self }
+    }
+}
+
+/// The longest session description a V2IP output takes, in bytes.
+pub const V2IP_SDP_MAX: usize = 65535;
+
+/// What a V2IP output plays from a session description, as it last reported
+/// it. The stream's fields are zero while it plays none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct V2ipSinkSdp {
+    /// The report's flags.
+    pub flags: V2ipSdpFlag,
+    /// What the output shows while it plays audio alone, as the wire value.
+    pub screen: u8,
+    /// The sample encoding.
+    pub encoding: V2ipSdpEncoding,
+    /// The channel count.
+    pub channels: u8,
+    /// The RTP payload type.
+    pub payload_type: u8,
+    /// Where the media clock comes from.
+    pub media_clock: V2ipSdpMediaClock,
+    /// The reference clock.
+    pub ref_clock: V2ipSdpRefClock,
+    /// What the video processor times the stream by, when `flags` has
+    /// [`CLOCK`](V2ipSdpFlag::CLOCK).
+    pub clock_mode: V2ipSdpClockMode,
+    /// How far the video processor has got with the timing, when `flags` has
+    /// [`CLOCK`](V2ipSdpFlag::CLOCK).
+    pub clock_state: V2ipSdpClockState,
+    /// The destination UDP port.
+    pub port: u16,
+    /// The sample rate, in Hz.
+    pub rate_hz: u32,
+    /// The media clock offset.
+    pub media_clock_offset: u32,
+    /// The multicast group.
+    pub group: Ipv4Addr,
+    /// The session name (`s=`).
+    pub name: String,
+    /// The channel grouping it plays, empty without one.
+    pub layout: String,
+}
+
+impl V2ipSinkSdp {
+    /// Whether the output plays a stream from a description.
+    pub const fn is_active(&self) -> bool {
+        self.flags.has(V2ipSdpFlag::ACTIVE)
     }
 }
 

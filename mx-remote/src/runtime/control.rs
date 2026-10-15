@@ -36,22 +36,23 @@ use crate::types::{
     V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
     V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation, build_rc_action,
-    build_rc_key, build_set_bay_name, build_set_volume, build_stats_request, build_target_only,
-    build_time_zone, build_unit_command, build_v2ip_device_settings,
-    build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_settings_all,
-    build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan, build_video_wall, mesh_op,
-    mv_cmd_payload, mv_sub, op, testcard_part, testcard_type, Addressee, BayUid, DeviceFeature,
-    DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
-    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError,
-    StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature,
-    V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
-    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX,
+    build_rc_key, build_set_bay_name, build_set_volume, build_sink_sdp_command,
+    build_sink_sdp_pages, build_stats_request, build_target_only, build_time_zone,
+    build_unit_command, build_v2ip_device_settings, build_v2ip_manual_source_switch,
+    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard,
+    build_v2ip_vlan, build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, sdp_type,
+    testcard_part, testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
+    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
+    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
+    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
+    UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel,
+    V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN,
+    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX,
     V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
@@ -173,6 +174,15 @@ const AUTO_ADDRESSES_PROTOCOL: u16 = 0x2B;
 
 fn device_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
     state.device(uid).ok_or(ControlError::UnknownDevice(uid))
+}
+
+/// The device behind `uid`, once it is known to be a V2IP output.
+fn sdp_sink_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
+    let device = device_of(state, uid)?;
+    if !device.is_v2ip_sink() {
+        return Err(ControlError::Unsupported("the device is not a V2IP output"));
+    }
+    Ok(device)
 }
 
 /// The device behind `uid`, once it is known to be a multiviewer.
@@ -888,6 +898,67 @@ impl Remote {
                 Addressee::device(d),
                 op::MESH_OPERATION,
                 build_mesh_operation(mesh_op::AUTO_ADDRESSES, d.uid),
+            ))
+        })
+    }
+
+    // ---- V2IP session descriptions ----
+
+    /// Has a V2IP output play the stream a session description describes.
+    ///
+    /// The description goes out in pages of up to 1 KB, and the output plays
+    /// it once the last page is in. It takes them only from its mesh
+    /// controller or a management application, which this client announces
+    /// itself as. Nothing acknowledges the pages: [`Remote::v2ip_sink_sdp`]
+    /// reads what the output reports next. Refused for an empty description
+    /// or one longer than [`V2IP_SDP_MAX`](crate::V2IP_SDP_MAX) bytes, for a
+    /// device that is not a V2IP output, and for one below protocol 0x2E.
+    pub fn play_v2ip_sdp(&self, device: DeviceUid, sdp: &str) -> Result<(), ControlError> {
+        if sdp.is_empty() || sdp.len() > V2IP_SDP_MAX {
+            return Err(ControlError::InvalidRequest(
+                "a session description of 1 to 65535 bytes",
+            ));
+        }
+        let (to, pages) = self.shared.read(|state| {
+            let d = sdp_sink_of(state, device)?;
+            Ok::<_, ControlError>((
+                Addressee::device(d),
+                build_sink_sdp_pages(d.uid, sdp.as_bytes()),
+            ))
+        })?;
+        for page in pages {
+            self.shared.send(&to, op::V2IP_SINK_SDP, &page)?;
+        }
+        Ok(())
+    }
+
+    /// Stops the stream a V2IP output plays from a session description. As
+    /// [`Remote::play_v2ip_sdp`].
+    pub fn stop_v2ip_sdp(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.sink_sdp_command(device, sdp_type::STOP, 0)
+    }
+
+    /// Sets what a V2IP output shows while it plays audio alone, as the wire
+    /// value. As [`Remote::play_v2ip_sdp`].
+    pub fn set_v2ip_sdp_screen(&self, device: DeviceUid, screen: u8) -> Result<(), ControlError> {
+        self.sink_sdp_command(device, sdp_type::SCREEN, screen)
+    }
+
+    /// Asks a V2IP output what it plays from a session description now,
+    /// rather than at its next report, which comes at least once a minute.
+    /// As [`Remote::play_v2ip_sdp`].
+    pub fn request_v2ip_sink_sdp(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.sink_sdp_command(device, sdp_type::REQUEST, 0)
+    }
+
+    /// The one send behind the session description commands.
+    fn sink_sdp_command(&self, device: DeviceUid, kind: u8, value: u8) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = sdp_sink_of(state, device)?;
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_SINK_SDP,
+                build_sink_sdp_command(d.uid, kind, value),
             ))
         })
     }

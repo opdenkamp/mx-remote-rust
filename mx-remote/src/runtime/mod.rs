@@ -372,6 +372,13 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_vlan)
     }
 
+    /// What a V2IP output last reported playing from a session description,
+    /// `None` until it has reported.
+    pub fn v2ip_sink_sdp(&self, uid: DeviceUid) -> Option<V2ipSinkSdp> {
+        self.shared
+            .read(|state| state.device(uid)?.v2ip_sink_sdp.clone())
+    }
+
     /// The health and IP configuration a unit last reported, `None` until it
     /// has reported them.
     pub fn unit_status(&self, uid: DeviceUid) -> Option<UnitStatus> {

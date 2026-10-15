@@ -12,8 +12,8 @@ use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
     RcSettings, TimeZone, TopologyEntry, UnitStatus, V2ipDeviceSettings, V2ipDeviceStats,
-    V2ipPtpState, V2ipScalingSettings, V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
-    VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
+    V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources, V2ipTestcard,
+    V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
 
@@ -135,6 +135,8 @@ pub(crate) struct Device {
     pub(crate) v2ip_vlan: Option<V2ipVlan>,
     /// The health and IP configuration the unit last reported.
     pub(crate) unit_status: Option<UnitStatus>,
+    /// What the output last reported playing from a session description.
+    pub(crate) v2ip_sink_sdp: Option<V2ipSinkSdp>,
     /// The PTP state the device last reported about itself, `None` while it
     /// reports none.
     pub(crate) v2ip_ptp: Option<V2ipPtpState>,
@@ -187,6 +189,7 @@ impl Device {
             v2ip_vlan: None,
             v2ip_ptp: None,
             unit_status: None,
+            v2ip_sink_sdp: None,
             v2ip_testcard: None,
             v2ip_stats: None,
             setup_done: None,
@@ -1087,6 +1090,17 @@ impl Device {
         ev.push(Event::UnitStatusChanged {
             device: self.uid,
             status,
+        });
+    }
+
+    pub(crate) fn set_v2ip_sink_sdp(&mut self, sdp: V2ipSinkSdp, ev: &mut Vec<Event>) {
+        if self.v2ip_sink_sdp.as_ref() == Some(&sdp) {
+            return;
+        }
+        self.v2ip_sink_sdp = Some(sdp.clone());
+        ev.push(Event::V2ipSinkSdpChanged {
+            device: self.uid,
+            sdp,
         });
     }
 

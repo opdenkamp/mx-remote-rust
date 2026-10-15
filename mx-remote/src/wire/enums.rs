@@ -390,6 +390,91 @@ bitmask! {
 }
 
 bitmask! {
+    /// The flags of what a V2IP output plays from a session description.
+    V2ipSdpFlag: u8 {
+        /// The output plays a stream from a description.
+        ACTIVE = 1 << 0;
+        /// And nothing else, as no video is routed to it.
+        AUDIO_ONLY = 1 << 1;
+        /// The clock mode and state hold the video processor's answer.
+        CLOCK = 1 << 2;
+    }
+}
+
+wire_enum! {
+    /// The sample encoding of a stream a V2IP output plays from a description.
+    V2ipSdpEncoding: u8 {
+        /// None.
+        NONE = 0;
+        /// 16-bit linear PCM.
+        L16 = 1;
+        /// 24-bit linear PCM.
+        L24 = 2;
+        /// AM824.
+        AM824 = 3;
+    }
+}
+
+wire_enum! {
+    /// Where a described stream's media clock comes from.
+    V2ipSdpMediaClock: u8 {
+        /// None given.
+        NONE = 0;
+        /// Direct, at an offset from the reference clock.
+        DIRECT = 1;
+        /// The sender's.
+        SENDER = 2;
+    }
+}
+
+wire_enum! {
+    /// The reference clock a described stream names.
+    V2ipSdpRefClock: u8 {
+        /// None given.
+        NONE = 0;
+        /// PTP.
+        PTP = 1;
+        /// A traceable clock.
+        TRACEABLE = 2;
+        /// The sender's local MAC.
+        LOCAL_MAC = 3;
+    }
+}
+
+wire_enum! {
+    /// What a V2IP output's video processor times a described stream by.
+    V2ipSdpClockMode: u8 {
+        /// Arrival.
+        ARRIVAL = 0;
+        /// PTP.
+        PTP = 1;
+        /// The sender.
+        SENDER = 2;
+    }
+}
+
+wire_enum! {
+    /// How far a V2IP output's video processor has got with a described
+    /// stream's timing.
+    V2ipSdpClockState: u8 {
+        /// Idle.
+        IDLE = 0;
+        /// Running its servo.
+        SERVO = 1;
+        /// Aligning.
+        ALIGNING = 2;
+        /// Timed.
+        TIMED = 3;
+        /// Parked.
+        PARKED = 4;
+        /// Playing untimed.
+        UNTIMED = 5;
+        /// The timing is not supported.
+        UNSUPPORTED = 6;
+    }
+}
+
+bitmask! {
     /// The flags of a unit's status report.
     UnitFlag {
         /// A changed setting takes effect after a reboot.

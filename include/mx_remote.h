@@ -1175,6 +1175,126 @@
 #define MXR_V2IP_SETTING_PTP_DSCP (1 << 23)
 
 /**
+ * The output plays a stream from a description.
+ */
+#define MXR_V2IP_SDP_FLAG_ACTIVE (1 << 0)
+
+/**
+ * And nothing else, as no video is routed to it.
+ */
+#define MXR_V2IP_SDP_FLAG_AUDIO_ONLY (1 << 1)
+
+/**
+ * `clock_mode` and `clock_state` hold the video processor's answer.
+ */
+#define MXR_V2IP_SDP_FLAG_CLOCK (1 << 2)
+
+/**
+ * No encoding.
+ */
+#define MXR_V2IP_SDP_ENCODING_NONE 0
+
+/**
+ * 16-bit linear PCM.
+ */
+#define MXR_V2IP_SDP_ENCODING_L16 1
+
+/**
+ * 24-bit linear PCM.
+ */
+#define MXR_V2IP_SDP_ENCODING_L24 2
+
+/**
+ * AM824.
+ */
+#define MXR_V2IP_SDP_ENCODING_AM824 3
+
+/**
+ * No media clock given.
+ */
+#define MXR_V2IP_SDP_MEDIA_CLOCK_NONE 0
+
+/**
+ * Direct, at an offset from the reference clock.
+ */
+#define MXR_V2IP_SDP_MEDIA_CLOCK_DIRECT 1
+
+/**
+ * The sender's.
+ */
+#define MXR_V2IP_SDP_MEDIA_CLOCK_SENDER 2
+
+/**
+ * No reference clock given.
+ */
+#define MXR_V2IP_SDP_REF_CLOCK_NONE 0
+
+/**
+ * PTP.
+ */
+#define MXR_V2IP_SDP_REF_CLOCK_PTP 1
+
+/**
+ * A traceable clock.
+ */
+#define MXR_V2IP_SDP_REF_CLOCK_TRACEABLE 2
+
+/**
+ * The sender's local MAC.
+ */
+#define MXR_V2IP_SDP_REF_CLOCK_LOCAL_MAC 3
+
+/**
+ * Timed by arrival.
+ */
+#define MXR_V2IP_SDP_CLOCK_MODE_ARRIVAL 0
+
+/**
+ * Timed by PTP.
+ */
+#define MXR_V2IP_SDP_CLOCK_MODE_PTP 1
+
+/**
+ * Timed by the sender.
+ */
+#define MXR_V2IP_SDP_CLOCK_MODE_SENDER 2
+
+/**
+ * Idle.
+ */
+#define MXR_V2IP_SDP_CLOCK_STATE_IDLE 0
+
+/**
+ * Running its servo.
+ */
+#define MXR_V2IP_SDP_CLOCK_STATE_SERVO 1
+
+/**
+ * Aligning.
+ */
+#define MXR_V2IP_SDP_CLOCK_STATE_ALIGNING 2
+
+/**
+ * Timed.
+ */
+#define MXR_V2IP_SDP_CLOCK_STATE_TIMED 3
+
+/**
+ * Parked.
+ */
+#define MXR_V2IP_SDP_CLOCK_STATE_PARKED 4
+
+/**
+ * Playing untimed.
+ */
+#define MXR_V2IP_SDP_CLOCK_STATE_UNTIMED 5
+
+/**
+ * The timing is not supported.
+ */
+#define MXR_V2IP_SDP_CLOCK_STATE_UNSUPPORTED 6
+
+/**
  * No level.
  */
 #define MXR_V2IP_POWER_SAVE_LEVEL_NONE 0
@@ -1652,6 +1772,21 @@
  * Bytes in `mxr_unit_status_t.status_message`, its NUL included.
  */
 #define MXR_UNIT_STATUS_MESSAGE_LEN 49
+
+/**
+ * The longest session description a V2IP output takes, in bytes.
+ */
+#define MXR_V2IP_SDP_MAX 65535
+
+/**
+ * Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.
+ */
+#define MXR_V2IP_SDP_NAME_LEN 48
+
+/**
+ * Bytes in `mxr_v2ip_sink_sdp_t.layout`, its NUL included.
+ */
+#define MXR_V2IP_SDP_LAYOUT_LEN 8
 
 /**
  * The power save levels a unit reports what it offers at.
@@ -4118,6 +4253,73 @@ typedef struct {
 } mxr_unit_status_t;
 
 /**
+ * What a V2IP output plays from a session description, as it last reported
+ * it. The stream's fields are zero while it plays none.
+ */
+typedef struct {
+  /**
+   * `MXR_V2IP_SDP_FLAG_*` bits.
+   */
+  uint8_t flags;
+  /**
+   * What the output shows while it plays audio alone.
+   */
+  uint8_t screen;
+  /**
+   * `MXR_V2IP_SDP_ENCODING_*`.
+   */
+  uint8_t encoding;
+  /**
+   * The channel count.
+   */
+  uint8_t channels;
+  /**
+   * The RTP payload type.
+   */
+  uint8_t payload_type;
+  /**
+   * `MXR_V2IP_SDP_MEDIA_CLOCK_*`.
+   */
+  uint8_t media_clock;
+  /**
+   * `MXR_V2IP_SDP_REF_CLOCK_*`.
+   */
+  uint8_t ref_clock;
+  /**
+   * `MXR_V2IP_SDP_CLOCK_MODE_*`, with `MXR_V2IP_SDP_FLAG_CLOCK`.
+   */
+  uint8_t clock_mode;
+  /**
+   * `MXR_V2IP_SDP_CLOCK_STATE_*`, with `MXR_V2IP_SDP_FLAG_CLOCK`.
+   */
+  uint8_t clock_state;
+  /**
+   * The destination UDP port.
+   */
+  uint16_t port;
+  /**
+   * The sample rate, in Hz.
+   */
+  uint32_t rate_hz;
+  /**
+   * The media clock offset.
+   */
+  uint32_t media_clock_offset;
+  /**
+   * The multicast group, as a dotted quad.
+   */
+  char group[MXR_IP_STRING_LEN];
+  /**
+   * The session name.
+   */
+  char name[MXR_V2IP_SDP_NAME_LEN];
+  /**
+   * The channel grouping it plays, empty without one.
+   */
+  char layout[MXR_V2IP_SDP_LAYOUT_LEN];
+} mxr_v2ip_sink_sdp_t;
+
+/**
  * What a unit offers at each power save level.
  */
 typedef struct {
@@ -5356,6 +5558,55 @@ mxr_result_t mxr_set_all_v2ip_ptp_settings(const mxr_remote_t *remote,
                                            const mxr_v2ip_ptp_settings_t *ptp);
 
 /**
+ * Has a V2IP output play the stream a session description describes.
+ *
+ * The description goes out in pages of up to 1 KB, and the output plays it
+ * once the last page is in. It takes them only from its mesh controller or a
+ * management application, which this client announces itself as. Nothing
+ * acknowledges the pages: `mxr_v2ip_sink_sdp()` reads what the output
+ * reports next. `MXR_ERR_INVALID_ARGUMENT` for a null or empty description or
+ * one longer than `MXR_V2IP_SDP_MAX` bytes, `MXR_ERR_UNSUPPORTED` for a device
+ * that is not a V2IP output and `MXR_ERR_PROTOCOL_TOO_OLD` for one below
+ * protocol 0x2E, sending nothing in each case.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `sdp` is
+ * null or a NUL-terminated string.
+ */
+mxr_result_t mxr_play_v2ip_sdp(const mxr_remote_t *remote, mxr_uid_t device, const char *sdp);
+
+/**
+ * Stops the stream a V2IP output plays from a session description. As
+ * `mxr_play_v2ip_sdp()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_stop_v2ip_sdp(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Sets what a V2IP output shows while it plays audio alone. As
+ * `mxr_play_v2ip_sdp()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_sdp_screen(const mxr_remote_t *remote, mxr_uid_t device, uint8_t screen);
+
+/**
+ * Asks a V2IP output what it plays from a session description now. As
+ * `mxr_play_v2ip_sdp()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
  * Clears a unit's current system status. As `mxr_upgrade_unit_fpga()`.
  *
  * # Safety
@@ -6366,6 +6617,22 @@ mxr_result_t mxr_v2ip_power_save_level(const mxr_remote_t *remote, mxr_uid_t uid
 mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
                                    mxr_uid_t uid,
                                    mxr_v2ip_ptp_messages_t *out);
+
+/**
+ * Fills `out` with what a V2IP output last reported playing from a session
+ * description.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the output has reported; it does when
+ * that changes, at least once a minute, and when asked with
+ * `mxr_request_v2ip_sink_sdp()`. A change is announced through
+ * `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_sink_sdp_t`.
+ */
+mxr_result_t mxr_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_sink_sdp_t *out);
 
 /**
  * Fills `out` with what a unit offers at each power save level, as its last

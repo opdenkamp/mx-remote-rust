@@ -21,9 +21,10 @@ use crate::types::{
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
     RcAction, RcKey, UnitCommandFlag, UnitCommandKind, UnitFlag, UnitPowerSave, V2ipDeviceSetting,
-    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern,
-    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION, V2IP_DSCP_DEFAULT,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipSdpClockMode,
+    V2ipSdpClockState, V2ipSdpEncoding, V2ipSdpFlag, V2ipSdpMediaClock, V2ipSdpRefClock,
+    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, PROTOCOL_VERSION,
+    V2IP_DSCP_DEFAULT, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, hello_payload, poisoned, uid_n, vlan_block, Cfg};
@@ -3437,4 +3438,75 @@ fn a_unit_reports_what_it_offers_at_each_power_save_level() {
         s.power_save_level(V2ipPowerSaveLevel::NONE),
         UnitPowerSave::NONE
     );
+}
+
+/// A V2IP output's session description status: the header naming the output
+/// with type 0, then every field distinct - a port with a high byte, a rate
+/// above 0xFFFF, a group whose four bytes differ - and a name and layout that
+/// fill their fields with no terminator.
+fn sink_sdp_report(output: DeviceUid) -> Vec<u8> {
+    let mut p = output.as_bytes().to_vec();
+    p.extend_from_slice(&[0, 0, 0xA5, 0x5A]);
+    p.extend_from_slice(&[0x07, 2, 2, 8, 97, 1, 1, 1, 3, 0xEE]);
+    p.extend_from_slice(&5004u16.to_le_bytes());
+    p.extend_from_slice(&96_000u32.to_le_bytes());
+    p.extend_from_slice(&0x0102_0304u32.to_le_bytes());
+    p.extend_from_slice(&[239, 1, 2, 3]);
+    p.extend_from_slice(&[b'n'; 48]);
+    p.extend_from_slice(&[b'l'; 8]);
+    p
+}
+
+/// What an output plays from a session description is read field by field.
+#[test]
+fn a_sink_sdp_report_is_read_field_by_field() {
+    let mut h = command_device(132);
+    let sender = h.sender;
+    h.feed_proto(op::V2IP_SINK_SDP, 0x2E, &sink_sdp_report(sender));
+
+    let s = h
+        .device()
+        .v2ip_sink_sdp
+        .clone()
+        .expect("no status was read");
+    assert!(s.is_active());
+    assert!(s.flags.has(V2ipSdpFlag::AUDIO_ONLY) && s.flags.has(V2ipSdpFlag::CLOCK));
+    assert_eq!((s.screen, s.channels, s.payload_type), (2, 8, 97));
+    assert_eq!(s.encoding, V2ipSdpEncoding::L24);
+    assert_eq!(s.media_clock, V2ipSdpMediaClock::DIRECT);
+    assert_eq!(s.ref_clock, V2ipSdpRefClock::PTP);
+    assert_eq!(s.clock_mode, V2ipSdpClockMode::PTP);
+    assert_eq!(s.clock_state, V2ipSdpClockState::TIMED);
+    assert_eq!(s.port, 5004);
+    assert_eq!(s.rate_hz, 96_000);
+    assert_eq!(s.media_clock_offset, 0x0102_0304);
+    assert_eq!(s.group, Ipv4Addr::new(239, 1, 2, 3));
+    assert_eq!(s.name, "n".repeat(47));
+    assert_eq!(s.layout, "l".repeat(7));
+}
+
+/// A command for an output is no report about anyone, and a short report is
+/// read as far as it goes.
+#[test]
+fn only_a_sink_sdp_status_is_a_report() {
+    let mut h = command_device(133);
+    let sender = h.sender;
+    let mut command = sink_sdp_report(sender);
+    command[16] = 4; // a status request
+    h.feed_proto(op::V2IP_SINK_SDP, 0x2E, &command);
+    assert!(
+        h.device().v2ip_sink_sdp.is_none(),
+        "a command was taken as a report"
+    );
+
+    let report = sink_sdp_report(sender);
+    h.feed_proto(op::V2IP_SINK_SDP, 0x2E, &report[..20 + 12]);
+    let s = h
+        .device()
+        .v2ip_sink_sdp
+        .clone()
+        .expect("no status was read");
+    assert_eq!(s.port, 5004);
+    assert_eq!(s.rate_hz, 0);
+    assert_eq!(s.name, "");
 }

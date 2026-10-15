@@ -180,6 +180,9 @@ events! {
         V2ipDeviceSettingsChanged => on_v2ip_device_settings_changed(settings: V2ipDeviceSettings);
         /// The device reported a different VLAN configuration.
         V2ipVlanChanged => on_v2ip_vlan_changed(vlan: V2ipVlan);
+        /// The output reported something different about what it plays from
+        /// a session description.
+        V2ipSinkSdpChanged => on_v2ip_sink_sdp_changed(sdp: V2ipSinkSdp);
         /// The unit reported a different status.
         UnitStatusChanged => on_unit_status_changed(status: UnitStatus);
         /// The device reported a different PTP state, or stopped reporting
