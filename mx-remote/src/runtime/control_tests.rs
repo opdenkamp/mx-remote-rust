@@ -3611,3 +3611,21 @@ fn auto_addresses_is_refused_where_it_would_be_ignored() {
     ));
     assert!(f.tap.frames().is_empty(), "a refused operation was sent");
 }
+
+/// What an input's source shows reaches the bay's snapshot.
+#[test]
+fn a_bay_snapshot_carries_its_inputs_content() {
+    let f = Fixture::new();
+    let unit = uid_n(150);
+    f.everything(unit, PROTOCOL_VERSION, "CT0001");
+    f.feed(unit, op::BAY_CONTENT, b"\x01\x00name\0BBC One\0");
+
+    let info = f.remote.bay(BayUid::new(unit, 1)).expect("no bay");
+    assert_eq!(
+        info.content,
+        [crate::types::BayContentField {
+            key: "name".to_owned(),
+            value: "BBC One".to_owned(),
+        }]
+    );
+}

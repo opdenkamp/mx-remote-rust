@@ -302,6 +302,9 @@ events! {
         EncoderDisabledChanged => on_encoder_disabled_changed(disabled: bool);
         /// The bay's V2IP decoder was enabled or disabled.
         DecoderDisabledChanged => on_decoder_disabled_changed(disabled: bool);
+        /// The input's source reported different content, empty when it
+        /// shows none.
+        ContentChanged => on_content_changed(content: Vec<BayContentField>);
     }
     bay_and_device {
         /// The bay was linked to a bay on another device.

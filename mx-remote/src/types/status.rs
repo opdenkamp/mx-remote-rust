@@ -291,6 +291,26 @@ impl fmt::Display for FirmwareVersion {
     }
 }
 
+/// The most bytes in a [`BayContentField::key`].
+pub const BAY_CONTENT_KEY_MAX: usize = 31;
+
+/// The most bytes in a [`BayContentField::value`].
+pub const BAY_CONTENT_VALUE_MAX: usize = 255;
+
+/// One thing an input's source is showing, such as its channel name.
+///
+/// A source reports these as named values in the order they are meant to be
+/// shown. The names are open-ended: a driver for a new kind of source adds
+/// its own without any other unit changing, so a caller passes on names it
+/// does not know.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BayContentField {
+    /// What the value is, such as `name` or `number`.
+    pub key: String,
+    /// The value, as text.
+    pub value: String,
+}
+
 /// Whether an output bay mirrors another device's output, and which one.
 ///
 /// The default is "not mirroring".

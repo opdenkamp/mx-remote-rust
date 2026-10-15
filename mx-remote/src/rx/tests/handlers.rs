@@ -1197,3 +1197,125 @@ fn a_captured_time_reads_as_seconds_since_1970() {
         "a short frame was read"
     );
 }
+
+/// A `BAY_CONTENT` report: the input's port as a little-endian `u16`, then
+/// each field as a NUL-terminated key and value.
+fn content_report(port: u16, fields: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut p = port.to_le_bytes().to_vec();
+    for (key, value) in fields {
+        p.extend_from_slice(key);
+        p.push(0);
+        p.extend_from_slice(value);
+        p.push(0);
+    }
+    p
+}
+
+/// The content of an input, as `(key, value)` pairs.
+fn content_of(h: &Harness, port: u16) -> Vec<(String, String)> {
+    h.bay(port)
+        .content
+        .iter()
+        .map(|f| (f.key.clone(), f.value.clone()))
+        .collect()
+}
+
+fn pairs(fields: &[(&str, &str)]) -> Vec<(String, String)> {
+    fields
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
+/// An input's content is read in the order its unit sends it, onto the port
+/// the frame names, and a change is announced once.
+#[test]
+fn bay_content_is_read_in_order_onto_its_port() {
+    let mut h = bay_state(140);
+    let report = content_report(3, &[(b"name", b"BBC One"), (b"number", b"101")]);
+    h.feed(op::BAY_CONTENT, &report);
+
+    let expected = pairs(&[("name", "BBC One"), ("number", "101")]);
+    assert_eq!(content_of(&h, 3), expected);
+    assert!(content_of(&h, 1).is_empty());
+    let changed = |h: &Harness| {
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::ContentChanged { bay, .. } if bay.port == 3))
+            .count()
+    };
+    assert_eq!(changed(&h), 1);
+
+    h.feed(op::BAY_CONTENT, &report);
+    assert_eq!(changed(&h), 1, "an unchanged report was announced");
+
+    // The port's high byte is part of it: 0x0103 is not input 3.
+    h.feed(
+        op::BAY_CONTENT,
+        &content_report(0x0103, &[(b"name", b"ITV")]),
+    );
+    assert_eq!(content_of(&h, 3), expected);
+
+    // A report with no fields withdraws what the input showed.
+    h.feed(op::BAY_CONTENT, &content_report(3, &[]));
+    assert!(content_of(&h, 3).is_empty());
+    assert_eq!(changed(&h), 2);
+
+    // Too short to name a port.
+    h.feed(op::BAY_CONTENT, &[3]);
+    assert!(content_of(&h, 3).is_empty());
+}
+
+/// A field is cleaned as a receiving unit cleans it, dropped only when that
+/// leaves nothing or repeats a key, and the rest of the report is still read.
+#[test]
+fn bay_content_is_cleaned_as_a_unit_cleans_it() {
+    let mut h = bay_state(141);
+    let v = |n: usize, tail: &[u8]| [vec![b'v'; n], tail.to_vec()].concat();
+    let (long_key, long, cut2, cut3, cut4, whole) = (
+        [b'K'; 32],
+        v(300, b""),
+        v(254, "\u{e9}".as_bytes()),
+        v(253, "\u{20ac}".as_bytes()),
+        v(252, "\u{1f600}".as_bytes()),
+        v(253, "\u{e9}".as_bytes()),
+    );
+    let mut report = content_report(
+        1,
+        &[
+            (b"name", b"BBC One"),
+            (b"", b"no key"),
+            (b"empty", b""),
+            (b"name", b"duplicate"),
+            (b"na me", b"the same key once cleaned"),
+            (b"\"\\", b"a key of nothing allowed"),
+            (b"ctl", b"a\tb\"c\\d\x7F"),
+            (&long_key, b"long key"),
+            (b"long", &long),
+            (b"cut2", &cut2),
+            (b"cut3", &cut3),
+            (b"cut4", &cut4),
+            (b"whole", &whole),
+            (b"bad", b"a\xFFb"),
+            (b"sub_id-2", b"kept"),
+        ],
+    );
+    report.extend_from_slice(b"cut\0short");
+    h.feed(op::BAY_CONTENT, &report);
+
+    let utf8 = |b: Vec<u8>| String::from_utf8(b).expect("a test value");
+    let key31 = "K".repeat(31);
+    let expected = [
+        ("name", "BBC One".to_owned()),
+        ("ctl", "abcd".to_owned()),
+        (key31.as_str(), "long key".to_owned()),
+        ("long", "v".repeat(255)),
+        ("cut2", "v".repeat(254)),
+        ("cut3", "v".repeat(253)),
+        ("cut4", "v".repeat(252)),
+        ("whole", utf8(whole.clone())),
+        ("sub_id-2", "kept".to_owned()),
+    ];
+    let expected: Vec<(&str, &str)> = expected.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(content_of(&h, 1), pairs(&expected));
+}

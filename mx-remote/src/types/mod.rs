@@ -28,9 +28,9 @@ pub use commands::{
 pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{MacAddress, NetworkPortStatus, UtpCableStatus, UtpLinkErrors, VctStatus};
 pub use status::{
-    ArcStatus, BayAudioDetails, BayMirrorStatus, BaySignalDetails, ConnectStatus, DeviceStatus,
-    FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TimeZone, TopologyEntry,
-    VolumeMuteStatus, VOLUME_UNCHANGED,
+    ArcStatus, BayAudioDetails, BayContentField, BayMirrorStatus, BaySignalDetails, ConnectStatus,
+    DeviceStatus, FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TimeZone, TopologyEntry,
+    VolumeMuteStatus, BAY_CONTENT_KEY_MAX, BAY_CONTENT_VALUE_MAX, VOLUME_UNCHANGED,
 };
 pub use unit::{
     UnitCommand, UnitNetConfig, UnitStatus, UNIT_MAX_TEMPERATURES, UNIT_POWER_SAVE_LEVELS,

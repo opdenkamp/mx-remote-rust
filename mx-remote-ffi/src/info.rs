@@ -17,8 +17,9 @@
 use std::ffi::c_char;
 
 use mx_remote::{
-    AmpZoneSettings, ArcStatus, BayAudioDetails, BayInfo, BaySignalDetails, DeviceInfo,
-    DeviceStatus, PowerStatus, AMP_EQ_BANDS,
+    AmpZoneSettings, ArcStatus, BayAudioDetails, BayContentField, BayInfo, BaySignalDetails,
+    DeviceInfo, DeviceStatus, PowerStatus, AMP_EQ_BANDS, BAY_CONTENT_KEY_MAX,
+    BAY_CONTENT_VALUE_MAX,
 };
 
 use crate::abi::{
@@ -58,6 +59,39 @@ pub const MXR_MESSAGE_LEN: usize = 128;
 pub const MXR_AMP_EQ_BANDS: usize = 5;
 
 const _: () = assert!(MXR_AMP_EQ_BANDS == AMP_EQ_BANDS);
+
+/// Bytes in `mxr_bay_content_field_t.key`, its NUL included.
+pub const MXR_BAY_CONTENT_KEY_LEN: usize = 32;
+/// Bytes in `mxr_bay_content_field_t.value`, its NUL included.
+pub const MXR_BAY_CONTENT_VALUE_LEN: usize = 256;
+
+const _: () = assert!(MXR_BAY_CONTENT_KEY_LEN == BAY_CONTENT_KEY_MAX + 1);
+const _: () = assert!(MXR_BAY_CONTENT_VALUE_LEN == BAY_CONTENT_VALUE_MAX + 1);
+
+/// One thing an input's source is showing, such as its channel name.
+///
+/// Keys are open-ended: a driver for a new kind of source adds its own, so
+/// pass on a key you do not know rather than drop it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_bay_content_field_t {
+    /// What the value is, such as `name` or `number`.
+    pub key: [c_char; MXR_BAY_CONTENT_KEY_LEN],
+    /// The value, as UTF-8 text.
+    pub value: [c_char; MXR_BAY_CONTENT_VALUE_LEN],
+}
+
+impl From<&BayContentField> for mxr_bay_content_field_t {
+    fn from(f: &BayContentField) -> Self {
+        let mut out = Self {
+            key: [0; MXR_BAY_CONTENT_KEY_LEN],
+            value: [0; MXR_BAY_CONTENT_VALUE_LEN],
+        };
+        put_str(&mut out.key, &f.key);
+        put_str(&mut out.value, &f.value);
+        out
+    }
+}
 
 /// The high-level state of a device on the network.
 #[repr(i32)]
@@ -866,6 +900,52 @@ pub unsafe extern "C" fn mxr_bay_filtered(
         };
         // SAFETY: the caller guarantees cap writable elements at out.
         unsafe { copy_into(&info.filtered, out, cap) }
+    })
+}
+
+/// Writes what the source on an input is showing, in the order it is meant
+/// to be shown, and returns how many fields there are.
+///
+/// Zero means the input shows nothing now. Its unit reports this whenever it
+/// changes, announced through `on_bay_update`, and keeps it while the source
+/// has no signal, so check `mxr_bay_info_t.signal_detected` before showing
+/// it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` is null or points at `cap`
+/// writable [`mxr_bay_content_field_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_bay_content(
+    remote: *const mxr_remote_t,
+    bay: mxr_bay_uid_t,
+    out: *mut mxr_bay_content_field_t,
+    cap: usize,
+) -> usize {
+    guard(0, || {
+        // SAFETY: the caller guarantees a live handle or null.
+        let Some(r) = (unsafe { remote.as_ref() }) else {
+            fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the client handle is null",
+            );
+            return 0;
+        };
+        let Some(info) = r.remote.bay(bay.into()) else {
+            fail(
+                mxr_result_t::MXR_ERR_NOT_FOUND,
+                &format!("no bay {}", mx_remote::BayUid::from(bay)),
+            );
+            return 0;
+        };
+        if !out.is_null() {
+            // SAFETY: the caller guarantees cap writable elements at out.
+            let dst = unsafe { std::slice::from_raw_parts_mut(out, cap) };
+            for (slot, field) in dst.iter_mut().zip(&info.content) {
+                *slot = field.into();
+            }
+        }
+        info.content.len()
     })
 }
 

@@ -1403,3 +1403,33 @@ fn the_time_calls_check_their_arguments_first() {
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };
 }
+
+#[test]
+fn bay_content_of_a_bay_never_heard_from_is_not_found() {
+    // SAFETY: a null handle is what is under test; no buffer to write.
+    let count =
+        unsafe { mxr_bay_content(ptr::null(), mxr_bay_uid_t::default(), ptr::null_mut(), 0) };
+    assert_eq!(count, 0);
+    assert!(
+        last_error().contains("handle is null"),
+        "the failure did not name the handle: {}",
+        last_error()
+    );
+
+    let handle = client(c"abi-content", c"00000023.00000000.00000000.000000ad");
+    let mut out = [mxr_bay_content_field_t {
+        key: [0; MXR_BAY_CONTENT_KEY_LEN],
+        value: [0; MXR_BAY_CONTENT_VALUE_LEN],
+    }];
+    // SAFETY: a live handle and one writable field.
+    let count = unsafe { mxr_bay_content(handle, mxr_bay_uid_t::default(), out.as_mut_ptr(), 1) };
+    assert_eq!(count, 0);
+    assert!(
+        last_error().contains("no bay"),
+        "the failure did not say what was missing: {}",
+        last_error()
+    );
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(handle) };
+}

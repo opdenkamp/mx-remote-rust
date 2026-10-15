@@ -94,6 +94,7 @@ pub(crate) mod op {
     pub(crate) const V2IP_TESTCARD: Opcode = Opcode(0x4E);
     pub(crate) const SYS_UNIT_STATUS: Opcode = Opcode(0x4F);
     pub(crate) const SYS_UNIT_COMMAND: Opcode = Opcode(0x50);
+    pub(crate) const BAY_CONTENT: Opcode = Opcode(0x51);
     pub(crate) const V2IP_SINK_SDP: Opcode = Opcode(0x52);
 }
 
@@ -191,6 +192,7 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::V2IP_TESTCARD => 0x2B,
         op::SYS_UNIT_STATUS => 0x2C,
         op::SYS_UNIT_COMMAND => 0x2C,
+        op::BAY_CONTENT => 0x2D,
         op::V2IP_SINK_SDP => 0x2E,
         Opcode(_) => return None,
     })

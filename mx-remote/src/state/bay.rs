@@ -5,8 +5,8 @@
 
 use crate::event::Event;
 use crate::types::{
-    AmpZoneSettings, ArcStatus, BayMirrorStatus, BaySignalDetails, ConnectStatus, HiddenStatus,
-    PowerStatus, VolumeMuteStatus,
+    AmpZoneSettings, ArcStatus, BayContentField, BayMirrorStatus, BaySignalDetails, ConnectStatus,
+    HiddenStatus, PowerStatus, VolumeMuteStatus,
 };
 use crate::wire::{
     BayConfig, BayFeatures, BayStatus, BayUid, DeviceUid, EdidProfile, MxrSignalType, RcType,
@@ -55,6 +55,7 @@ pub(crate) struct Bay {
     pub(crate) mirror: BayMirrorStatus,
     pub(crate) audio_endpoint: Option<u8>,
     pub(crate) amp_settings: Option<AmpZoneSettings>,
+    pub(crate) content: Vec<BayContentField>,
 }
 
 impl Bay {
@@ -91,6 +92,7 @@ impl Bay {
             mirror: BayMirrorStatus::default(),
             audio_endpoint: None,
             amp_settings: None,
+            content: Vec::new(),
         }
     }
 
@@ -278,6 +280,17 @@ impl Bay {
         ev.push(Event::FilteredDevicesChanged {
             bay: self.uid(),
             filtered,
+        });
+    }
+
+    pub(crate) fn set_content(&mut self, content: Vec<BayContentField>, ev: &mut Vec<Event>) {
+        if self.content == content {
+            return;
+        }
+        self.content.clone_from(&content);
+        ev.push(Event::ContentChanged {
+            bay: self.uid(),
+            content,
         });
     }
 

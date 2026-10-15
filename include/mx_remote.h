@@ -1660,6 +1660,16 @@
 #define MXR_AMP_EQ_BANDS 5
 
 /**
+ * Bytes in `mxr_bay_content_field_t.key`, its NUL included.
+ */
+#define MXR_BAY_CONTENT_KEY_LEN 32
+
+/**
+ * Bytes in `mxr_bay_content_field_t.value`, its NUL included.
+ */
+#define MXR_BAY_CONTENT_VALUE_LEN 256
+
+/**
  * Bytes in one EDID: a base block and exactly one extension block.
  */
 #define MXR_EDID_LEN 256
@@ -2836,6 +2846,23 @@ typedef struct {
    */
   uint8_t coding;
 } mxr_audio_details_t;
+
+/**
+ * One thing an input's source is showing, such as its channel name.
+ *
+ * Keys are open-ended: a driver for a new kind of source adds its own, so
+ * pass on a key you do not know rather than drop it.
+ */
+typedef struct {
+  /**
+   * What the value is, such as `name` or `number`.
+   */
+  char key[MXR_BAY_CONTENT_KEY_LEN];
+  /**
+   * The value, as UTF-8 text.
+   */
+  char value[MXR_BAY_CONTENT_VALUE_LEN];
+} mxr_bay_content_field_t;
 
 /**
  * How a client finds the network.
@@ -6250,6 +6277,25 @@ size_t mxr_device_temperatures(const mxr_remote_t *remote, mxr_uid_t uid, uint8_
  * writable [`mxr_uid_t`].
  */
 size_t mxr_bay_filtered(const mxr_remote_t *remote, mxr_bay_uid_t bay, mxr_uid_t *out, size_t cap);
+
+/**
+ * Writes what the source on an input is showing, in the order it is meant
+ * to be shown, and returns how many fields there are.
+ *
+ * Zero means the input shows nothing now. Its unit reports this whenever it
+ * changes, announced through `on_bay_update`, and keeps it while the source
+ * has no signal, so check `mxr_bay_info_t.signal_detected` before showing
+ * it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable [`mxr_bay_content_field_t`].
+ */
+size_t mxr_bay_content(const mxr_remote_t *remote,
+                       mxr_bay_uid_t bay,
+                       mxr_bay_content_field_t *out,
+                       size_t cap);
 
 /**
  * Creates a client, without opening a socket yet.

@@ -12,8 +12,8 @@ use std::time::Instant;
 
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, ArcStatus, BayMirrorStatus, BaySignalDetails, DeviceStatus, PowerStatus,
-    VolumeMuteStatus,
+    AmpZoneSettings, ArcStatus, BayContentField, BayMirrorStatus, BaySignalDetails, DeviceStatus,
+    PowerStatus, VolumeMuteStatus,
 };
 use crate::wire::{
     BayFeatures, BayUid, DeviceFeature, DeviceUid, EdidProfile, MxrSignalType, RcType,
@@ -197,6 +197,11 @@ pub struct BayInfo {
     pub linked_bay: Option<BayUid>,
     /// The source device a V2IP bay maps to, or the zero uid.
     pub v2ip_uid: DeviceUid,
+    /// What the source on an input is showing, as its unit last reported.
+    ///
+    /// A unit reports this whenever it changes, and keeps it while the source
+    /// has no signal; check [`BayInfo::signal_detected`] before showing it.
+    pub content: Vec<BayContentField>,
 }
 
 impl BayInfo {
@@ -239,6 +244,7 @@ impl BayInfo {
             filtered: bay.filtered.clone(),
             linked_bay: state.linked_bay(bay.uid()),
             v2ip_uid: bay.v2ip_uid,
+            content: bay.content.clone(),
         }
     }
 }
