@@ -11,6 +11,9 @@ use crate::wire::BayUid;
 use super::handlers::u16_at;
 use super::Rx;
 
+/// The ports a unit reports content for are below this.
+const CONTENT_PORTS: u16 = 12;
+
 /// Applies the content a unit reports for one of its inputs.
 ///
 /// The input's port is a `u16` at 0, and every field behind it is a key and a
@@ -19,14 +22,16 @@ use super::Rx;
 ///
 /// Each field is cleaned as a receiving unit cleans it, so this client shows
 /// what a unit's own API would. A field that is empty once cleaned, or whose
-/// key an earlier field already gave, is dropped. So is one that is not
-/// UTF-8, which a unit passes on as bytes and a `String` cannot hold.
+/// key an earlier field already gave, is dropped.
 pub(super) fn bay_content(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
     if p.len() < 2 {
         return;
     }
     let port = u16_at(p, 0);
+    if port >= CONTENT_PORTS {
+        return;
+    }
     let mut content: Vec<BayContentField> = Vec::new();
     let mut strings = p[2..].split(|&b| b == 0);
     // `split` yields what follows the last NUL as one more piece, so a value
@@ -35,18 +40,14 @@ pub(super) fn bay_content(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         if strings.clone().next().is_none() {
             break;
         }
-        let key = clean(key, BAY_CONTENT_KEY_MAX, |b| {
-            b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
-        });
-        let mut value = clean(value, BAY_CONTENT_VALUE_MAX, |b| {
-            b >= 0x20 && b != 0x7F && b != b'"' && b != b'\\'
-        });
-        drop_cut_sequence(&mut value);
-        // Cleaning leaves a key ASCII, so only a value can fail to be UTF-8.
-        let key: String = key.into_iter().map(char::from).collect();
-        let Ok(value) = String::from_utf8(value) else {
-            continue;
-        };
+        let key: String = key
+            .iter()
+            .copied()
+            .filter(|&b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            .take(BAY_CONTENT_KEY_MAX)
+            .map(char::from)
+            .collect();
+        let value = clean_value(value);
         if key.is_empty() || value.is_empty() || content.iter().any(|f| f.key == key) {
             continue;
         }
@@ -57,27 +58,35 @@ pub(super) fn bay_content(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     }
 }
 
-/// The bytes `keep` allows, up to `max` of them.
-fn clean(raw: &[u8], max: usize, keep: impl Fn(u8) -> bool) -> Vec<u8> {
-    raw.iter().copied().filter(|&b| keep(b)).take(max).collect()
-}
-
-/// Removes a UTF-8 sequence the length limit cut short at the end of `s`.
-///
-/// The lead byte says how long its sequence is: 0xC0 and up two bytes, 0xE0
-/// and up three, 0xF0 and up four.
-fn drop_cut_sequence(s: &mut Vec<u8>) {
-    let tail = s.iter().rev().take_while(|&&b| b & 0xC0 == 0x80).count();
-    let Some(lead_at) = s.len().checked_sub(tail + 1) else {
-        return;
-    };
-    let need = match s[lead_at] {
-        b if b >= 0xF0 => 4,
-        b if b >= 0xE0 => 3,
-        b if b >= 0xC0 => 2,
-        _ => return,
-    };
-    if tail + 1 < need {
-        s.truncate(lead_at);
+/// Cleans a value as a unit does: control characters, `"` and `\` dropped,
+/// then every byte that is not part of a valid UTF-8 character, then the rest
+/// cut to [`BAY_CONTENT_VALUE_MAX`] bytes before a character that would not
+/// fit whole.
+fn clean_value(raw: &[u8]) -> String {
+    let kept: Vec<u8> = raw
+        .iter()
+        .copied()
+        .filter(|&b| b >= 0x20 && b != 0x7F && b != b'"' && b != b'\\')
+        .collect();
+    let mut out = String::new();
+    let mut rest = &kept[..];
+    while !rest.is_empty() {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                out.push_str(valid);
+                break;
+            }
+            Err(e) => {
+                let (valid, invalid) = rest.split_at(e.valid_up_to());
+                out.push_str(std::str::from_utf8(valid).unwrap_or_default());
+                rest = &invalid[e.error_len().unwrap_or(invalid.len())..];
+            }
+        }
     }
+    let mut end = out.len().min(BAY_CONTENT_VALUE_MAX);
+    while !out.is_char_boundary(end) {
+        end -= 1;
+    }
+    out.truncate(end);
+    out
 }

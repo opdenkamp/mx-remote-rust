@@ -1391,6 +1391,22 @@ fn bay_content_is_read_in_order_onto_its_port() {
     // Too short to name a port.
     h.feed(op::BAY_CONTENT, &[3]);
     assert!(content_of(&h, 3).is_empty());
+
+    // No unit has content for a port of 12 or above.
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            12,
+            0,
+            12,
+            "Input 13",
+            "",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
+    );
+    h.feed(op::BAY_CONTENT, &content_report(12, &[(b"name", b"ITV")]));
+    assert!(content_of(&h, 12).is_empty());
 }
 
 /// A field is cleaned as a receiving unit cleans it, dropped only when that
@@ -1424,6 +1440,11 @@ fn bay_content_is_cleaned_as_a_unit_cleans_it() {
             (b"cut4", &cut4),
             (b"whole", &whole),
             (b"bad", b"a\xFFb"),
+            (b"stray", b"\x80\x80x"),
+            (b"overlong", b"\xC0\xAFy"),
+            (b"surrogate", b"\xED\xA0\x80z"),
+            (b"short", b"\xE2\x82w"),
+            (b"none", b"\xFF\xFE"),
             (b"sub_id-2", b"kept"),
         ],
     );
@@ -1441,6 +1462,12 @@ fn bay_content_is_cleaned_as_a_unit_cleans_it() {
         ("cut3", "v".repeat(253)),
         ("cut4", "v".repeat(252)),
         ("whole", utf8(whole.clone())),
+        // Each byte that is not part of a valid character is dropped.
+        ("bad", "ab".to_owned()),
+        ("stray", "x".to_owned()),
+        ("overlong", "y".to_owned()),
+        ("surrogate", "z".to_owned()),
+        ("short", "w".to_owned()),
         ("sub_id-2", "kept".to_owned()),
     ];
     let expected: Vec<(&str, &str)> = expected.iter().map(|(k, v)| (*k, v.as_str())).collect();
