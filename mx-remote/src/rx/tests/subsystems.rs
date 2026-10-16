@@ -23,15 +23,19 @@ fn topology_parses() {
     let mut h = Harness::new(3);
     h.hello(0x27, "FF88", "TP0001", DeviceFeature::VIDEO_ROUTING);
 
-    let other = uid_n(8);
-    let mut rec = poisoned(20);
-    rec[0..16].copy_from_slice(other.as_bytes());
-    rec[16..20].copy_from_slice(&0xABCDu32.to_le_bytes());
-    h.feed(op::TOPOLOGY, &rec);
+    // Two entries, so the second shows where the first one ends.
+    let (one, two) = (uid_n(8), uid_n(9));
+    let mut p = poisoned(48);
+    p[0..16].copy_from_slice(one.as_bytes());
+    p[16..20].copy_from_slice(&0xABCDu32.to_le_bytes());
+    p[24..40].copy_from_slice(two.as_bytes());
+    p[40..44].copy_from_slice(&0x0102u32.to_le_bytes());
+    h.feed(op::TOPOLOGY, &p);
 
     let topo = &h.device().topology;
-    assert_eq!(topo.len(), 1);
-    assert_eq!((topo[0].uid, topo[0].mask), (other, 0xABCD));
+    assert_eq!(topo.len(), 2);
+    assert_eq!((topo[0].uid, topo[0].mask), (one, 0xABCD));
+    assert_eq!((topo[1].uid, topo[1].mask), (two, 0x0102));
 }
 
 #[test]

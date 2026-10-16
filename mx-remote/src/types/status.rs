@@ -327,12 +327,13 @@ impl BayMirrorStatus {
     }
 }
 
-/// One device in a topology report.
+/// One device a unit found behind its switch ports, in its topology report.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TopologyEntry {
     /// The device this entry describes.
     pub uid: crate::wire::DeviceUid,
-    /// Bitmask of the devices it is connected to.
+    /// The sender's switch ports this device's MAC address was learnt on, one
+    /// bit per port.
     pub mask: u32,
 }
 

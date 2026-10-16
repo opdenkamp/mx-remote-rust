@@ -1018,8 +1018,9 @@ pub(super) fn v2ip_testcard(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     }
 }
 
-/// Width of one entry in a topology report.
-const TOPOLOGY_ENTRY: usize = 20;
+/// Width of one entry in a topology report: a uid, the mask, and four bytes of
+/// padding that round the entry to a multiple of eight.
+const TOPOLOGY_ENTRY: usize = 24;
 
 pub(super) fn topology(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let topology: Vec<TopologyEntry> = rx

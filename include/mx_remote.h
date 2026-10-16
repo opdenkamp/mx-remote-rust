@@ -5082,7 +5082,7 @@ typedef struct {
 } mxr_network_port_t;
 
 /**
- * One device in a topology report.
+ * One device a unit found behind its switch ports, in its topology report.
  */
 typedef struct {
   /**
@@ -5090,7 +5090,8 @@ typedef struct {
    */
   mxr_uid_t uid;
   /**
-   * Bitmask of the devices it is connected to.
+   * The sender's switch ports this device's MAC address was learnt on, one
+   * bit per port.
    */
   uint32_t mask;
 } mxr_topology_entry_t;

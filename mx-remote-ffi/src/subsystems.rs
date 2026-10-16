@@ -645,13 +645,14 @@ pub struct mxr_network_port_t {
     pub cable_status: [mxr_cable_status_t; MXR_UTP_PAIRS],
 }
 
-/// One device in a topology report.
+/// One device a unit found behind its switch ports, in its topology report.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_topology_entry_t {
     /// The device this entry describes.
     pub uid: mxr_uid_t,
-    /// Bitmask of the devices it is connected to.
+    /// The sender's switch ports this device's MAC address was learnt on, one
+    /// bit per port.
     pub mask: u32,
 }
 
