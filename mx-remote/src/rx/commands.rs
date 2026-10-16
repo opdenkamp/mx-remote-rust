@@ -111,10 +111,11 @@ pub(super) fn edid(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 }
 
 /// Decodes `mxr_routing_change_request`. `mbay_port_id` is a `u16`, so the
-/// bays are two bytes each and `no_power_on` follows at 20.
+/// bays are two bytes each and `no_power_on` follows at 20. A unit takes
+/// either opcode only at 21 bytes or more, though the audio one does not
+/// read the last.
 fn routing_request(p: &[u8], audio_only: bool) -> Option<SetRouteRequest> {
-    let need = if audio_only { 20 } else { 21 };
-    if p.len() < need {
+    if p.len() < ROUTE_REQUEST_SIZE {
         return None;
     }
     Some(SetRouteRequest {
@@ -125,6 +126,9 @@ fn routing_request(p: &[u8], audio_only: bool) -> Option<SetRouteRequest> {
         audio_only,
     })
 }
+
+/// The shortest routing request a unit takes.
+const ROUTE_REQUEST_SIZE: usize = 21;
 
 pub(super) fn set_route(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     route_request(state, rx, ev, false);
@@ -262,6 +266,16 @@ pub(super) fn ir_transmit(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     if p.len() < TX_IR_HEADER + IR_TIMING_SIZE {
         return;
     }
+    // A unit blasts nothing from fewer than two timings, the first being a
+    // leading slot, or from a frame short of the timings it counts.
+    let meta = ir_meta(&p[24..33]);
+    let count = usize::from(meta.nb_timings);
+    let Some(timings) = p.get(TX_IR_HEADER..TX_IR_HEADER + count * IR_TIMING_SIZE) else {
+        return;
+    };
+    if count < 2 {
+        return;
+    }
     ev.push(Event::IrTransmitRequested {
         device,
         request: IrTransmitRequest {
@@ -269,8 +283,8 @@ pub(super) fn ir_transmit(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             local_mode: byte(p, 16),
             local_bay: byte(p, 17),
             timestamp: u32_at(p, 20),
-            meta: ir_meta(&p[24..33]),
-            timings: p[TX_IR_HEADER..].to_vec(),
+            meta,
+            timings: timings.to_vec(),
         },
     });
 }

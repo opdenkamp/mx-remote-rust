@@ -108,12 +108,18 @@ fn a_set_route_addresses_its_bays_as_u16() {
 fn an_audio_set_route_has_no_power_on_byte() {
     let mut h = command_device(41);
 
-    // AUDIO_SET_ROUTE addresses its target by serial like MX_SET_ROUTE, but its
-    // struct stops after the two bays.
-    let mut p = vec![0u8; 20];
+    // AUDIO_SET_ROUTE addresses its target by serial like MX_SET_ROUTE, and is
+    // as long, but a unit does not read the power-on byte.
+    let mut p = vec![0u8; 21];
     p[0..12].copy_from_slice(b"P9SN00000002");
     p[16..18].copy_from_slice(&4u16.to_le_bytes());
     p[18..20].copy_from_slice(&2u16.to_le_bytes());
+    p[20] = 1;
+    h.feed(op::AUDIO_SET_ROUTE, &p[..20]);
+    assert!(
+        !h.saw(|e| matches!(e, Event::SetRouteRequested { .. })),
+        "a unit drops one of 20 bytes"
+    );
     h.feed(op::AUDIO_SET_ROUTE, &p);
 
     let request = h
@@ -378,6 +384,24 @@ fn ir_transmit_timings_start_at_the_struct_size() {
         [1, 0, 2, 0, 3, 0],
         "the timings start at the struct size, not at the end of the last field"
     );
+
+    // The count says how many timings there are, not the frame's length; a
+    // unit blasts nothing from a frame short of them, or from one timing,
+    // which is only the leading slot.
+    for (count, taken) in [(2u16, true), (4, false), (1, false)] {
+        h.events.clear();
+        p[28..30].copy_from_slice(&count.to_le_bytes());
+        h.feed(op::RC_IR_TX, &p);
+        let got = h.events.iter().find_map(|e| match e {
+            Event::IrTransmitRequested { request, .. } => Some(request.timings.len()),
+            _ => None,
+        });
+        assert_eq!(
+            got,
+            taken.then_some(2 * usize::from(count)),
+            "{count} timings"
+        );
+    }
 }
 
 // ---- EDID ----
