@@ -12,7 +12,7 @@ use crate::types::{
 
 use crate::wire::audio_sub as sub;
 
-use super::handlers::stream_source;
+use super::handlers::{manages, stream_source};
 use super::Rx;
 
 /// The entry kinds in a features report. One endpoint is described by several
@@ -25,6 +25,9 @@ mod entry {
 }
 
 /// Where the entry list starts, and how wide each entry is.
+/// Where a links report's block starts, behind the command header.
+const LINKS_AT: usize = 20;
+
 const ENTRY_BASE: usize = 36;
 const ENTRY_SIZE: usize = 16;
 
@@ -128,13 +131,16 @@ fn has_links(rx: &Rx<'_>, count: u16) -> bool {
 /// Width of one entry in a link block.
 const LINK_ENTRY: usize = 20;
 
-fn links(rx: &Rx<'_>, idx: usize) -> Vec<AudioLink> {
+/// Reads the link block at `idx`: a count, two reserved bytes, then the links.
+/// A unit takes none from a block too short for the links it counts.
+fn links(rx: &Rx<'_>, idx: usize) -> Option<Vec<AudioLink>> {
     let f = &rx.frame;
-    let Some(count) = f.u16(idx) else {
-        return Vec::new();
-    };
+    let count = usize::from(f.u16(idx)?);
+    if f.payload().len() < idx + 4 + count * LINK_ENTRY {
+        return None;
+    }
     let mut out = Vec::new();
-    for index in 0..usize::from(count) {
+    for index in 0..count {
         let base = 4 + idx + index * LINK_ENTRY;
         let Some(endpoint) = f.u8(base) else {
             break;
@@ -149,19 +155,39 @@ fn links(rx: &Rx<'_>, idx: usize) -> Vec<AudioLink> {
             linked_device,
         });
     }
-    out
+    Some(out)
 }
 
+/// Reads a `V2IP_AUDIO` frame. Its header names a unit at 4: for a features
+/// or links report the sender itself, as a unit reports only its own, and
+/// for a command the unit that must act, which takes it only from
+/// management.
 pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(op) = rx.frame.u16(0) else {
         return;
     };
+    let sender = rx.sender();
+    let target = rx.uid_or_zero(4);
+    let reports = matches!(op, sub::FEATURES | sub::LINKS);
+    if reports && target != sender || !reports && !manages(state, sender, target) {
+        return;
+    }
     match op {
         sub::FEATURES => {
-            let eps = endpoints(rx);
             let count = rx.frame.u16(28).unwrap_or(0);
-            let links = has_links(rx, count).then(|| links(rx, entry_at(usize::from(count))));
-            if let Some(device) = state.device_mut(rx.sender()) {
+            if rx.frame.payload().len() < entry_at(usize::from(count)) {
+                return;
+            }
+            let eps = endpoints(rx);
+            let links = if has_links(rx, count) {
+                match links(rx, entry_at(usize::from(count))) {
+                    Some(links) => Some(links),
+                    None => return,
+                }
+            } else {
+                None
+            };
+            if let Some(device) = state.device_mut(sender) {
                 device.set_audio_endpoints(eps, ev);
                 if let Some(links) = links {
                     device.apply_audio_links(&links);
@@ -169,8 +195,10 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             }
         }
         sub::LINKS => {
-            let links = links(rx, 0);
-            if let Some(device) = state.device_mut(rx.sender()) {
+            let Some(links) = links(rx, LINKS_AT) else {
+                return;
+            };
+            if let Some(device) = state.device_mut(sender) {
                 device.apply_audio_links(&links);
             }
         }
@@ -178,7 +206,7 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             let Some(change) = change_source(rx) else {
                 return;
             };
-            if let Some(device) = state.device_mut(rx.sender()) {
+            if let Some(device) = state.device_mut(target) {
                 device.set_audio_select_input(change, ev);
             }
         }
@@ -186,12 +214,12 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             let (Some(endpoint), Some(value)) = (rx.frame.u16(20), rx.frame.u32(24)) else {
                 return;
             };
-            if state.device(rx.sender()).is_none() {
+            if state.device(target).is_none() {
                 return;
             }
             // Mute, trigger and lock carry a boolean in the same u32
             // that volume uses for a level.
-            let device = rx.sender();
+            let device = target;
             ev.push(match op {
                 sub::MUTE => Event::AudioEndpointMute {
                     device,

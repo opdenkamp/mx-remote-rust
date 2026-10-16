@@ -341,8 +341,8 @@ const GUARDED_SENDS: &[Guarded] = &[
     ("subscribe_v2ip_stats", |r, d| {
         r.subscribe_v2ip_stats(d, true)
     }),
-    ("set_audio_endpoint_muted", |r, d| {
-        r.set_audio_endpoint_muted(d, 1, true)
+    ("set_audio_endpoint_volume", |r, d| {
+        r.set_audio_endpoint_volume(d, 1, 40)
     }),
     ("select_audio_endpoint_input", |r, d| {
         r.select_audio_endpoint_input(d, 1, d, 2)
@@ -1428,7 +1428,12 @@ fn an_endpoint_selection_tells_its_source_from_its_sink() {
     let (sink, source, peer) = (uid_n(186), uid_n(187), uid_n(188));
     f.everything(sink, 0x28, "EP0001");
     f.everything(source, 0x28, "EP0002");
-    f.everything(peer, 0x28, "EP0003");
+    // Management, as a unit takes an endpoint selection from no one else.
+    f.feed(
+        peer,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "EP0003", "4.8.0", DeviceFeature::MANAGER),
+    );
 
     f.tap.clear();
     f.round_trip(
@@ -3601,12 +3606,14 @@ fn a_testcard_write_the_sink_would_not_take_is_refused() {
 }
 
 /// Has `uid` report a tree whose endpoint 1 can lock its source and whose
-/// endpoint 0 cannot.
+/// endpoint 0 cannot, but can be muted.
 fn report_lockable_tree(f: &Fixture, uid: DeviceUid) {
     let mut p = vec![0u8; 68];
+    p[4..20].copy_from_slice(uid.as_bytes());
     p[28..30].copy_from_slice(&2u16.to_le_bytes());
     p[37] = 1;
-    p[44..48].copy_from_slice(&AudioFeatures::OUTPUT.bits().to_le_bytes());
+    let output = AudioFeatures::OUTPUT.bits() | AudioFeatures::MUTE.bits();
+    p[44..48].copy_from_slice(&output.to_le_bytes());
     p[52] = 1;
     p[53] = 1;
     let input = AudioFeatures::INPUT.bits() | AudioFeatures::AUDIO_LOCK.bits();
@@ -3650,6 +3657,23 @@ fn an_audio_lock_goes_only_to_an_endpoint_that_can_lock() {
     assert_eq!(&p[..2], &[6, 0], "the LOCK sub-opcode");
     assert_eq!(&p[4..20], uid.as_bytes());
     assert_eq!(&p[20..28], &[1, 0, 0, 0, 1, 0, 0, 0]);
+
+    // Mute and trigger go only to an endpoint with that feature too.
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.set_audio_endpoint_muted(uid, 1, true),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.set_audio_endpoint_trigger(uid, 0, true),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused command was sent");
+    f.remote
+        .set_audio_endpoint_muted(uid, 0, true)
+        .expect("endpoint 0 can be muted");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[HEADER_LEN..HEADER_LEN + 2], &[1, 0], "MUTE");
 }
 
 /// Handing a source's addresses back goes out as mesh operation 6 naming the

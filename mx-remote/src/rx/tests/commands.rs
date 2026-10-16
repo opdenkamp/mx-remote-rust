@@ -1008,11 +1008,23 @@ fn a_bay_name_is_read_as_a_unit_keeps_it() {
 
 // ---- audio ----
 
+/// A controller, which may command the units' audio.
+fn audio_controller(h: &mut Harness) -> DeviceUid {
+    let controller = uid_n(0xC0);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "Ctrl", "CTRL00C0", "4.8.0", DeviceFeature::MANAGER),
+    );
+    controller
+}
+
 #[test]
 fn an_audio_select_input_names_its_sink_twice() {
     let mut h = command_device(60);
     let sender = h.sender;
     let source = uid_n(61);
+    let controller = audio_controller(&mut h);
 
     // The body names the sink again at 20 with the source at 36. Decoding
     // those the other way round swaps source and sink.
@@ -1020,7 +1032,7 @@ fn an_audio_select_input_names_its_sink_twice() {
     p.extend_from_slice(sender.as_bytes());
     p.extend_from_slice(source.as_bytes());
     p.extend_from_slice(&[7, 0, 9, 0]); // sink endpoint 7, source endpoint 9
-    h.feed(op::V2IP_AUDIO, &p);
+    h.feed_as(controller, op::V2IP_AUDIO, &p);
 
     let want = AudioChangeSource {
         source_uid: source,
@@ -1035,11 +1047,12 @@ fn an_audio_select_input_names_its_sink_twice() {
 #[test]
 fn audio_endpoint_commands_carry_an_endpoint_and_a_value() {
     let mut h = command_device(64);
-    let sender = h.sender;
+    let unit = h.sender;
+    let controller = audio_controller(&mut h);
     let mut send = |sub: u16, endpoint: u16, value: u32| {
-        let mut p = audio_cmd(sub, sender);
+        let mut p = audio_cmd(sub, unit);
         p.extend_from_slice(&audio_param(endpoint, value));
-        h.feed(op::V2IP_AUDIO, &p);
+        h.feed_as(controller, op::V2IP_AUDIO, &p);
     };
     send(1, 2, 1); // mute
     send(2, 3, 0); // trigger
@@ -1078,6 +1091,21 @@ fn audio_endpoint_commands_carry_an_endpoint_and_a_value() {
             ..
         }
     )));
+
+    // Each names the unit that must act, not the controller that asked, and
+    // a peer that is not management asks nothing.
+    assert!(h.saw(|e| matches!(e, Event::AudioEndpointMute { device, .. } if *device == unit)));
+    let peer = uid_n(65);
+    h.feed_as(
+        peer,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "ONEIP", "CM0065", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    h.events.clear();
+    let mut p = audio_cmd(1, unit);
+    p.extend_from_slice(&audio_param(2, 0));
+    h.feed_as(peer, op::V2IP_AUDIO, &p);
+    assert!(!h.saw(|e| matches!(e, Event::AudioEndpointMute { .. })));
 }
 
 // ---- multiviewer ----

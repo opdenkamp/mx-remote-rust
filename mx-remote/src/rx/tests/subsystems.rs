@@ -146,7 +146,7 @@ fn audio_features_parse() {
     p[52] = 1;
     p[53] = 1;
     p[60..64].copy_from_slice(&AudioFeatures::OUTPUT.bits().to_le_bytes());
-    h.feed(op::V2IP_AUDIO, &p);
+    h.feed_audio_report(&p);
 
     let eps = h.device().audio.clone().expect("no audio endpoints");
     assert_eq!(eps.list().count(), 2);
@@ -154,6 +154,49 @@ fn audio_features_parse() {
     assert!(ep0.features.has(AudioFeatures::INPUT) && ep0.features.is_v2ip());
     let ep1 = eps.get(1).expect("endpoint 1 missing");
     assert!(ep1.features.has(AudioFeatures::OUTPUT));
+}
+
+/// A unit reports only its own audio: a report naming another unit, or too
+/// short for what it counts, changes nothing.
+#[test]
+fn an_audio_report_is_read_only_whole_and_about_its_sender() {
+    let mut h = Harness::new(7);
+    h.hello(0x2F, "ONEIP", "AU0003", DeviceFeature::V2IP_SINK);
+    let tree = lockable_tree(0, 0);
+
+    let mut other = tree.clone();
+    other[4..20].copy_from_slice(uid_n(8).as_bytes());
+    h.feed(op::V2IP_AUDIO, &other);
+    assert!(h.device().audio.is_none(), "a report about another unit");
+
+    h.feed_audio_report(&tree[..67]);
+    assert!(h.device().audio.is_none(), "a report short of its entries");
+
+    // Links behind the entries: a count, two reserved bytes, then 20 bytes
+    // per link.
+    let linked = uid_n(9);
+    let link = |endpoint: u8| {
+        let mut l = vec![endpoint, 4, 0, 0];
+        l.extend_from_slice(linked.as_bytes());
+        l
+    };
+    let mut with_links = tree.clone();
+    with_links.extend_from_slice(&[1, 0, 0, 0]);
+    with_links.extend(link(0));
+    h.feed_audio_report(&with_links[..with_links.len() - 1]);
+    assert!(h.device().audio.is_none(), "a report short of its links");
+    h.feed_audio_report(&with_links);
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert_eq!(eps.get(0).map(|e| e.linked_device), Some(linked));
+
+    // A links report alone carries its block behind the command header.
+    let mut links = poisoned(20);
+    links[0..2].copy_from_slice(&5u16.to_le_bytes()); // the LINKS sub-opcode
+    links.extend_from_slice(&[1, 0, 0, 0]);
+    links.extend(link(1));
+    h.feed_audio_report(&links);
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert_eq!(eps.get(1).map(|e| e.linked_device), Some(linked));
 }
 
 /// A V2IP receiver's tree: endpoint 0 an output, endpoint 1 its V2IP input,
@@ -187,7 +230,7 @@ fn an_audio_endpoint_status_is_read_and_its_change_reported() {
     // constant here cannot agree with itself.
     let lock = 1u32 << 15;
     let muted = AudioFeatures::MUTE.bits();
-    h.feed(op::V2IP_AUDIO, &lockable_tree(muted, 0));
+    h.feed_audio_report(&lockable_tree(muted, 0));
 
     let eps = h.device().audio.clone().expect("no audio endpoints");
     assert_eq!(eps.status(0), Some(AudioFeatures::MUTE));
@@ -201,9 +244,9 @@ fn an_audio_endpoint_status_is_read_and_its_change_reported() {
             .count()
     };
     assert_eq!(changes(&h), 1);
-    h.feed(op::V2IP_AUDIO, &lockable_tree(muted, 0));
+    h.feed_audio_report(&lockable_tree(muted, 0));
     assert_eq!(changes(&h), 1, "an unchanged report raised an event");
-    h.feed(op::V2IP_AUDIO, &lockable_tree(muted, lock));
+    h.feed_audio_report(&lockable_tree(muted, lock));
     assert_eq!(changes(&h), 2, "locking the source raised no event");
     let eps = h.device().audio.clone().expect("no audio endpoints");
     assert_eq!(eps.status(1), Some(AudioFeatures::AUDIO_LOCK));
@@ -235,7 +278,7 @@ fn amp_harness() -> Harness {
 #[test]
 fn an_audio_endpoint_reaches_a_bay_that_arrives_after_the_tree() {
     let mut h = amp_harness();
-    h.feed(op::V2IP_AUDIO, &amp_output_tree());
+    h.feed_audio_report(&amp_output_tree());
     h.feed(
         op::SYS_BAY_CONFIG,
         &bay_config_rec(
@@ -269,7 +312,7 @@ fn a_repeated_tree_reattaches_a_bay_that_was_reconfigured_under_it() {
             BayFeatures::AUDIO_ANA_IN,
         ),
     );
-    h.feed(op::V2IP_AUDIO, &amp_output_tree());
+    h.feed_audio_report(&amp_output_tree());
     assert_eq!(h.bay(3).audio_endpoint, None);
 
     // Rewiring the bay changes which endpoint names it without changing the
@@ -286,7 +329,7 @@ fn a_repeated_tree_reattaches_a_bay_that_was_reconfigured_under_it() {
             BayFeatures::AUDIO_AMP_OUT,
         ),
     );
-    h.feed(op::V2IP_AUDIO, &amp_output_tree());
+    h.feed_audio_report(&amp_output_tree());
 
     assert_eq!(h.bay(3).audio_endpoint, Some(10));
 }
@@ -294,9 +337,9 @@ fn a_repeated_tree_reattaches_a_bay_that_was_reconfigured_under_it() {
 #[test]
 fn a_repeated_tree_is_not_announced_again() {
     let mut h = amp_harness();
-    h.feed(op::V2IP_AUDIO, &amp_output_tree());
+    h.feed_audio_report(&amp_output_tree());
     h.events.clear();
-    h.feed(op::V2IP_AUDIO, &amp_output_tree());
+    h.feed_audio_report(&amp_output_tree());
 
     assert!(!h.saw(|e| matches!(e, Event::AudioEndpointsChanged { .. })));
 }

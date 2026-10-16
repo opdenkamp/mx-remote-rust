@@ -3899,19 +3899,21 @@ typedef struct {
    */
   mxr_multiviewer_command_cb on_multiviewer_command;
   /**
-   * An audio endpoint was switched to a new source.
+   * Management asked the device to route a source endpoint to one of its
+   * sink endpoints.
    */
   mxr_audio_select_cb on_audio_select_input;
   /**
-   * An audio endpoint was muted or unmuted.
+   * Management asked the device to mute or unmute one of its endpoints.
    */
   mxr_endpoint_bool_cb on_audio_endpoint_mute;
   /**
-   * An audio endpoint's trigger changed.
+   * Management asked the device to set one of its endpoints' trigger.
    */
   mxr_endpoint_bool_cb on_audio_endpoint_trigger;
   /**
-   * An audio endpoint's volume changed.
+   * Management asked the device to set one of its endpoints' volume, which
+   * no unit acts on.
    */
   mxr_endpoint_u32_cb on_audio_endpoint_volume;
   /**
@@ -5553,7 +5555,8 @@ mxr_result_t mxr_set_amp_zone_settings(const mxr_remote_t *remote,
  *
  * A loadable module serves this, not the device firmware, and a model may
  * not have it. Nothing answers either way, so `MXR_OK` means the frame was
- * sent and not that anything acted on it.
+ * sent and not that anything acted on it. Refused with
+ * `MXR_ERR_UNSUPPORTED` unless the endpoint reports the MUTE feature.
  *
  * # Safety
  *
@@ -5587,7 +5590,8 @@ mxr_result_t mxr_set_audio_endpoint_locked(const mxr_remote_t *remote,
  *
  * A loadable module serves this, not the device firmware, and a model may
  * not have it. Nothing answers either way, so `MXR_OK` means the frame was
- * sent and not that anything acted on it.
+ * sent and not that anything acted on it. Refused with
+ * `MXR_ERR_UNSUPPORTED` unless the endpoint reports the TRIGGER feature.
  *
  * # Safety
  *
@@ -5601,9 +5605,8 @@ mxr_result_t mxr_set_audio_endpoint_trigger(const mxr_remote_t *remote,
 /**
  * Sets an audio endpoint's volume.
  *
- * A loadable module serves this, not the device firmware, and a model may
- * not have it. Nothing answers either way, so `MXR_OK` means the frame was
- * sent and not that anything acted on it.
+ * No unit acts on this command: the audio module defines it but neither
+ * sends nor handles it. `MXR_OK` means only that the frame was sent.
  *
  * # Safety
  *

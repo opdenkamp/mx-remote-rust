@@ -47,6 +47,14 @@ impl Harness {
         self.feed_full(sender, op, PROTOCOL_VERSION, payload, Instant::now());
     }
 
+    /// Feeds an audio features or links report, naming its sender at 4 as a
+    /// unit does.
+    pub(super) fn feed_audio_report(&mut self, payload: &[u8]) {
+        let mut p = payload.to_vec();
+        p[4..20].copy_from_slice(self.sender.as_bytes());
+        self.feed(crate::wire::op::V2IP_AUDIO, &p);
+    }
+
     pub(super) fn feed_proto(&mut self, op: Opcode, protocol: u16, payload: &[u8]) {
         self.feed_full(self.sender, op, protocol, payload, Instant::now());
     }

@@ -578,7 +578,8 @@ pub unsafe extern "C" fn mxr_set_amp_zone_settings(
 ///
 /// A loadable module serves this, not the device firmware, and a model may
 /// not have it. Nothing answers either way, so `MXR_OK` means the frame was
-/// sent and not that anything acted on it.
+/// sent and not that anything acted on it. Refused with
+/// `MXR_ERR_UNSUPPORTED` unless the endpoint reports the MUTE feature.
 ///
 /// # Safety
 ///
@@ -632,7 +633,8 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_locked(
 ///
 /// A loadable module serves this, not the device firmware, and a model may
 /// not have it. Nothing answers either way, so `MXR_OK` means the frame was
-/// sent and not that anything acted on it.
+/// sent and not that anything acted on it. Refused with
+/// `MXR_ERR_UNSUPPORTED` unless the endpoint reports the TRIGGER feature.
 ///
 /// # Safety
 ///
@@ -656,9 +658,8 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_trigger(
 
 /// Sets an audio endpoint's volume.
 ///
-/// A loadable module serves this, not the device firmware, and a model may
-/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
-/// sent and not that anything acted on it.
+/// No unit acts on this command: the audio module defines it but neither
+/// sends nor handles it. `MXR_OK` means only that the frame was sent.
 ///
 /// # Safety
 ///

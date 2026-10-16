@@ -207,15 +207,19 @@ events! {
         V2ipLinkChanged => on_v2ip_link_changed(target: DeviceUid);
         /// A multiviewer command arrived.
         MultiviewerCommand => on_multiviewer_command(command: MultiviewerCommand);
-        /// An audio endpoint was switched to a new source.
+        /// Management asked the device to route a source endpoint to one of
+        /// its sink endpoints. Its next audio report says what it did.
         AudioSelectInput => on_audio_select_input(change: AudioChangeSource);
-        /// An audio endpoint was muted or unmuted.
+        /// Management asked the device to mute or unmute one of its audio
+        /// endpoints.
         AudioEndpointMute => on_audio_endpoint_mute(endpoint: u16, muted: bool);
-        /// An audio endpoint's trigger changed.
+        /// Management asked the device to set one of its endpoints' trigger.
         AudioEndpointTrigger => on_audio_endpoint_trigger(endpoint: u16, active: bool);
-        /// An audio endpoint's source was locked or unlocked.
+        /// Management asked the device to lock or unlock one of its endpoints'
+        /// audio source.
         AudioEndpointLock => on_audio_endpoint_lock(endpoint: u16, locked: bool);
-        /// An audio endpoint's volume changed.
+        /// Management asked the device to set one of its endpoints' volume,
+        /// which no unit acts on.
         AudioEndpointVolume => on_audio_endpoint_volume(endpoint: u16, volume: u32);
         /// A peer asked this client, or every device, to announce itself.
         DiscoverRequest => on_discover_request();

@@ -667,23 +667,41 @@ impl Remote {
     // ---- audio endpoints ----
 
     /// Mutes or unmutes an audio endpoint.
+    ///
+    /// Refused unless the endpoint reports [`AudioFeatures::MUTE`]: a unit
+    /// changes nothing for one that does not.
     pub fn set_audio_endpoint_muted(
         &self,
         device: DeviceUid,
         endpoint: u16,
         muted: bool,
     ) -> Result<(), ControlError> {
-        self.audio_endpoint(device, audio_sub::MUTE, endpoint, u32::from(muted))
+        self.featured_audio_endpoint(
+            device,
+            audio_sub::MUTE,
+            endpoint,
+            muted,
+            AudioFeatures::MUTE,
+        )
     }
 
     /// Sets an audio endpoint's trigger output.
+    ///
+    /// Refused unless the endpoint reports [`AudioFeatures::TRIGGER`]: a unit
+    /// changes nothing for one that does not.
     pub fn set_audio_endpoint_trigger(
         &self,
         device: DeviceUid,
         endpoint: u16,
         active: bool,
     ) -> Result<(), ControlError> {
-        self.audio_endpoint(device, audio_sub::TRIGGER, endpoint, u32::from(active))
+        self.featured_audio_endpoint(
+            device,
+            audio_sub::TRIGGER,
+            endpoint,
+            active,
+            AudioFeatures::TRIGGER,
+        )
     }
 
     /// Locks or unlocks the audio source of an audio endpoint: while it is
@@ -700,37 +718,51 @@ impl Remote {
         endpoint: u8,
         locked: bool,
     ) -> Result<(), ControlError> {
+        self.featured_audio_endpoint(
+            device,
+            audio_sub::LOCK,
+            u16::from(endpoint),
+            locked,
+            AudioFeatures::AUDIO_LOCK,
+        )
+    }
+
+    /// Sends an on/off endpoint command, refused unless the endpoint reports
+    /// `feature`, the only case a unit acts on.
+    fn featured_audio_endpoint(
+        &self,
+        device: DeviceUid,
+        sub: u16,
+        endpoint: u16,
+        on: bool,
+        feature: AudioFeatures,
+    ) -> Result<(), ControlError> {
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
             let Some(endpoints) = d.audio.as_ref() else {
                 return Err(ControlError::NotReported("the device's audio endpoints"));
             };
-            if !endpoints
-                .get(endpoint)
-                .is_some_and(|ep| ep.features.has(AudioFeatures::AUDIO_LOCK))
+            let id = u8::try_from(endpoint).ok();
+            if !id
+                .and_then(|id| endpoints.get(id))
+                .is_some_and(|ep| ep.features.has(feature))
             {
                 return Err(ControlError::Unsupported(
-                    "the endpoint cannot lock its audio source",
+                    "the endpoint does not have that feature",
                 ));
             }
-            let mut payload = audio_cmd_header(audio_sub::LOCK, d.uid);
-            payload.extend_from_slice(&audio_param(u16::from(endpoint), u32::from(locked)));
+            let mut payload = audio_cmd_header(sub, d.uid);
+            payload.extend_from_slice(&audio_param(endpoint, u32::from(on)));
             Ok(Command::new(Addressee::device(d), op::V2IP_AUDIO, payload))
         })
     }
 
     /// Sets an audio endpoint's volume.
     ///
-    /// **The audio module has no receiver for this command and ignores it.**
-    /// It builds and sends the same shape as
-    /// [`Self::set_audio_endpoint_muted`], and the send succeeds, because
-    /// nothing on these paths is acknowledged - so a caller sees success and no
-    /// change. The module dispatches this sub-command to the branch it uses for
-    /// one it does not recognise.
-    ///
-    /// It is kept because the command is defined and the module transmits it
-    /// itself, so a receiver may appear; read the endpoint back rather than
-    /// assuming either way.
+    /// **No unit acts on this command.** The audio module defines it but
+    /// neither sends nor handles it. The send succeeds, because nothing on
+    /// these paths is acknowledged, so a caller sees success and no change;
+    /// read the endpoint back rather than assuming either way.
     pub fn set_audio_endpoint_volume(
         &self,
         device: DeviceUid,

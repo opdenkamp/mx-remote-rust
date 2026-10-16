@@ -526,13 +526,15 @@ pub struct mxr_callbacks_t {
     pub on_v2ip_link_changed: mxr_device_uid_cb,
     /// A multiviewer command arrived.
     pub on_multiviewer_command: mxr_multiviewer_command_cb,
-    /// An audio endpoint was switched to a new source.
+    /// Management asked the device to route a source endpoint to one of its
+    /// sink endpoints.
     pub on_audio_select_input: mxr_audio_select_cb,
-    /// An audio endpoint was muted or unmuted.
+    /// Management asked the device to mute or unmute one of its endpoints.
     pub on_audio_endpoint_mute: mxr_endpoint_bool_cb,
-    /// An audio endpoint's trigger changed.
+    /// Management asked the device to set one of its endpoints' trigger.
     pub on_audio_endpoint_trigger: mxr_endpoint_bool_cb,
-    /// An audio endpoint's volume changed.
+    /// Management asked the device to set one of its endpoints' volume, which
+    /// no unit acts on.
     pub on_audio_endpoint_volume: mxr_endpoint_u32_cb,
     /// A peer asked this client, or every device, to announce itself.
     pub on_discover_request: mxr_device_cb,
