@@ -141,7 +141,7 @@ events! {
         /// The device started or stopped answering.
         DeviceOnlineChanged => on_device_online_changed(online: bool);
         /// The device reported new temperatures.
-        DeviceTemperatureChanged => on_device_temperature_changed(temperatures: Vec<u8>);
+        DeviceTemperatureChanged => on_device_temperature_changed(temperatures: Vec<i8>);
         /// A firmware component reported its version.
         FirmwareVersionChanged => on_firmware_version_changed(version: FirmwareVersion);
         /// The device reported a system status.

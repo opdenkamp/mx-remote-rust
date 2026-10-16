@@ -601,8 +601,9 @@ public:
     }
 
     /// The temperatures a device reports, in its own order, in degrees Celsius.
-    std::vector<uint8_t> temperatures(Uid device) const {
-        std::vector<uint8_t> raw(mxr_device_temperatures(h_, device, nullptr, 0));
+    /// A sensor the device failed to read reports -55.
+    std::vector<int8_t> temperatures(Uid device) const {
+        std::vector<int8_t> raw(mxr_device_temperatures(h_, device, nullptr, 0));
         trim(raw, raw.empty() ? 0 : mxr_device_temperatures(h_, device, raw.data(), raw.size()));
         return raw;
     }

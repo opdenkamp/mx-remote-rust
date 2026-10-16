@@ -724,7 +724,7 @@ impl EventHandler for Bridge {
         forward!(self.on_device_online_changed(device.into(), online));
     }
 
-    fn on_device_temperature_changed(&self, device: DeviceUid, _temperatures: Vec<u8>) {
+    fn on_device_temperature_changed(&self, device: DeviceUid, _temperatures: Vec<i8>) {
         forward!(self.on_device_temperature_changed(device.into()));
     }
 

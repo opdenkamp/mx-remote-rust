@@ -6665,14 +6665,15 @@ size_t mxr_device_bays(const mxr_remote_t *remote, mxr_uid_t uid, mxr_bay_uid_t 
 
 /**
  * Writes the temperatures a device reports, in its own order, in degrees
- * Celsius, and returns how many there are.
+ * Celsius, and returns how many there are. A sensor the device failed to read
+ * reports -55.
  *
  * # Safety
  *
  * `remote` is null or a live handle, and `out` is null or points at `cap`
  * writable bytes.
  */
-size_t mxr_device_temperatures(const mxr_remote_t *remote, mxr_uid_t uid, uint8_t *out, size_t cap);
+size_t mxr_device_temperatures(const mxr_remote_t *remote, mxr_uid_t uid, int8_t *out, size_t cap);
 
 /**
  * Writes the devices whose signals a bay refuses, and returns how many there

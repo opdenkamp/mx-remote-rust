@@ -77,7 +77,7 @@ pub(crate) struct Device {
     pub(crate) uid: DeviceUid,
     pub(crate) hello: HelloInfo,
     pub(crate) bays: BTreeMap<u16, Bay>,
-    pub(crate) temperatures: Vec<u8>,
+    pub(crate) temperatures: Vec<i8>,
     pub(crate) online: bool,
     pub(crate) have_config: bool,
     pub(crate) rebooting: bool,
@@ -696,7 +696,7 @@ impl Device {
         self.check_config_complete(now, ev);
     }
 
-    pub(crate) fn set_temperatures(&mut self, temperatures: Vec<u8>, ev: &mut Vec<Event>) {
+    pub(crate) fn set_temperatures(&mut self, temperatures: Vec<i8>, ev: &mut Vec<Event>) {
         if self.temperatures == temperatures {
             return;
         }

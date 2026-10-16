@@ -67,7 +67,8 @@ pub struct DeviceInfo {
     /// remote-control target.
     pub config_initialised: bool,
     /// Temperatures the device reports, in degrees Celsius, in its own order.
-    pub temperatures: Vec<u8>,
+    /// A sensor the device failed to read reports -55.
+    pub temperatures: Vec<i8>,
     /// The mesh master this device follows, or the zero uid when it is in no
     /// mesh.
     pub mesh_master: DeviceUid,

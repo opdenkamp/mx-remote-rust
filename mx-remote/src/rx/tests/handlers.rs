@@ -524,9 +524,10 @@ fn routing_and_device_handlers() {
     assert_eq!(h.bay(2).video_source.map(|b| b.port), Some(1));
     assert_eq!(h.bay(2).effective_audio_source().map(|b| b.port), Some(3));
 
-    // 0x15 SYS_TEMPERATURE: a count then that many readings
-    h.feed(op::SYS_TEMPERATURE, &[2, 41, 43]);
-    assert_eq!(h.device().temperatures, vec![41, 43]);
+    // 0x15 SYS_TEMPERATURE: a count then that many signed readings, -55
+    // for a sensor that failed
+    h.feed(op::SYS_TEMPERATURE, &[3, 41, 0xF6, 0xC9]);
+    assert_eq!(h.device().temperatures, vec![41, -10, -55]);
 
     // 0x44 V2IP_BAY_MAPPINGS: count<<1|is_input, first port, then uids from 8
     let mapped = uid_n(112);

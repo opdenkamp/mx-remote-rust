@@ -245,7 +245,10 @@ pub(super) fn temperature(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(count) = f.u8(0) else {
         return;
     };
-    let temperatures = (1..=usize::from(count)).filter_map(|i| f.u8(i)).collect();
+    let temperatures = (1..=usize::from(count))
+        .filter_map(|i| f.u8(i))
+        .map(|t| i8::from_le_bytes([t]))
+        .collect();
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_temperatures(temperatures, ev);
     }

@@ -845,7 +845,8 @@ pub unsafe extern "C" fn mxr_device_bays(
 }
 
 /// Writes the temperatures a device reports, in its own order, in degrees
-/// Celsius, and returns how many there are.
+/// Celsius, and returns how many there are. A sensor the device failed to read
+/// reports -55.
 ///
 /// # Safety
 ///
@@ -855,7 +856,7 @@ pub unsafe extern "C" fn mxr_device_bays(
 pub unsafe extern "C" fn mxr_device_temperatures(
     remote: *const mxr_remote_t,
     uid: mxr_uid_t,
-    out: *mut u8,
+    out: *mut i8,
     cap: usize,
 ) -> usize {
     guard(0, || {
