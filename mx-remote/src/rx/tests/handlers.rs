@@ -386,7 +386,7 @@ fn bay_targeted_handlers_reach_the_bay_they_name() {
     // 0x39 BAY_STATUS: a u16 port, then mxr_cfg_signal, which is a 14-byte
     // description followed by a 2-byte signal type. The type bytes are
     // non-zero here, so a description read past 14 picks them up.
-    let mut st = poisoned(28);
+    let mut st = poisoned(32);
     st[0..2].copy_from_slice(&1u16.to_le_bytes());
     st[2..16].copy_from_slice(b"1080p60 444 8b"); // exactly 14: no terminator
     st[16] = 0x13;
@@ -934,6 +934,40 @@ fn an_internal_remote_control_target_is_named() {
     let c = parse_bay_config(&rec).expect("record did not parse");
     assert_eq!(c.rc_type, RcType::INTERNAL);
     assert_eq!(c.rc_type.to_string(), "Internal");
+}
+
+/// A unit takes bay configuration only as whole records, and bay status
+/// records up to the last whole one.
+#[test]
+fn bay_records_are_taken_whole() {
+    let mut h = Harness::new(144);
+    h.hello(0x2F, "FF88", "HD0005", DeviceFeature::VIDEO_ROUTING);
+    let mut cfg = bay_config_rec(
+        1,
+        0,
+        0,
+        "Input 1",
+        "Apple TV",
+        BayStatus::NONE,
+        BayFeatures::HDMI_IN,
+    );
+    cfg.push(0);
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+    assert!(h.device().bay(1).is_none(), "a frame with a partial record");
+    h.feed(op::SYS_BAY_CONFIG, &cfg[..cfg.len() - 1]);
+    assert!(h.device().bay(1).is_some());
+
+    let record = |port: u16| {
+        let mut st = poisoned(32);
+        st[0..2].copy_from_slice(&port.to_le_bytes());
+        st[20..24].copy_from_slice(&BayStatus::HIDDEN.bits().to_le_bytes());
+        st
+    };
+    let mut st = record(1);
+    st.extend_from_slice(&record(1)[..24]);
+    st[52..56].copy_from_slice(&0u32.to_le_bytes()); // the partial one shows nothing
+    h.feed(op::BAY_STATUS, &st);
+    assert_eq!(h.bay(1).hidden, Some(true), "a partial record was applied");
 }
 
 /// A record with an empty name describes no bay: a unit sends one, all zero,

@@ -79,7 +79,12 @@ pub(super) fn bay_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = state.device_mut(rx.sender()) else {
         return;
     };
+    // A unit takes only whole records, and none from a frame with a partial
+    // one.
     let payload = rx.frame.payload();
+    if payload.len() % BAY_CONFIG_SIZE != 0 {
+        return;
+    }
     for record in payload.chunks_exact(BAY_CONFIG_SIZE) {
         if let Some(cfg) = parse_bay_config(record) {
             device.apply_bay_config(&cfg, rx.timestamp, ev);
@@ -794,7 +799,8 @@ const BAY_STATUS_RECORD: usize = 32;
 /// whole record is read rather than only the first. A frame shorter than one
 /// record still carries its one bay, read as far as it goes.
 pub(super) fn bay_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    for record in rx.frame.payload().chunks(BAY_STATUS_RECORD) {
+    // Whole records only; a unit ignores bytes behind the last.
+    for record in rx.frame.payload().chunks_exact(BAY_STATUS_RECORD) {
         bay_status_record(state, rx.sender(), record, ev);
     }
 }

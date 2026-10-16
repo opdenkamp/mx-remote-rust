@@ -179,7 +179,7 @@ impl State {
         if let Some(old) = self.links.get(key) {
             // A repeat of the same record is the device re-sending its
             // configuration, not a change.
-            if old.linked_serial == new.linked_serial && old.features == new.features {
+            if old == &new {
                 return;
             }
             if old.is_configured() {

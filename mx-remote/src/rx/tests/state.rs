@@ -152,6 +152,34 @@ fn a_reboot_waits_for_the_bays_again() {
     assert!(h.complete());
 }
 
+/// A link moved to another bay of the same unit is a change.
+#[test]
+fn a_link_moved_to_another_bay_of_the_same_unit_is_reported() {
+    let mut h = Harness::new(3);
+    h.hello(0x2F, "FF88", "HD0004", DeviceFeature::VIDEO_ROUTING);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 1", 0));
+    h.events.clear();
+    h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 2", 0));
+    assert!(h.saw(|e| matches!(e, Event::BayUnlinked { .. })));
+    assert!(h.saw(|e| matches!(e, Event::BayLinked { .. })));
+
+    h.events.clear();
+    h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 2", 0));
+    assert!(h.events.is_empty(), "a repeat is not a change");
+}
+
 #[test]
 fn mirror_and_mesh_reports() {
     let mut h = Harness::new(2);
