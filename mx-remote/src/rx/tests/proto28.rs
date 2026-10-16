@@ -184,7 +184,15 @@ fn device_config_rejects_unusable_addresses() {
 
 #[test]
 fn scaling_merges_per_field() {
-    let mut h = v2ip_device(23);
+    // A sender announcing that it initialises the frame, without which none
+    // of its scaling is read.
+    let mut h = Harness::new(23);
+    h.hello(
+        0x2F,
+        "ONEIP-RX",
+        "RX0001",
+        DeviceFeature::V2IP_SINK | DeviceFeature::CONFIG_INITIALISED,
+    );
     let sender = h.sender;
 
     let mut both = Cfg::addresses(sender, "239.1.2.3");
@@ -193,13 +201,28 @@ fn scaling_merges_per_field() {
     both.flags = SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
     h.feed(op::V2IP_DEVICE_CFG, &both.bytes());
 
+    // Writes from a controller, which is what writes a part of the scaling;
+    // its own announcement is what makes its scaling fields count.
+    let controller = uid_n(24);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &crate::testing::hello_payload(
+            0x2F,
+            "Ctrl",
+            "CTRL0023",
+            "4.8.0",
+            DeviceFeature::MANAGER | DeviceFeature::CONFIG_INITIALISED,
+        ),
+    );
+
     // An options-only write carries no mode, so the peer keeps its resolution.
     let options_only = Cfg {
         uid: sender,
         flags: SCALING_FLAG_OPTIONS_VALID,
         ..Cfg::default()
     };
-    h.feed(op::V2IP_DEVICE_CFG, &options_only.bytes());
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &options_only.bytes());
 
     let scaling = h.device().v2ip_details.expect("no details").scaling;
     assert_eq!(scaling.mode.svd(), 16);
@@ -216,7 +239,7 @@ fn scaling_merges_per_field() {
         flags: SCALING_FLAG_MODE_VALID,
         ..Cfg::default()
     };
-    h.feed(op::V2IP_DEVICE_CFG, &mode_only.bytes());
+    h.feed_as(controller, op::V2IP_DEVICE_CFG, &mode_only.bytes());
 
     let scaling = h.device().v2ip_details.expect("no details").scaling;
     assert_eq!(scaling.mode.svd(), 31);

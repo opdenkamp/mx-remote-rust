@@ -2091,11 +2091,32 @@ fn a_setting_the_multiviewer_would_drop_never_reaches_the_wire() {
 /// the zeros and the `0xFF` are the assertion: a builder that filled either in
 /// would move a transceiver's stream or reset its rate as a side effect of
 /// turning scaling off.
+/// A released unit, below protocol 0x2F, drops a scaling write from
+/// management, so none is sent to one.
+#[test]
+fn a_scaling_write_to_a_released_unit_is_refused() {
+    let f = Fixture::new();
+    let sink = uid_n(219);
+    f.everything(sink, 0x27, "SC0000");
+    f.connect();
+    f.tap.clear();
+    for call in [
+        f.remote.set_v2ip_auto_scaling(sink, true),
+        f.remote.clear_v2ip_output_mode(sink),
+    ] {
+        assert!(
+            matches!(call, Err(ControlError::Unsupported(_))),
+            "{call:?}"
+        );
+    }
+    assert!(f.tap.frames().is_empty());
+}
+
 #[test]
 fn a_scaling_write_carries_nothing_but_the_scaling_block() {
     let f = Fixture::new();
     let sink = uid_n(220);
-    f.everything(sink, 0x28, "SC0001");
+    f.everything(sink, 0x2F, "SC0001");
     f.connect();
 
     f.tap.clear();
@@ -2147,7 +2168,7 @@ fn a_scaling_write_carries_nothing_but_the_scaling_block() {
 fn clearing_a_mode_is_written_set_and_cached_clear() {
     let f = Fixture::new();
     let sink = uid_n(221);
-    f.everything(sink, 0x28, "SC0002");
+    f.everything(sink, 0x2F, "SC0002");
     f.connect();
 
     f.remote
@@ -2209,7 +2230,7 @@ fn clearing_a_mode_is_written_set_and_cached_clear() {
 fn an_auto_scaling_write_leaves_a_configured_mode_alone() {
     let f = Fixture::new();
     let sink = uid_n(222);
-    f.everything(sink, 0x28, "SC0003");
+    f.everything(sink, 0x2F, "SC0003");
     f.connect();
 
     f.remote
@@ -2445,7 +2466,7 @@ fn a_built_settings_frame_decodes_to_what_was_built() {
 fn an_output_mode_a_sink_would_drop_is_refused_before_it_is_sent() {
     let f = Fixture::new();
     let sink = uid_n(223);
-    f.everything(sink, 0x28, "SC0004");
+    f.everything(sink, 0x2F, "SC0004");
     f.connect();
 
     let good = V2ipOutputMode {

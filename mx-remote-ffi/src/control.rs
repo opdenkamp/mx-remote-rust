@@ -995,6 +995,9 @@ unsafe fn output_mode(mode: *const mxr_v2ip_output_mode_t) -> Result<V2ipOutputM
 /// rebroadcasts its subscription in response, and the addresses in
 /// `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
 ///
+/// `MXR_ERR_UNSUPPORTED` for a unit below protocol 0x2F: released firmware
+/// drops a scaling write from management.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.
@@ -1870,6 +1873,9 @@ pub unsafe extern "C" fn mxr_set_v2ip_sink_ir_profile(
 /// rebroadcasts its subscription in response, and the addresses in
 /// `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
 ///
+/// `MXR_ERR_UNSUPPORTED` for a unit below protocol 0x2F: released firmware
+/// drops a scaling write from management.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle, and `mode` points at an initialised
@@ -1901,6 +1907,9 @@ pub unsafe extern "C" fn mxr_set_v2ip_output_mode(
 /// **Read any route you still need before writing.** The sink rebuilds and
 /// rebroadcasts its subscription in response, and the addresses in
 /// `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
+///
+/// `MXR_ERR_UNSUPPORTED` for a unit below protocol 0x2F: released firmware
+/// drops a scaling write from management.
 ///
 /// # Safety
 ///

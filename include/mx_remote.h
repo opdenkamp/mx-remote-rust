@@ -5785,6 +5785,9 @@ mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
  * rebroadcasts its subscription in response, and the addresses in
  * `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
  *
+ * `MXR_ERR_UNSUPPORTED` for a unit below protocol 0x2F: released firmware
+ * drops a scaling write from management.
+ *
  * # Safety
  *
  * `remote` is null or a live handle from `mxr_remote_new()`.
@@ -6240,6 +6243,9 @@ mxr_result_t mxr_set_v2ip_sink_ir_profile(const mxr_remote_t *remote,
  * rebroadcasts its subscription in response, and the addresses in
  * `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
  *
+ * `MXR_ERR_UNSUPPORTED` for a unit below protocol 0x2F: released firmware
+ * drops a scaling write from management.
+ *
  * # Safety
  *
  * `remote` is null or a live handle, and `mode` points at an initialised
@@ -6260,6 +6266,9 @@ mxr_result_t mxr_set_v2ip_output_mode(const mxr_remote_t *remote,
  * **Read any route you still need before writing.** The sink rebuilds and
  * rebroadcasts its subscription in response, and the addresses in
  * `mxr_v2ip_details()` can read as zero for up to a minute afterwards.
+ *
+ * `MXR_ERR_UNSUPPORTED` for a unit below protocol 0x2F: released firmware
+ * drops a scaling write from management.
  *
  * # Safety
  *

@@ -1959,49 +1959,24 @@ fn a_manual_source_switch_and_a_config_sink_block_decode_alike() {
     assert_eq!((fmt.sample_rate, fmt.channels), (44100, 2));
 }
 
+/// Firmware without `CONFIG_INITIALISED`, which is every released build,
+/// builds this frame from an uninitialised stack local and ORs its scaling
+/// flags onto whatever was there, so none of its scaling is read, as a unit
+/// reads none of it.
 #[test]
-fn an_options_write_caches_no_noise_bits() {
+fn scaling_from_a_sender_without_config_initialised_is_not_read() {
     let mut h = command_device(96);
     let sender = h.sender;
 
-    // Firmware without DeviceFeature::CONFIG_INITIALISED builds this frame from
-    // an uninitialised stack local and ORs its scaling flags onto whatever was
-    // there, so bits 2..6 arrive as noise. Only bit 7 carries meaning.
     let mut base = Cfg::addresses(sender, "239.1.2.3");
     base.mode = 16;
     base.refresh = 60;
     base.flags = SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING;
     h.feed(op::V2IP_DEVICE_CFG, &base.bytes());
-
-    // An options-only write carrying garbage in the undefined bits, with
-    // auto-scaling genuinely off.
-    let noisy = Cfg {
-        uid: sender,
-        flags: SCALING_FLAG_OPTIONS_VALID | 0x7C,
-        ..Cfg::default()
-    };
-    h.feed(op::V2IP_DEVICE_CFG, &noisy.bytes());
-
     let scaling = h.device().v2ip_details.expect("no details").scaling;
-    assert_eq!(scaling.flags & SCALING_FLAG_AUTO_SCALING, 0);
-    assert_eq!(
-        scaling.flags & !(SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID),
-        0,
-        "undefined flag bits survived a merge: {:#04x}",
-        scaling.flags
-    );
-    assert_eq!(scaling.mode.svd(), 16);
-    assert_eq!(scaling.refresh, 60);
-
-    // A genuine auto-scaling bit still arrives beside the noise.
-    let on = Cfg {
-        uid: sender,
-        flags: SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING | 0x34,
-        ..Cfg::default()
-    };
-    h.feed(op::V2IP_DEVICE_CFG, &on.bytes());
-    let scaling = h.device().v2ip_details.expect("no details").scaling;
-    assert_ne!(scaling.flags & SCALING_FLAG_AUTO_SCALING, 0);
+    assert_eq!(scaling.flags, 0);
+    assert_eq!(scaling.configured_mode(), None);
+    assert_eq!(scaling.auto_scaling(), None);
 }
 
 /// A real `V2IP_DEVICE_CFG`, captured off a live mesh.
@@ -2079,19 +2054,10 @@ fn a_captured_device_config_decodes_field_for_field() {
     assert_eq!(details.dscp.audio, Some(V2IP_DSCP_DEFAULT));
     assert_eq!(details.dscp.anc, Some(V2IP_DSCP_DEFAULT));
 
-    assert_eq!(details.scaling.mode.svd(), 19);
-    assert_eq!(details.scaling.mode.bpp(), Some(8));
-    assert_eq!(details.scaling.refresh, 50);
-    // Flags 0xdf carries bits 2, 3, 4 and 6 as well: this unit does not
-    // initialise the configuration it broadcasts, so only bits 0, 1 and 7 mean
-    // anything.
-    assert_ne!(details.scaling.flags & SCALING_FLAG_AUTO_SCALING, 0);
-    assert_eq!(
-        details.scaling.flags
-            & !(SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID | SCALING_FLAG_AUTO_SCALING),
-        0,
-        "undefined flag bits cached from a 0xdf frame"
-    );
+    // Flags 0xdf carry junk in bits 2, 3, 4 and 6: this unit does not
+    // announce that it initialises the configuration it broadcasts, so none
+    // of its scaling is read.
+    assert_eq!(details.scaling.flags, 0, "scaling read from a 0xdf frame");
 
     // The tiling block is zeroed, so its uid is zero: not carried, not a clear.
     assert_eq!(h.device().tiling, None);
@@ -2197,10 +2163,9 @@ fn a_captured_processor_word_is_read_behind_the_sink_block() {
     assert_eq!(details.tx_rate, Some(90));
     assert_eq!(details.arc.ip, Ipv4Addr::new(234, 65, 108, 200));
     assert_eq!(details.dscp.video, Some(V2IP_DSCP_DEFAULT));
-    assert_eq!(details.scaling.refresh, 0);
-    // 0xf2 carries auto-scaling and the options bit, and no mode is configured.
-    assert_ne!(details.scaling.flags & SCALING_FLAG_AUTO_SCALING, 0);
-    assert_eq!(details.scaling.flags & SCALING_FLAG_MODE_VALID, 0);
+    // The unit does not announce that it initialises the frame, so its
+    // scaling flags 0xf2 are not read.
+    assert_eq!(details.scaling.flags, 0);
     assert_eq!(h.device().tiling, None, "a zero uid is not a window");
 }
 
@@ -2409,7 +2374,13 @@ fn a_write_from_a_controller_leaves_the_sink_route_alone() {
     h.feed_as(
         controller,
         op::SYS_HELLO,
-        &hello_payload(0x28, "Ctrl", "CTRL0003", "4.8.0", DeviceFeature::MANAGER),
+        &hello_payload(
+            0x2F,
+            "Ctrl",
+            "CTRL0003",
+            "4.8.0",
+            DeviceFeature::MANAGER | DeviceFeature::CONFIG_INITIALISED,
+        ),
     );
     let mut write = Cfg::addresses(subject, "0.0.0.0");
     write.flags = SCALING_FLAG_OPTIONS_VALID;
@@ -3331,28 +3302,13 @@ fn a_sinks_own_report_without_a_mode_turns_manual_scaling_off() {
 }
 
 /// Without the whole state, a frame with no mode says nothing about the mode:
-/// a report without the options bit, a report from a sender whose options bit
-/// may be uninitialised memory, and a controller's options-only write.
+/// a report without the options bit, and a controller's options-only write.
 #[test]
 fn a_frame_that_is_not_the_whole_state_keeps_the_mode() {
     // No options bit.
     let mut h = sink_with_a_mode(122, "SC0002");
     let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
     cfg.flags = 0;
-    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
-    assert_eq!(
-        scaling_of(&h, h.sender).configured_mode().map(|m| m.1),
-        Some(60)
-    );
-
-    // A sender that does not initialise its configuration.
-    let mut h = command_device(123);
-    let mut cfg = Cfg::addresses(h.sender, "239.1.2.3");
-    cfg.mode = 16;
-    cfg.refresh = 60;
-    cfg.flags = SCALING_FLAG_MODE_VALID | SCALING_FLAG_OPTIONS_VALID;
-    h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
-    cfg.flags = SCALING_FLAG_OPTIONS_VALID;
     h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes());
     assert_eq!(
         scaling_of(&h, h.sender).configured_mode().map(|m| m.1),

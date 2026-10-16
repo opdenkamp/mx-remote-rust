@@ -272,6 +272,9 @@ fn stream_addr(target: V2ipRouteTarget, standard_port: u16) -> StreamAddr {
 /// switch naming no audio. Some units below it route no audio instead.
 const AUDIO_FOLLOWS_SINCE: u16 = 0x27;
 
+/// The protocol from which a unit applies a scaling write from management.
+const SCALING_WRITE_PROTOCOL: u16 = 0x2F;
+
 /// The name as the device will store it. A unit keeps 15 bytes of the
 /// [`DEVICE_NAME_LEN`]-byte field, the last being its terminator, so a longer
 /// name is cut there, before any character that would not fit whole.
@@ -1197,6 +1200,9 @@ impl Remote {
 
     /// Turns a V2IP sink's automatic scaling on or off.
     ///
+    /// Refused for a unit below protocol 0x2F: released firmware drops a
+    /// scaling write from management.
+    ///
     /// Automatic scaling and a configured output mode are separate reasons for
     /// a sink to scale, and this moves only the first: a sink with a mode
     /// configured goes on scaling to it with automatic scaling off. Turning
@@ -1230,6 +1236,9 @@ impl Remote {
     }
 
     /// Sets the output format a V2IP sink scales to.
+    ///
+    /// Refused for a unit below protocol 0x2F: released firmware drops a
+    /// scaling write from management.
     ///
     /// The mode is checked here and nothing is sent if it fails, because every
     /// value a sink refuses it refuses in silence. Passing that check is not a
@@ -1287,6 +1296,9 @@ impl Remote {
 
     /// Clears the output format a V2IP sink is configured to scale to.
     ///
+    /// Refused for a unit below protocol 0x2F: released firmware drops a
+    /// scaling write from management.
+    ///
     /// The sink stops scaling for that reason and keeps its automatic scaling
     /// setting, so a sink scaling for both reasons goes on scaling until
     /// [`Remote::set_v2ip_auto_scaling`] turns the other one off.
@@ -1337,6 +1349,13 @@ impl Remote {
             if !d.is_v2ip_sink() {
                 return Err(ControlError::Unsupported(
                     "scaling settings need a V2IP sink",
+                ));
+            }
+            // A unit below this protocol drops a scaling write from
+            // management.
+            if d.hello.supported_protocol < SCALING_WRITE_PROTOCOL {
+                return Err(ControlError::Unsupported(
+                    "the unit's firmware ignores scaling writes",
                 ));
             }
             Ok(Command::new(
