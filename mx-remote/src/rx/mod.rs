@@ -100,10 +100,12 @@ pub(crate) fn process_frame(
     };
     let mut ev = Vec::new();
     dispatch(state, &rx, &mut ev);
-    // Any frame from a known device proves it is alive. Online detection must
-    // not rest on hello frames alone: a V2IP device is considered offline
-    // after fifteen seconds of silence but announces itself only every thirty.
-    if let Some(device) = state.device_mut(sender) {
+    // Any frame from a device still counted alive keeps it so, as a unit
+    // keeps it: online detection must not rest on hello frames alone. Once
+    // it has gone silent long enough to count as offline, only a hello brings
+    // it back.
+    let revives = frame.opcode() == op::SYS_HELLO || !before.as_ref().is_some_and(|b| b.away);
+    if let Some(device) = state.device_mut(sender).filter(|_| revives) {
         device.touch(timestamp, Instant::now(), &mut ev);
         if Heard::missed_state(before, device) {
             state.state_requests.push(sender);

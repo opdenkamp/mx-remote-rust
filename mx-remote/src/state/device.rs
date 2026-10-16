@@ -21,12 +21,12 @@ use super::bay::Bay;
 
 /// How long a device below [`MODERN_PROTOCOL`] may stay silent before it
 /// counts as offline.
-const SILENCE_LIMIT: Duration = Duration::from_secs(120);
+const SILENCE_LIMIT: Duration = Duration::from_secs(180);
 
 /// How long a device at [`MODERN_PROTOCOL`] or above may stay silent.
 ///
 /// That version announces every few seconds, so silence becomes meaningful
-/// long before two minutes of it have passed.
+/// long before three minutes of it have passed.
 const SILENCE_LIMIT_MODERN: Duration = Duration::from_secs(15);
 
 /// The version from which the shorter limit applies.
@@ -571,6 +571,11 @@ impl Device {
     pub(crate) fn apply_hello(&mut self, hello: HelloInfo, now: Instant, ev: &mut Vec<Event>) {
         self.last_ping = now;
         let changed = !self.hello.same_advertisement(&hello);
+        // A unit about to reboot says so in its hello, and what it said
+        // about its bays holds only until it has said it again.
+        if hello.features.has(DeviceFeature::STATUS_REBOOT) {
+            self.await_config();
+        }
         self.hello = hello;
         self.rebooting = false;
         if changed {
@@ -666,6 +671,13 @@ impl Device {
         self.bays.get(&u16::from(port)).map(Bay::uid)
     }
 
+    /// Treats the device as undescribed until it sends its bays again, as a
+    /// unit does for one that went offline or rebooted.
+    fn await_config(&mut self) {
+        self.have_config = false;
+        self.bay_config_received = false;
+    }
+
     /// Notes that the device has sent its primary bay configuration.
     pub(crate) fn note_bay_config(&mut self, now: Instant, ev: &mut Vec<Event>) {
         if self.bay_config_received {
@@ -714,7 +726,7 @@ impl Device {
         }
         self.online = online;
         if !online {
-            self.have_config = false;
+            self.await_config();
         }
         ev.push(Event::DeviceOnlineChanged {
             device: self.uid,

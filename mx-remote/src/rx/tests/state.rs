@@ -3,6 +3,8 @@
 
 //! Discovery and the state a device builds up as its configuration arrives.
 
+use std::time::{Duration, Instant};
+
 use crate::event::Event;
 use crate::wire::{op, BayFeatures, BayStatus, BayUid, DeviceFeature, V2IP_PORT_VIDEO};
 
@@ -105,6 +107,49 @@ fn discovery_builds_a_device_from_its_configuration() {
     h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 1", 0));
     assert!(h.complete());
     assert!(h.saw(|e| matches!(e, Event::DeviceConfigComplete { .. })));
+}
+
+/// A unit that announces a reboot is described again only once it has sent
+/// its bays again.
+#[test]
+fn a_reboot_waits_for_the_bays_again() {
+    let mut h = Harness::new(4);
+    let plain = DeviceFeature::from_bits(0);
+    h.hello(0x2F, "UNIT", "RB0001", plain);
+    let bays = bay_config_rec(
+        0,
+        0,
+        0,
+        "Input 1",
+        "",
+        BayStatus::NONE,
+        BayFeatures::HDMI_IN,
+    );
+    h.feed(op::SYS_BAY_CONFIG, &bays);
+    assert!(h.complete());
+
+    h.hello(0x2F, "UNIT", "RB0001", DeviceFeature::STATUS_REBOOT);
+    h.hello(0x2F, "UNIT", "RB0001", plain);
+    assert!(
+        !h.complete(),
+        "described by the bays it sent before rebooting"
+    );
+    h.feed(op::SYS_BAY_CONFIG, &bays);
+    assert!(h.complete());
+
+    // So is one that went offline.
+    let later = Instant::now() + Duration::from_secs(120);
+    let sender = h.sender;
+    let device = h.state.device_mut(sender).expect("registered");
+    device.check_online(later, &mut Vec::new());
+    assert!(!device.online);
+    h.hello(0x2F, "UNIT", "RB0001", plain);
+    assert!(
+        !h.complete(),
+        "described by the bays it sent before going offline"
+    );
+    h.feed(op::SYS_BAY_CONFIG, &bays);
+    assert!(h.complete());
 }
 
 #[test]

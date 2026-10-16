@@ -430,36 +430,56 @@ fn a_slow_hello_device_is_given_a_minute() {
         h.device().is_online(now),
         "a peer on this client's version went offline between two of its hellos"
     );
+
+    // Below 0x20 a unit allows three minutes.
+    let mut h = Harness::new(16);
+    h.feed_at(op::SYS_HELLO, &hello(0x1F), now - Duration::from_secs(170));
+    assert!(
+        h.device().is_online(now),
+        "a device below 0x20 went offline inside its three minutes"
+    );
+    let mut h = Harness::new(17);
+    h.feed_at(op::SYS_HELLO, &hello(0x1F), now - Duration::from_secs(181));
+    assert!(
+        !h.device().is_online(now),
+        "a device below 0x20 outlived its three minutes"
+    );
 }
 
 /// A device is online while it has been heard from recently, and any frame
-/// counts - not only a hello.
+/// keeps it so - not only a hello. Once it has been silent long enough to
+/// count as offline, only a hello brings it back, as a unit has it.
 #[test]
-fn liveness_is_refreshed_by_any_frame() {
+fn liveness_is_refreshed_by_any_frame_until_it_lapses() {
     let mut h = Harness::new(11);
     let now = Instant::now();
 
     // A V2IP device announces itself often enough that fifteen seconds of
-    // silence is meaningful, so a hello received twenty seconds ago reads as
-    // offline.
+    // silence is meaningful.
     let hello = super::hello_payload(0x27, "ONEIP", "LV0001", "4.7.9", DeviceFeature::V2IP_SINK);
-    let twenty_ago = now - Duration::from_secs(20);
-    h.feed_at(op::SYS_HELLO, &hello, twenty_ago);
-    assert!(
-        !h.device().is_online(now),
-        "twenty seconds of silence should read as offline"
-    );
-
-    // Any later frame refreshes liveness, including one this library has no
-    // handler for.
-    h.feed_at(op::SYS_MONITORING_PULSE, &[], now);
+    h.feed_at(op::SYS_HELLO, &hello, now - Duration::from_secs(20));
+    h.feed_at(op::SYS_MONITORING_PULSE, &[], now - Duration::from_secs(10));
     assert!(
         h.device().is_online(now),
-        "a fresh frame should bring the device back online"
+        "a frame inside the window, of any kind, kept the device alive"
     );
+
+    h.feed_at(op::SYS_MONITORING_PULSE, &[], now + Duration::from_secs(10));
+    assert!(
+        !h.device().is_online(now + Duration::from_secs(10)),
+        "a frame after the window lapsed brought the device back"
+    );
+    // The probe loop is what notices a device has gone.
+    let sender = h.sender;
+    let device = h.state.device_mut(sender).expect("registered");
+    device.check_online(now + Duration::from_secs(10), &mut Vec::new());
+
+    h.events.clear();
+    h.feed_at(op::SYS_HELLO, &hello, now + Duration::from_secs(10));
+    assert!(h.device().is_online(now + Duration::from_secs(10)));
     assert!(
         h.saw(|e| matches!(e, Event::DeviceOnlineChanged { online: true, .. })),
-        "the online transition was not announced"
+        "the hello brought it back without saying so"
     );
 }
 
