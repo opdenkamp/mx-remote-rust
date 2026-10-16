@@ -967,24 +967,28 @@ impl fmt::Display for EdidProfile {
 wire_enum! {
     /// A firmware component.
     FirmwareType: u8 {
-        /// The component is not known.
-        UNKNOWN = 0;
-        /// The FPGA bitstream.
+        /// The unit's own firmware.
+        MCU = 0;
+        /// The video processor's FPGA image.
         FPGA = 1;
-        /// The Linux system image.
-        LINUX = 2;
-        /// A loadable overlay.
-        LOADING_OVERLAY = 3;
+        /// The video processor's RTOS image.
+        RTOS = 2;
+        /// The video processor's loader image.
+        LOADER = 3;
+        /// The unit's bootloader.
+        BOOTLOADER = 4;
     }
 }
 
 impl fmt::Display for FirmwareType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match *self {
+            Self::MCU => "MCU",
             Self::FPGA => "FPGA",
-            Self::LINUX => "Linux",
-            Self::LOADING_OVERLAY => "Loading Overlay",
-            _ => "Unknown",
+            Self::RTOS => "RTOS",
+            Self::LOADER => "Loader",
+            Self::BOOTLOADER => "Bootloader",
+            _ => return write!(f, "firmware #{}", self.0),
         };
         f.write_str(name)
     }

@@ -487,6 +487,66 @@ fn liveness_is_refreshed_by_any_frame_until_it_lapses() {
     );
 }
 
+/// A OneIP's FPGA report carries the RTOS and loader hashes, then the unit's
+/// own firmware and bootloader, behind its 144 bytes.
+#[test]
+fn a_firmware_report_carries_the_other_images_behind_it() {
+    let mut h = Harness::new(10);
+    h.hello(0x2F, "ONEIP", "FW0002", DeviceFeature::V2IP_SINK);
+
+    let mut fw = poisoned(200);
+    fw[0] = FirmwareType::FPGA.to_wire();
+    fw[4..8].copy_from_slice(&0x1111u32.to_le_bytes());
+    fw[8..12].copy_from_slice(&1_700_000_000u32.to_le_bytes());
+    field(&mut fw, 12, 128, "oneip-fpga");
+    fw[144..148].copy_from_slice(&0x2222u32.to_le_bytes());
+    fw[148..152].copy_from_slice(&0x3333u32.to_le_bytes());
+    fw[152..156].copy_from_slice(&0x4444u32.to_le_bytes());
+    fw[156..160].copy_from_slice(&1_700_000_001u32.to_le_bytes());
+    fw[160..164].copy_from_slice(&0x5555u32.to_le_bytes());
+    fw[164..168].copy_from_slice(&1_700_000_002u32.to_le_bytes());
+    field(&mut fw, 168, 16, "4.9.1.123");
+    field(&mut fw, 184, 16, "2.0.4");
+    h.feed(op::FIRMWARE_VERSION, &fw);
+
+    let got = |t| {
+        let v = h.device().firmware.get(&t).cloned().expect("missing");
+        (v.hash, v.timestamp, v.version)
+    };
+    let fpga = |hash| (hash, 1_700_000_000, "oneip-fpga".to_owned());
+    assert_eq!(got(FirmwareType::FPGA), fpga(0x1111));
+    assert_eq!(got(FirmwareType::RTOS), fpga(0x2222));
+    assert_eq!(got(FirmwareType::LOADER), fpga(0x3333));
+    assert_eq!(
+        got(FirmwareType::MCU),
+        (0x4444, 1_700_000_001, "4.9.1.123".to_owned())
+    );
+    assert_eq!(
+        got(FirmwareType::BOOTLOADER),
+        (0x5555, 1_700_000_002, "2.0.4".to_owned())
+    );
+
+    // Without the second block the first is still read, and nothing is made
+    // up for the unit's own firmware.
+    let mut h = Harness::new(11);
+    h.hello(0x2F, "ONEIP", "FW0003", DeviceFeature::V2IP_SINK);
+    h.feed(op::FIRMWARE_VERSION, &fw[..199]);
+    assert!(h.device().firmware.contains_key(&FirmwareType::LOADER));
+    assert!(!h.device().firmware.contains_key(&FirmwareType::MCU));
+    let mut h = Harness::new(12);
+    h.hello(0x2F, "ONEIP", "FW0004", DeviceFeature::V2IP_SINK);
+    h.feed(op::FIRMWARE_VERSION, &fw[..151]);
+    assert!(!h.device().firmware.contains_key(&FirmwareType::RTOS));
+
+    // Only an FPGA report carries the blocks.
+    let mut h = Harness::new(13);
+    h.hello(0x2F, "ONEIP", "FW0005", DeviceFeature::V2IP_SINK);
+    fw[0] = FirmwareType::MCU.to_wire();
+    h.feed(op::FIRMWARE_VERSION, &fw);
+    assert_eq!(h.device().firmware.len(), 1);
+    assert_eq!(h.device().firmware[&FirmwareType::MCU].hash, 0x1111);
+}
+
 #[test]
 fn firmware_and_system_status() {
     let mut h = Harness::new(10);

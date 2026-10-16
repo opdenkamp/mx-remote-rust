@@ -1038,6 +1038,11 @@ pub(super) fn topology(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 }
 
 /// Applies a firmware version report for one component.
+/// Where a firmware report's RTOS and loader block ends, and where the block
+/// on the unit's own firmware and bootloader behind it ends.
+const FW_RTOS_LOADER_END: usize = 152;
+const FW_MCU_END: usize = 200;
+
 pub(super) fn firmware_version(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
     let Some(firmware_type) = f.u8(0) else {
@@ -1053,14 +1058,45 @@ pub(super) fn firmware_version(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Even
     let (Some(version), Some(timestamp)) = (f.str(12, name_len), f.u32(8)) else {
         return;
     };
-    let version = FirmwareVersion {
-        firmware_type: FirmwareType::from_wire(firmware_type),
+    let firmware_type = FirmwareType::from_wire(firmware_type);
+    let mut versions = vec![FirmwareVersion {
+        firmware_type,
         timestamp,
-        version,
+        version: version.clone(),
         hash: f.u32(4).unwrap_or(0),
-    };
+    }];
+    // A OneIP's FPGA report carries two more blocks behind its 144 bytes. The
+    // first holds the hashes of the RTOS and loader images, which share the
+    // FPGA's version and install time. The second describes the unit's own
+    // firmware and its bootloader.
+    let len = f.payload().len();
+    if firmware_type == FirmwareType::FPGA && len >= FW_RTOS_LOADER_END {
+        for (firmware_type, at) in [(FirmwareType::RTOS, 144), (FirmwareType::LOADER, 148)] {
+            versions.push(FirmwareVersion {
+                firmware_type,
+                timestamp,
+                version: version.clone(),
+                hash: f.u32(at).unwrap_or(0),
+            });
+        }
+    }
+    if firmware_type == FirmwareType::FPGA && len >= FW_MCU_END {
+        for (firmware_type, at, version_at) in [
+            (FirmwareType::MCU, 152, 168),
+            (FirmwareType::BOOTLOADER, 160, 184),
+        ] {
+            versions.push(FirmwareVersion {
+                firmware_type,
+                timestamp: f.u32(at + 4).unwrap_or(0),
+                version: f.str(version_at, 16).unwrap_or_default(),
+                hash: f.u32(at).unwrap_or(0),
+            });
+        }
+    }
     if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_firmware_version(version, ev);
+        for version in versions {
+            device.set_firmware_version(version, ev);
+        }
     }
 }
 

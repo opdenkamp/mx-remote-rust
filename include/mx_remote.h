@@ -5101,15 +5101,18 @@ typedef struct {
  */
 typedef struct {
   /**
-   * Which component this describes.
+   * Which component this describes: 0 the unit's firmware, 1 the video
+   * processor's FPGA image, 2 its RTOS image, 3 its loader image, 4 the
+   * unit's bootloader.
    */
   uint8_t firmware_type;
   /**
-   * Build timestamp, in seconds since the Unix epoch.
+   * When the image was built or installed, in seconds since the Unix epoch,
+   * or 0 when it carries no time.
    */
   uint32_t timestamp;
   /**
-   * Source revision hash.
+   * Checksum of the image.
    */
   uint32_t hash;
   /**

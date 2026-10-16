@@ -669,11 +669,14 @@ impl From<TopologyEntry> for mxr_topology_entry_t {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_firmware_version_t {
-    /// Which component this describes.
+    /// Which component this describes: 0 the unit's firmware, 1 the video
+    /// processor's FPGA image, 2 its RTOS image, 3 its loader image, 4 the
+    /// unit's bootloader.
     pub firmware_type: u8,
-    /// Build timestamp, in seconds since the Unix epoch.
+    /// When the image was built or installed, in seconds since the Unix epoch,
+    /// or 0 when it carries no time.
     pub timestamp: u32,
-    /// Source revision hash.
+    /// Checksum of the image.
     pub hash: u32,
     /// Human-readable version string.
     pub version: [c_char; MXR_VERSION_LEN],

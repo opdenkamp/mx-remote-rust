@@ -273,11 +273,12 @@ pub struct BayAudioDetails {
 pub struct FirmwareVersion {
     /// Which component this describes.
     pub firmware_type: FirmwareType,
-    /// Build timestamp, in seconds since the Unix epoch.
+    /// When the image was built or installed, in seconds since the Unix epoch,
+    /// or 0 when it carries no time.
     pub timestamp: u32,
     /// Human-readable version string.
     pub version: String,
-    /// Source revision hash.
+    /// Checksum of the image.
     pub hash: u32,
 }
 
