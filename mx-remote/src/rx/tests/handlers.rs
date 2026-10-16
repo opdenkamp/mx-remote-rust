@@ -593,10 +593,17 @@ fn a_discover_naming_another_device_is_not_a_request() {
 
     h.feed(op::SYS_DISCOVER, uid_n(116).as_bytes());
     assert!(!asked(&h), "a discover naming another device");
+    assert!(!h.state.hello_requested, "answered one naming another device");
 
     let own = h.state.uid;
     h.feed(op::SYS_DISCOVER, own.as_bytes());
     assert!(asked(&h), "a discover naming this client");
+    assert!(h.state.hello_requested, "a discover is answered with a hello");
+
+    // A discover from a unit not yet heard from is answered too.
+    h.state.hello_requested = false;
+    h.feed_as(uid_n(117), op::SYS_DISCOVER, &[]);
+    assert!(h.state.hello_requested, "a new unit's discover went unanswered");
 
     h.events.clear();
     let mut longer = uid_n(116).as_bytes().to_vec();

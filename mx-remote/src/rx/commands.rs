@@ -35,15 +35,20 @@ fn from_known_device(state: &State, rx: &Rx<'_>) -> Option<DeviceUid> {
     state.device(rx.sender()).map(|d| d.uid)
 }
 
-/// Reports a discover, unless it asks another device.
+/// Answers a discover with a hello and reports it, unless it asks another
+/// device.
 ///
 /// An empty discover asks every device. One carrying exactly a uid asks only
 /// that device; any other length is read as asking every device, as a receiver
-/// that predates the uid form reads them all.
+/// that predates the uid form reads them all. A unit answers one from a
+/// sender it does not know too: a unit that has just started discovers
+/// before anyone knows it, and takes frames only from a peer it has heard a
+/// hello from.
 pub(super) fn discover_request(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     if rx.frame.payload().len() == UID_LEN && rx.frame.uid(0) != Some(state.uid) {
         return;
     }
+    state.hello_requested = true;
     if let Some(device) = from_known_device(state, rx) {
         ev.push(Event::DiscoverRequest { device });
     }
