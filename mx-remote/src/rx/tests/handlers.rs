@@ -666,6 +666,110 @@ fn v2ip_source_switch_resolves_the_advertising_bay() {
         Some(src),
         "video source did not resolve to the advertising device"
     );
+
+    // Audio routed apart from the video, by a switch naming no video.
+    let other = uid_n(124);
+    h.feed_as(
+        other,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x28,
+            "ONEIP-TX",
+            "TX10",
+            "4.8.0",
+            DeviceFeature::V2IP_SOURCE,
+        ),
+    );
+    h.feed_as(
+        other,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            0,
+            0,
+            "Input 1",
+            "Radio",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
+    );
+    h.feed_as(
+        other,
+        op::SYS_BAY_V2IP_SOURCES,
+        &stream_rec(
+            other,
+            "239.6.6.1",
+            "239.6.6.2",
+            "239.6.6.3",
+            V2IP_PORT_VIDEO,
+        ),
+    );
+    let mut p = sink.as_bytes().to_vec();
+    p.extend_from_slice(&[0, 0, 0, 0]);
+    p.extend_from_slice(&[239, 6, 6, 2]);
+    h.feed_as(sink, op::V2IP_SOURCE_SWITCH, &p);
+    let audio = |h: &Harness| {
+        h.state
+            .bay(crate::wire::BayUid::new(sink, 1))
+            .and_then(|b| b.effective_audio_source())
+            .map(|b| b.device)
+    };
+    assert_eq!(audio(&h), Some(other));
+    assert_eq!(
+        h.state
+            .bay(crate::wire::BayUid::new(sink, 1))
+            .and_then(|b| b.video_source)
+            .map(|b| b.device),
+        Some(src),
+        "a switch naming no video moved the video"
+    );
+
+    // A switch naming no audio has the audio follow the video again.
+    h.events.clear();
+    let mut p = sink.as_bytes().to_vec();
+    p.extend_from_slice(&[239, 5, 5, 1]);
+    p.extend_from_slice(&[0, 0, 0, 0]);
+    h.feed_as(sink, op::V2IP_SOURCE_SWITCH, &p);
+    assert_eq!(audio(&h), Some(src), "the audio kept its separate route");
+    assert!(
+        h.saw(
+            |e| matches!(e, Event::AudioSourceChanged { source: Some(b), .. }
+            if b.device == src)
+        ),
+        "the audio moved without saying so"
+    );
+}
+
+/// An output a OneIP reports as showing nothing loses its source.
+#[test]
+fn a_route_to_nothing_clears_the_source() {
+    let mut h = bay_state(125);
+    let mut rt = poisoned(9);
+    rt[0..2].copy_from_slice(&2u16.to_le_bytes()); // sink
+    rt[4..6].copy_from_slice(&1u16.to_le_bytes()); // video
+    rt[7..9].copy_from_slice(&0xFFFFu16.to_le_bytes()); // no audio
+    h.feed(op::MX_ROUTE, &rt);
+    assert_eq!(h.bay(2).video_source.map(|b| b.port), Some(1));
+
+    h.events.clear();
+    rt[4..6].copy_from_slice(&0xFFFEu16.to_le_bytes());
+    h.feed(op::MX_ROUTE, &rt);
+    assert_eq!(h.bay(2).video_source, None);
+    assert!(h.saw(|e| matches!(e, Event::VideoSourceChanged { source: None, .. })));
+    assert!(
+        h.saw(|e| matches!(e, Event::AudioSourceChanged { source: None, .. })),
+        "audio following the video did not report moving with it"
+    );
+
+    // An invalid port is not a route to nothing.
+    h.feed(op::MX_ROUTE, &{
+        let mut p = rt.clone();
+        p[4..6].copy_from_slice(&1u16.to_le_bytes());
+        p
+    });
+    rt[4..6].copy_from_slice(&0xFFFFu16.to_le_bytes());
+    h.feed(op::MX_ROUTE, &rt);
+    assert_eq!(h.bay(2).video_source.map(|b| b.port), Some(1));
 }
 
 /// A mapping that arrives before the bay it names is kept for that bay.

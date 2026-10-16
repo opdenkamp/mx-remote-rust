@@ -268,6 +268,10 @@ fn stream_addr(target: V2ipRouteTarget, standard_port: u16) -> StreamAddr {
     }
 }
 
+/// The protocol from which every unit's audio follows its video for a source
+/// switch naming no audio. Some units below it route no audio instead.
+const AUDIO_FOLLOWS_SINCE: u16 = 0x27;
+
 /// The name as the device will store it: the field is
 /// [`DEVICE_NAME_LEN`] bytes wide, so a longer one is cut there.
 fn stored_name(name: &str) -> String {
@@ -279,6 +283,11 @@ impl Remote {
     // ---- routing ----
 
     /// Routes this V2IP sink's video to the stream a source port advertises.
+    ///
+    /// The sink's audio then follows the video: a separate audio route is
+    /// dropped, so route audio after video to keep them apart. A unit below
+    /// protocol 0x27 is routed the source's audio stream instead, as some of
+    /// those route no audio for "follow the video".
     pub fn select_video_source(&self, sink: BayUid, source_port: u16) -> Result<(), ControlError> {
         self.shared.command(|state| {
             let (device, bay) = v2ip_sink(state, sink)?;
@@ -286,10 +295,18 @@ impl Remote {
                 return Err(ControlError::Unsupported("not an output bay"));
             }
             let streams = source_streams(device, source_port)?;
+            // Older firmware routes no audio for an empty audio address rather
+            // than following the video, so it is told the source's audio
+            // stream instead, which every version plays.
+            let audio = if device.hello.supported_protocol < AUDIO_FOLLOWS_SINCE {
+                streams.audio.ip
+            } else {
+                Ipv4Addr::UNSPECIFIED
+            };
             Ok(Command::new(
                 Addressee::device(device),
                 op::V2IP_SOURCE_SWITCH,
-                build_v2ip_source_switch(device.uid, streams.video.ip, Ipv4Addr::UNSPECIFIED),
+                build_v2ip_source_switch(device.uid, streams.video.ip, audio),
             ))
         })
     }

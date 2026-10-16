@@ -129,6 +129,9 @@ pub(super) fn power_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
 /// audio at 7. Reading them a byte wide puts "selected" in video and "video" in
 /// audio, which agrees with the wire only while the selected input is the one
 /// actually being shown.
+/// The video port a OneIP reports for an output that shows nothing.
+const ROUTE_NONE: u16 = 0xFFFE;
+
 pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
     let Some(sink_port) = f.u16(0) else {
@@ -145,11 +148,14 @@ pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
         port.filter(|p| device.bay(*p).is_some())
             .map(|p| BayUid::new(sender, p))
     };
+    let unrouted = f.u16(4) == Some(ROUTE_NONE);
     let video = resolve(f.u16(4));
     let audio = resolve(f.u16(7));
 
     if let Some(bay) = state.bay_mut(BayUid::new(sender, sink_port)) {
-        if let Some(video) = video {
+        if unrouted {
+            bay.set_video_source(None, ev);
+        } else if let Some(video) = video {
             bay.set_video_source(Some(video), ev);
         }
         if let Some(audio) = audio {
@@ -317,7 +323,14 @@ pub(super) fn v2ip_source_switch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Ev
     else {
         return;
     };
+    let audio_follows = audio.is_unspecified();
     apply_stream_route(state, sink, video, audio, ev);
+    // A sink told no audio address takes its audio from its video again.
+    if audio_follows {
+        if let Some(bay) = state.bay_mut(sink) {
+            bay.set_audio_source(None, ev);
+        }
+    }
 }
 
 /// Applies a manual source switch, which carries the full stream triple and

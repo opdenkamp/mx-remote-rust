@@ -68,6 +68,11 @@ impl From<mxr_audio_format_t> for V2ipAudioFormat {
 
 /// Routes a V2IP sink's video to the stream a source port advertises.
 ///
+/// The sink's audio then follows the video: a separate audio route is
+/// dropped, so route audio after video to keep them apart. A unit below
+/// protocol 0x27 is routed the source's audio stream instead, as some of
+/// those route no audio for "follow the video".
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle from `mxr_remote_new()`.

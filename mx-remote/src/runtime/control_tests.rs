@@ -1315,6 +1315,29 @@ fn a_write_back_waits_for_the_send() {
 /// A sink apiece, because the audio source a bay reports falls back to its
 /// video source until it is given one of its own: on a bay that has been given
 /// both, neither slot can be told from the other.
+/// Routing video leaves the audio address empty so the audio follows, except
+/// for a unit below protocol 0x27, which is told the source's audio stream
+/// because some of those route no audio for an empty one.
+#[test]
+fn routing_video_names_the_audio_only_for_older_units() {
+    let f = Fixture::new();
+    f.connect();
+    for (protocol, uid, serial, audio) in [
+        (0x2F, uid_n(196), "SW0004", [0, 0, 0, 0]),
+        (0x1E, uid_n(197), "SW0005", [239, 7, 197, 2]),
+    ] {
+        f.everything(uid, protocol, serial);
+        f.tap.clear();
+        f.remote
+            .select_video_source(BayUid::new(uid, 2), 1)
+            .expect("sent");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(&p[16..20], &[239, 7, 197 - u8::from(protocol == 0x2F), 1]);
+        assert_eq!(&p[20..24], &audio, "protocol {protocol:#04x}");
+    }
+}
+
 #[test]
 fn a_source_switch_names_one_stream_and_zeroes_the_other() {
     let f = Fixture::new();

@@ -220,34 +220,33 @@ impl Bay {
         });
     }
 
+    /// Sets the video source, `None` for none. Audio that follows the video
+    /// moves with it, and is reported as moving.
     pub(crate) fn set_video_source(&mut self, source: Option<BayUid>, ev: &mut Vec<Event>) {
-        if !self.is_output() {
+        if !self.is_output() || self.video_source == source {
             return;
         }
-        let Some(source) = source else {
-            self.video_source = None;
-            return;
-        };
-        if self.video_source == Some(source) {
-            return;
-        }
-        self.video_source = Some(source);
+        let audio = self.effective_audio_source();
+        self.video_source = source;
         ev.push(Event::VideoSourceChanged {
             bay: self.uid(),
-            source: Some(source),
+            source,
         });
+        self.report_audio_move(audio, ev);
     }
 
+    /// Sets a separate audio source, or `None` for audio that follows the
+    /// video.
     pub(crate) fn set_audio_source(&mut self, source: Option<BayUid>, ev: &mut Vec<Event>) {
         if !self.is_output() {
             return;
         }
-        let Some(source) = source else {
-            self.audio_source = None;
-            return;
-        };
-        let previous = self.effective_audio_source();
-        self.audio_source = Some(source);
+        let audio = self.effective_audio_source();
+        self.audio_source = source;
+        self.report_audio_move(audio, ev);
+    }
+
+    fn report_audio_move(&self, previous: Option<BayUid>, ev: &mut Vec<Event>) {
         let current = self.effective_audio_source();
         if previous != current {
             ev.push(Event::AudioSourceChanged {

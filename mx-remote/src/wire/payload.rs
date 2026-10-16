@@ -368,8 +368,9 @@ pub(crate) fn build_edid_request(target: DeviceUid, output: bool) -> Vec<u8> {
 /// Builds the `V2IP_SOURCE_SWITCH` (0x1F) payload: the sink uid, then the
 /// video and audio group addresses to subscribe to.
 ///
-/// 0.0.0.0 leaves that stream where it is, so routing video and routing audio
-/// are separate calls that each name only their own.
+/// A video of 0.0.0.0 keeps the sink's video where it is. An audio of 0.0.0.0
+/// has the sink take its audio from its video, dropping a separate audio
+/// route.
 pub(crate) fn build_v2ip_source_switch(
     sink: DeviceUid,
     video_ip: Ipv4Addr,
