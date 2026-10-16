@@ -593,17 +593,26 @@ fn a_discover_naming_another_device_is_not_a_request() {
 
     h.feed(op::SYS_DISCOVER, uid_n(116).as_bytes());
     assert!(!asked(&h), "a discover naming another device");
-    assert!(!h.state.hello_requested, "answered one naming another device");
+    assert!(
+        !h.state.hello_requested,
+        "answered one naming another device"
+    );
 
     let own = h.state.uid;
     h.feed(op::SYS_DISCOVER, own.as_bytes());
     assert!(asked(&h), "a discover naming this client");
-    assert!(h.state.hello_requested, "a discover is answered with a hello");
+    assert!(
+        h.state.hello_requested,
+        "a discover is answered with a hello"
+    );
 
     // A discover from a unit not yet heard from is answered too.
     h.state.hello_requested = false;
     h.feed_as(uid_n(117), op::SYS_DISCOVER, &[]);
-    assert!(h.state.hello_requested, "a new unit's discover went unanswered");
+    assert!(
+        h.state.hello_requested,
+        "a new unit's discover went unanswered"
+    );
 
     h.events.clear();
     let mut longer = uid_n(116).as_bytes().to_vec();
@@ -1277,6 +1286,10 @@ fn network_status_layouts() {
     );
     assert_eq!(s.ip, Some(Ipv4Addr::new(10, 8, 83, 228)));
     assert_eq!(s.querier, Some(Ipv4Addr::new(10, 8, 8, 254)));
+    let mut no_querier = late.clone();
+    no_querier[32..36].fill(0);
+    let s = parse_modern(&no_querier).expect("did not parse");
+    assert_eq!(s.querier, None, "0.0.0.0 is no querier");
 
     // A payload whose feature word runs past a byte is still this layout:
     // the field was widened so it could, and nothing about a set high byte

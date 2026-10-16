@@ -727,6 +727,10 @@ fn setup_status_and_installer() {
 
     h.feed(op::SETUP_STATUS, &[1]);
     assert_eq!(h.device().setup_done, Some(true));
+    h.feed(op::SETUP_STATUS, &[0]);
+    assert_eq!(h.device().setup_done, Some(false));
+    h.feed(op::SETUP_STATUS, &[2]);
+    assert_eq!(h.device().setup_done, Some(true), "any value but 0 is done");
 
     h.feed(op::SET_INSTALLER, &[0x34, 0x12]);
     assert_eq!(h.device().installer_id, Some(0x1234));

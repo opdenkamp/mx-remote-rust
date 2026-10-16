@@ -165,8 +165,9 @@ pub(super) fn parse_modern(d: &[u8]) -> Option<NetworkPortStatus> {
     if port_uplink && d.len() >= QUERIER_OFF {
         status.mac_address = mac_at(d, MAC_OFF);
         status.ip = Some(ipv4_at(d, IP_OFF));
+        // 0.0.0.0 is how a unit says it sees no querier.
         if support_igmp && d.len() >= QUERIER_OFF + 4 {
-            status.querier = Some(ipv4_at(d, QUERIER_OFF));
+            status.querier = Some(ipv4_at(d, QUERIER_OFF)).filter(|ip| !ip.is_unspecified());
         }
     }
     if support_status {

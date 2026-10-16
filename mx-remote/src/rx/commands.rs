@@ -441,7 +441,9 @@ pub(super) fn setup_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
         return;
     };
     if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_setup_completed(value == 1, ev);
+        // Sent as 0 or 1, and read as a unit reads it: anything but 0 is
+        // completed.
+        device.set_setup_completed(value != 0, ev);
     }
 }
 
