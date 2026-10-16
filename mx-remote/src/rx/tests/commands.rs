@@ -926,9 +926,12 @@ fn a_reply_holds_as_many_edid_records_as_it_is_long() {
     );
 }
 
+/// A filter list names its sink, and a unit takes one about its own sink or
+/// from management, and only as whole uids.
 #[test]
-fn a_filter_list_is_read_to_its_last_whole_uid() {
+fn a_filter_list_lands_on_the_sink_it_names() {
     let mut h = command_device(54);
+    let sink = h.sender;
     h.feed(
         op::SYS_BAY_CONFIG,
         &bay_config_rec(
@@ -941,18 +944,42 @@ fn a_filter_list_is_read_to_its_last_whole_uid() {
             BayFeatures::HDMI_OUT,
         ),
     );
+    let list = |filtered: &[DeviceUid]| {
+        let mut p = sink.as_bytes().to_vec();
+        for uid in filtered {
+            p.extend_from_slice(uid.as_bytes());
+        }
+        p
+    };
 
-    let filtered = uid_n(65);
-    let mut p = h.sender.as_bytes().to_vec();
-    p.extend_from_slice(filtered.as_bytes());
-    p.extend_from_slice(&[0x5A, 0x5B, 0x5C]);
-    h.feed(op::BAY_FILTER_STATUS, &p);
+    let (one, two) = (uid_n(65), uid_n(66));
+    h.feed(op::BAY_FILTER_STATUS, &list(&[one]));
+    assert_eq!(h.bay(2).filtered, [one]);
 
-    assert_eq!(
-        h.bay(2).filtered,
-        [filtered],
-        "a trailing partial uid was read as a malformed frame rather than ignored"
+    let mut partial = list(&[two]);
+    partial.extend_from_slice(&[0x5A, 0x5B, 0x5C]);
+    h.feed(op::BAY_FILTER_STATUS, &partial);
+    assert_eq!(h.bay(2).filtered, [one], "a partial uid was taken");
+
+    // A peer that is not management changes nothing about another's sink.
+    let peer = uid_n(67);
+    h.feed_as(
+        peer,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "ONEIP", "CM0002", "4.8.0", DeviceFeature::V2IP_SINK),
     );
+    h.feed_as(peer, op::BAY_FILTER_STATUS, &list(&[two]));
+    assert_eq!(h.bay(2).filtered, [one], "a third party set the list");
+
+    // Management does, and the list is the sink's rather than its own.
+    let controller = uid_n(68);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "Ctrl", "CTRL0001", "4.8.0", DeviceFeature::MANAGER),
+    );
+    h.feed_as(controller, op::BAY_FILTER_STATUS, &list(&[two]));
+    assert_eq!(h.bay(2).filtered, [two], "management's list was lost");
 }
 
 #[test]

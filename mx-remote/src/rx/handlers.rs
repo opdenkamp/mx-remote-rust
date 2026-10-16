@@ -406,7 +406,7 @@ fn apply_stream_route(
 /// takes one only from a sender it treats as management. Anything else is
 /// dropped rather than filed against the sender, because a frame the network
 /// ignores must not move a record here.
-fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid> {
+pub(super) fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid> {
     let subject = uid_at(p, 0);
     if subject == rx.sender() {
         return Some(subject);
@@ -876,23 +876,32 @@ pub(super) fn links(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 }
 
 /// Applies a mirror report: which device's output this one is repeating.
+/// Applies which sink a sink mirrors: a unit's report on its own sink, or
+/// management setting it.
 pub(super) fn mirror_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    let sender = rx.sender();
-    let target = rx.uid_or_zero(0);
-    if sender != target {
+    let p = rx.frame.payload();
+    if p.len() < MIRROR_SIZE {
         return;
     }
-    let Some(port) = state.device(sender).and_then(|d| d.first_output_port()) else {
+    let Some(sink) = v2ip_config_subject(state, rx, p) else {
         return;
     };
-    let master = rx.uid_or_zero(16);
-    let mirror = BayMirrorStatus {
-        target: (!master.is_zero() && master != target).then(|| BayUid::new(master, 0)),
+    let Some(port) = state.device(sink).and_then(|d| d.first_output_port()) else {
+        return;
     };
-    if let Some(bay) = state.bay_mut(BayUid::new(sender, port)) {
+    // All zero and all ones both mean the sink mirrors nothing.
+    let master = uid_at(p, 16);
+    let none = master.is_zero() || master.as_bytes() == &[0xFF; 16] || master == sink;
+    let mirror = BayMirrorStatus {
+        target: (!none).then(|| BayUid::new(master, 0)),
+    };
+    if let Some(bay) = state.bay_mut(BayUid::new(sink, port)) {
         bay.set_mirroring(mirror, ev);
     }
 }
+
+/// The length of a mirror report: the sink, then the sink it mirrors.
+const MIRROR_SIZE: usize = 32;
 
 /// The mesh sub-opcode that reports which device is the mesh master.
 const MESH_REPORT_MEMBERSHIP: u8 = 0xFF;

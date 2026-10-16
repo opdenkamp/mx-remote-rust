@@ -24,7 +24,7 @@ use crate::wire::{
     cstr, BayUid, DeviceUid, EdidProfile, RcAction, RcKey, DEVICE_NAME_LEN, UID_LEN,
 };
 
-use super::handlers::{byte, ipv4_at, u16_at, u32_at, uid_at};
+use super::handlers::{byte, ipv4_at, u16_at, u32_at, uid_at, v2ip_config_subject};
 use super::Rx;
 
 /// Runs `body` only when the sender is a device we know.
@@ -430,29 +430,24 @@ pub(super) fn set_installer(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     }
 }
 
-/// Decodes the list of source devices filtered out of a sink's picker: a
-/// target uid followed by zero or more filtered uids.
+/// Decodes the list of source devices filtered out of a sink's picker: the
+/// sink's uid followed by zero or more filtered uids. It is a unit's report on
+/// its own sink, or management setting a sink's list.
 ///
-/// The list is read to its last whole uid, so trailing bytes that are not one
-/// are ignored rather than taken as evidence the frame is malformed.
-///
-/// A trailing array is the one shape no length test can protect: bytes appended
-/// past the last uid are read as another uid once there are sixteen of them.
-/// Appending to this payload is a wire break the sender has to announce, not
-/// something a receiver can absorb.
+/// A unit takes it only as a whole number of uids, the sink's included.
 pub(super) fn filter_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
-    if p.len() < 16 {
+    if p.len() % 16 != 0 {
         return;
     }
-    let filtered: Vec<DeviceUid> = p[16..].chunks_exact(16).map(|c| uid_at(c, 0)).collect();
-    let Some(port) = state
-        .device(rx.sender())
-        .and_then(|d| d.first_output_port())
-    else {
+    let Some(sink) = v2ip_config_subject(state, rx, p) else {
         return;
     };
-    if let Some(bay) = state.bay_mut(BayUid::new(rx.sender(), port)) {
+    let filtered: Vec<DeviceUid> = p[16..].chunks_exact(16).map(|c| uid_at(c, 0)).collect();
+    let Some(port) = state.device(sink).and_then(|d| d.first_output_port()) else {
+        return;
+    };
+    if let Some(bay) = state.bay_mut(BayUid::new(sink, port)) {
         bay.set_filtered(filtered, ev);
     }
 }

@@ -189,6 +189,27 @@ fn mirror_and_mesh_reports() {
     assert_eq!(mirror.target.map(|b| b.device), Some(master));
     assert!(h.saw(|e| matches!(e, Event::MirrorStatusChanged { .. })));
 
+    // All ones mirrors nothing, as all zero does.
+    mp[16..32].fill(0xFF);
+    h.feed(op::BAY_MIRROR_STATUS, &mp[..31]);
+    assert!(h.bay(0).mirror.is_mirroring(), "a short report was taken");
+    h.feed(op::BAY_MIRROR_STATUS, &mp);
+    assert!(!h.bay(0).mirror.is_mirroring(), "all ones read as a device");
+
+    // Management sets another unit's mirror; another peer does not.
+    let controller = uid_n(31);
+    h.feed_as(
+        controller,
+        op::SYS_HELLO,
+        &crate::testing::hello_payload(0x2F, "Ctrl", "CTRL0009", "4.8.0", DeviceFeature::MANAGER),
+    );
+    mp[16..32].copy_from_slice(master.as_bytes());
+    h.feed_as(controller, op::BAY_MIRROR_STATUS, &mp);
+    assert!(
+        h.bay(0).mirror.is_mirroring(),
+        "management's mirror was lost"
+    );
+
     // Mesh membership: the sub-opcode at 0, the master uid at 4. The struct is
     // 8-aligned, so it is 40 bytes rather than the 36 its fields occupy.
     let mut mesh = poisoned(40);
