@@ -350,3 +350,33 @@ fn a_frame_without_a_header_is_not_read() {
         Event::OsdSyncRequested { .. } | Event::OsdSyncReportChanged { .. }
     )));
 }
+
+/// A unit claiming to control a mesh is taken for management only until the
+/// units say they follow another.
+#[test]
+fn a_sync_from_a_controller_units_do_not_follow_is_not_read() {
+    let (mut h, _, unit) = mesh();
+    let other = uid_n(162);
+    h.feed_as(
+        other,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "ONEIP", "OI0002", "4.8.0", DeviceFeature::MESH_MASTER),
+    );
+    h.feed_as(
+        other,
+        op::V2IP_OSD_SYNC,
+        &sync_frame(7, DeviceUid::ZERO, 1, 2),
+    );
+    assert_eq!(sync_events(&h), 1, "a controller's own claim stands");
+
+    let mut mesh = poisoned(40);
+    mesh[0] = 0xFF;
+    mesh[4..20].copy_from_slice(uid_n(163).as_bytes());
+    h.feed_as(unit, op::MESH_OPERATION, &mesh);
+    h.feed_as(
+        other,
+        op::V2IP_OSD_SYNC,
+        &sync_frame(8, DeviceUid::ZERO, 1, 3),
+    );
+    assert_eq!(sync_events(&h), 1, "a controller no unit follows");
+}

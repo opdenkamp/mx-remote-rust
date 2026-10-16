@@ -205,6 +205,9 @@ impl Fixture {
     /// for the library to decode what it just built. The send itself fails for
     /// want of a socket, which is not what a round trip is asking about.
     ///
+    /// The sender is what this client is to a unit, management: units take
+    /// most of these frames from no one else.
+    ///
     /// Exactly one frame must be waiting, so the tap is cleared afterwards and
     /// the first call in a test clears it beforehand.
     fn round_trip(&self, what: &str, sender: DeviceUid, call: Result<(), ControlError>) {
@@ -216,6 +219,11 @@ impl Fixture {
         assert_eq!(frames.len(), 1, "{what} captured {} frames", frames.len());
         let mut frame = frames.into_iter().next().expect("one frame");
         frame[4..20].copy_from_slice(sender.as_bytes());
+        self.remote.shared.mutate(|state, _| {
+            if let Some(d) = state.device_mut(sender) {
+                d.hello.features |= DeviceFeature::MANAGER;
+            }
+        });
         self.remote.shared.process_datagram(&frame, FROM);
         self.tap.clear();
     }
@@ -517,7 +525,13 @@ fn a_built_manual_switch_frame_decodes_to_what_was_built() {
             channels: 6,
         }),
     );
-    f.feed(sender, op::V2IP_MANUAL_SRC_SWITCH, &payload);
+    let controller = uid_n(184);
+    f.feed(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x28, "Ctrl", "RT0005", "4.8.0", DeviceFeature::MANAGER),
+    );
+    f.feed(controller, op::V2IP_MANUAL_SRC_SWITCH, &payload);
 
     let sink = f
         .remote

@@ -342,10 +342,16 @@ fn bay_targeted_handlers_reach_the_bay_they_name() {
         "power change for port 2 reached port 1"
     );
 
-    // 0x27 BAY_HIDE, addressed by uid then a u16 port
+    // 0x27 BAY_HIDE, addressed by uid then a u16 port, padded to 24, and
+    // taken from management only
     let mut hide = sender.as_bytes().to_vec();
-    hide.extend_from_slice(&[2, 0, 1]);
+    hide.extend_from_slice(&[2, 0, 1, 0, 0, 0, 0, 0]);
     h.feed(op::BAY_HIDE, &hide);
+    assert_ne!(h.bay(2).hidden, Some(true), "a unit hid a bay of its own");
+    let controller = h.controller();
+    h.feed_as(controller, op::BAY_HIDE, &hide[..23]);
+    assert_ne!(h.bay(2).hidden, Some(true), "a hide short of its padding");
+    h.feed_as(controller, op::BAY_HIDE, &hide);
     assert_eq!(h.bay(2).hidden, Some(true));
 
     // 0x14 AUDIO_SET_VOLUME: uid, u16 port, then volume and mute
@@ -545,6 +551,12 @@ fn routing_and_device_handlers() {
     tl[20..22].copy_from_slice(&1920u16.to_le_bytes());
     tl[22..24].copy_from_slice(&1080u16.to_le_bytes());
     h.feed(op::V2IP_TILING, &tl);
+    assert!(
+        h.device().tiling.is_none(),
+        "taken from a unit, not management"
+    );
+    let controller = h.controller();
+    h.feed_as(controller, op::V2IP_TILING, &tl);
     let tiling = h.device().tiling.expect("tiling not recorded");
     assert_eq!(
         (tiling.pos_x, tiling.width, tiling.height),
@@ -668,10 +680,20 @@ fn v2ip_source_switch_resolves_the_advertising_bay() {
         ),
     );
 
+    // Switches come from management, as units take them from no one else.
+    let controller = h.controller();
     let mut p = sink.as_bytes().to_vec();
     p.extend_from_slice(&[239, 5, 5, 1]); // video group
     p.extend_from_slice(&[239, 5, 5, 2]); // audio group
     h.feed_as(sink, op::V2IP_SOURCE_SWITCH, &p);
+    assert_eq!(
+        h.state
+            .bay(crate::wire::BayUid::new(sink, 1))
+            .and_then(|b| b.video_source),
+        None,
+        "taken from a unit"
+    );
+    h.feed_as(controller, op::V2IP_SOURCE_SWITCH, &p);
 
     let out = h
         .state
@@ -723,7 +745,7 @@ fn v2ip_source_switch_resolves_the_advertising_bay() {
     let mut p = sink.as_bytes().to_vec();
     p.extend_from_slice(&[0, 0, 0, 0]);
     p.extend_from_slice(&[239, 6, 6, 2]);
-    h.feed_as(sink, op::V2IP_SOURCE_SWITCH, &p);
+    h.feed_as(controller, op::V2IP_SOURCE_SWITCH, &p);
     let audio = |h: &Harness| {
         h.state
             .bay(crate::wire::BayUid::new(sink, 1))
@@ -745,7 +767,7 @@ fn v2ip_source_switch_resolves_the_advertising_bay() {
     let mut p = sink.as_bytes().to_vec();
     p.extend_from_slice(&[239, 5, 5, 1]);
     p.extend_from_slice(&[0, 0, 0, 0]);
-    h.feed_as(sink, op::V2IP_SOURCE_SWITCH, &p);
+    h.feed_as(controller, op::V2IP_SOURCE_SWITCH, &p);
     assert_eq!(audio(&h), Some(src), "the audio kept its separate route");
     assert!(
         h.saw(

@@ -24,7 +24,7 @@ use crate::wire::{
     cstr, BayUid, DeviceUid, EdidProfile, RcAction, RcKey, DEVICE_NAME_LEN, UID_LEN,
 };
 
-use super::handlers::{byte, ipv4_at, u16_at, u32_at, uid_at, v2ip_config_subject};
+use super::handlers::{byte, ipv4_at, manages, u16_at, u32_at, uid_at, v2ip_config_subject};
 use super::Rx;
 
 /// Runs `body` only when the sender is a device we know.
@@ -513,8 +513,9 @@ pub(super) fn v2ip_tiling(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
+    // A unit takes a window only from management.
     let p = rx.frame.payload();
-    if p.len() < 24 {
+    if p.len() < 24 || !manages(state, device, uid_at(p, 0)) {
         return;
     }
     let tiling = V2ipTilingConfig {

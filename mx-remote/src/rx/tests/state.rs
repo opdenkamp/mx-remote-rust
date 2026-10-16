@@ -329,7 +329,7 @@ fn a_frame_from_an_unknown_sender_is_not_acted_on() {
     h.feed_as(
         stranger,
         op::SYS_HELLO,
-        &hello_payload(0x28, "ONEIP", "SG0002", "4.8.0", DeviceFeature::V2IP_SOURCE),
+        &hello_payload(0x28, "Ctrl", "SG0002", "4.8.0", DeviceFeature::MANAGER),
     );
     h.feed_as(stranger, op::V2IP_MANUAL_SRC_SWITCH, &switch);
     assert!(
@@ -512,4 +512,56 @@ fn a_device_that_has_not_sent_its_bays_is_not_fully_described() {
     );
     assert!(h.complete());
     assert!(h.saw(|e| matches!(e, Event::DeviceConfigComplete { .. })));
+}
+
+/// A unit takes a write about itself from the controller it follows, not
+/// from another unit claiming to control a mesh.
+#[test]
+fn management_is_the_controller_a_unit_follows() {
+    use crate::testing::hello_payload;
+
+    let mut h = Harness::new(5);
+    h.hello(0x2F, "ONEIP", "MG0001", DeviceFeature::V2IP_SINK);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    let (followed, other) = (uid_n(40), uid_n(41));
+    for (uid, features) in [
+        (followed, DeviceFeature::from_bits(0)),
+        (other, DeviceFeature::MESH_MASTER),
+    ] {
+        h.feed_as(
+            uid,
+            op::SYS_HELLO,
+            &hello_payload(0x2F, "ONEIP", "MG0002", "4.8.0", features),
+        );
+    }
+    let unit = h.sender;
+    let hide = |hidden: u8| {
+        let mut p = unit.as_bytes().to_vec();
+        p.extend_from_slice(&[0, 0, hidden, 0, 0, 0, 0, 0]);
+        p
+    };
+
+    // Until the unit says whom it follows, a controller's own claim stands.
+    h.feed_as(other, op::BAY_HIDE, &hide(1));
+    assert_eq!(h.bay(0).hidden, Some(true));
+
+    let mut mesh = poisoned(40);
+    mesh[0] = 0xFF;
+    mesh[4..20].copy_from_slice(followed.as_bytes());
+    h.feed(op::MESH_OPERATION, &mesh);
+    h.feed_as(other, op::BAY_HIDE, &hide(0));
+    assert_eq!(h.bay(0).hidden, Some(true), "another mesh's controller");
+    h.feed_as(followed, op::BAY_HIDE, &hide(0));
+    assert_eq!(h.bay(0).hidden, Some(false), "the controller it follows");
 }

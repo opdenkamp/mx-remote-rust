@@ -260,28 +260,6 @@ impl Device {
             || self.hello.features.has(DeviceFeature::V2IP_SOURCE)
     }
 
-    /// Whether a receiver would let this device write another device's
-    /// configuration.
-    ///
-    /// Two bits, because the two kinds of writer announce themselves
-    /// differently and neither implies the other.
-    /// [`DeviceFeature::MANAGER`] belongs to external management applications -
-    /// anything driving these devices that is not one of them, this library
-    /// included - and no device firmware ever sets it on itself, so testing it
-    /// alone would refuse every write a controller makes. A device that is
-    /// controlling its mesh announces [`DeviceFeature::MESH_MASTER`] instead.
-    ///
-    /// The bit has a hole a caller has to close elsewhere: a device sets it
-    /// only while it is both the controller and has bays mapped, so one
-    /// promoted before it has any carries neither bit while still being its
-    /// mesh's controller. What covers that window is the controller uid the
-    /// devices in that mesh report, which is the subject's question rather
-    /// than this device's.
-    pub(crate) fn is_management(&self) -> bool {
-        self.hello.features.has(DeviceFeature::MANAGER)
-            || self.hello.features.has(DeviceFeature::MESH_MASTER)
-    }
-
     /// Whether the device reports a V2IP sink, which is what carries the
     /// scaling settings.
     pub(crate) fn is_v2ip_sink(&self) -> bool {
@@ -491,9 +469,7 @@ impl Device {
     /// Whether the device has described itself fully.
     ///
     /// A management client is described by its hello alone: it has no bays or
-    /// links to send. That is [`DeviceFeature::MANAGER`] and not
-    /// [`Self::is_management`], whose other bit is set by a device that does
-    /// have bays.
+    /// links to send. That is [`DeviceFeature::MANAGER`], which no unit sets.
     pub(crate) fn configuration_complete(&self, now: Instant) -> bool {
         if self.hello.features.has(DeviceFeature::MANAGER) {
             return true;

@@ -1918,7 +1918,15 @@ fn a_manual_source_switch_and_a_config_sink_block_decode_alike() {
     stream_addr(&mut p, 32, "239.1.1.3", V2IP_PORT_ANC);
     p[40..44].copy_from_slice(&96000u32.to_le_bytes());
     p[44] = 6;
+    let controller = h.controller();
     h.feed(op::V2IP_MANUAL_SRC_SWITCH, &p);
+    assert!(h.device().v2ip_sink.is_none(), "taken from a unit");
+    h.feed_as(controller, op::V2IP_MANUAL_SRC_SWITCH, &p[..39]);
+    assert!(
+        h.device().v2ip_sink.is_none(),
+        "taken short of its anc port"
+    );
+    h.feed_as(controller, op::V2IP_MANUAL_SRC_SWITCH, &p);
 
     let sink = h.device().v2ip_sink.expect("no sink");
     assert_eq!(sink.addresses.video.ip, Ipv4Addr::new(239, 1, 1, 1));

@@ -47,6 +47,18 @@ impl Harness {
         self.feed_full(sender, op, PROTOCOL_VERSION, payload, Instant::now());
     }
 
+    /// Registers a controller, which units take commands for each other from,
+    /// and returns its uid.
+    pub(super) fn controller(&mut self) -> DeviceUid {
+        let controller = uid_n(0xC1);
+        self.feed_as(
+            controller,
+            crate::wire::op::SYS_HELLO,
+            &hello_payload(0x2F, "Ctrl", "CTRL00C1", "4.8.0", DeviceFeature::MANAGER),
+        );
+        controller
+    }
+
     /// Feeds an audio features or links report, naming its sender at 4 as a
     /// unit does.
     pub(super) fn feed_audio_report(&mut self, payload: &[u8]) {

@@ -4,15 +4,15 @@
 //! Overlay sync, as a watcher sees it.
 
 use crate::event::Event;
-use crate::state::{Device, State};
+use crate::state::State;
 use crate::types::OSD_SYNC_RECORDS_MAX;
 use crate::types::{
     OsdCaption, OsdLogo, OsdSync, OsdSyncReport, OsdSyncRequest, OsdSyncSetting, OsdSyncSlot,
     OsdSyncValue,
 };
 use crate::wire::{
-    cstr, osd_kind, osd_setting, DeviceUid, OsdCaptionAlign, OsdCaptionFormat, OsdSyncSize,
-    OsdSyncState, OsdSyncWhat, OSD_BACKGROUND_SIZE, OSD_CAPTION_SIZE, OSD_FONT_LEN,
+    cstr, osd_kind, osd_setting, DeviceFeature, DeviceUid, OsdCaptionAlign, OsdCaptionFormat,
+    OsdSyncSize, OsdSyncState, OsdSyncWhat, OSD_BACKGROUND_SIZE, OSD_CAPTION_SIZE, OSD_FONT_LEN,
     OSD_HEADER_SIZE, OSD_LOGO_SIZE, OSD_REPORT_SIZE, OSD_REQUEST_SIZE, OSD_REQUEST_SOURCE_AT,
     OSD_SETTING_BODY_AT, OSD_SYNC_SIZE, OSD_SYNC_SLOTS_AT, OSD_SYNC_SLOT_SIZE, OSD_SYNC_VERSION,
 };
@@ -115,9 +115,17 @@ fn request(
     });
 }
 
+/// Whether units take an overlay sync from `uid`: it announces
+/// [`DeviceFeature::MANAGER`], or it is the controller units follow, or, while
+/// no unit has said whom it follows, it announces itself as one.
 fn is_management(state: &State, uid: DeviceUid) -> bool {
-    state.device(uid).is_some_and(Device::is_management)
-        || state.devices.values().any(|d| d.mesh_master == uid)
+    let Some(device) = state.device(uid) else {
+        return false;
+    };
+    let followed = state.devices.values().filter(|d| !d.mesh_master.is_zero());
+    device.hello.features.has(DeviceFeature::MANAGER)
+        || followed.clone().any(|d| d.mesh_master == uid)
+        || followed.count() == 0 && device.hello.features.has(DeviceFeature::MESH_MASTER)
 }
 
 fn sync(p: &[u8], seq: u16, target: DeviceUid) -> Option<OsdSync> {
