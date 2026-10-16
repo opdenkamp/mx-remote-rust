@@ -564,8 +564,8 @@ impl Device {
             return;
         }
         let is_v2ip = self.is_v2ip();
-        let video = self.routed_source(cfg.video_source);
-        let audio = self.routed_source(cfg.audio_source);
+        let video = self.routed_source(u16::from(cfg.video_source));
+        let audio = self.routed_source(u16::from(cfg.audio_source));
         let is_new = !self.bays.contains_key(&u16::from(cfg.port));
 
         let bay = self
@@ -592,8 +592,16 @@ impl Device {
             bay.set_signal_type(cfg.signal_type.clone(), ev);
         }
         if bay.is_output() {
-            bay.set_video_source(video, ev);
-            bay.set_audio_source(audio, ev);
+            // A port that names no source, 0xFF among them, keeps the route:
+            // a unit sends 0xFF for both whenever either is unrouted, or
+            // routed to a port too wide for the field. Its routing change
+            // report is what clears a route.
+            if video.is_some() {
+                bay.set_video_source(video, ev);
+            }
+            if audio.is_some() {
+                bay.set_audio_source(audio, ev);
+            }
         } else {
             bay.set_rc_type(cfg.rc_type, ev);
             bay.set_edid_profile(cfg.edid_profile, ev);
@@ -664,8 +672,7 @@ impl Device {
     ///
     /// A V2IP unit's input port names a bay even before the unit's mappings
     /// have created it, as they do after its bay configuration.
-    fn routed_source(&self, port: u8) -> Option<BayUid> {
-        let port = u16::from(port);
+    pub(crate) fn routed_source(&self, port: u16) -> Option<BayUid> {
         let named = self.bays.contains_key(&port)
             || (self.is_v2ip()
                 && self

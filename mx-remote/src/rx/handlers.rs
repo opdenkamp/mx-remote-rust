@@ -148,13 +148,9 @@ pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
     if device.bay(sink_port).is_none() {
         return;
     }
-    let resolve = |port: Option<u16>| {
-        port.filter(|p| device.bay(*p).is_some())
-            .map(|p| BayUid::new(sender, p))
-    };
     let unrouted = f.u16(4) == Some(ROUTE_NONE);
-    let video = resolve(f.u16(4));
-    let audio = resolve(f.u16(7));
+    let video = f.u16(4).and_then(|p| device.routed_source(p));
+    let audio = f.u16(7).and_then(|p| device.routed_source(p));
 
     if let Some(bay) = state.bay_mut(BayUid::new(sender, sink_port)) {
         if unrouted {

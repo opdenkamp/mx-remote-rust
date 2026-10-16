@@ -232,6 +232,7 @@ fn a_released_unit_routes_in_its_own_numbering() {
         (143, false),
     ];
     for (port, input) in cases {
+        h.feed(op::MX_ROUTE, &route(16, 0xFFFE, 0xFFFE));
         out[3] = port;
         out[4] = port;
         h.feed(op::SYS_BAY_CONFIG, &out);
@@ -418,6 +419,54 @@ fn a_route_names_a_mesh_input_before_its_mapping() {
     // Only an input port is a source.
     out[3] = 128;
     h.feed(op::SYS_BAY_CONFIG, &out);
+    assert_eq!(h.bay(127).video_source, Some(BayUid::new(h.sender, 126)));
+
+    // So it is in the routing change report.
+    h.feed(op::MX_ROUTE, &route(127, 3, 4));
+    assert_eq!(h.bay(127).video_source, Some(BayUid::new(h.sender, 3)));
+    let audio = h.bay(127).effective_audio_source();
+    assert_eq!(audio, Some(BayUid::new(h.sender, 4)));
+    h.feed(op::MX_ROUTE, &route(127, 128, 128));
+    assert_eq!(h.bay(127).video_source, Some(BayUid::new(h.sender, 3)));
+}
+
+/// A 0x08 routing change as a unit sends it: u16 ports, the sink at 0, the
+/// selected input at 2, video at 4, the scrambled flag at 6 and audio at 7.
+fn route(sink: u16, video: u16, audio: u16) -> Vec<u8> {
+    let mut p = poisoned(9);
+    p[0..2].copy_from_slice(&sink.to_le_bytes());
+    p[2..4].copy_from_slice(&video.to_le_bytes());
+    p[4..6].copy_from_slice(&video.to_le_bytes());
+    p[7..9].copy_from_slice(&audio.to_le_bytes());
+    p
+}
+
+/// A unit reports 0xFF for both of an output's sources whenever either is
+/// unrouted, so its bay configuration keeps the route; the routing change
+/// report clears it.
+#[test]
+fn a_route_is_cleared_only_by_a_routing_change() {
+    let mut h = receiver(32);
+    let mut out = bay_config_rec(
+        127,
+        1,
+        0,
+        "Output 1",
+        "Lounge",
+        BayStatus::NONE,
+        BayFeatures::HDMI_OUT | BayFeatures::V2IP_SINK_LOCAL,
+    );
+    out[3] = 2;
+    out[4] = 3;
+    h.feed(op::SYS_BAY_CONFIG, &out);
+    out[3] = 0xFF;
+    out[4] = 0xFF;
+    h.feed(op::SYS_BAY_CONFIG, &out);
+    let at = |port| Some(BayUid::new(h.sender, port));
+    assert_eq!(h.bay(127).video_source, at(2));
+    assert_eq!(h.bay(127).effective_audio_source(), at(3));
+
+    h.feed(op::MX_ROUTE, &route(127, 0xFFFE, 0xFFFE));
     assert_eq!(h.bay(127).video_source, None);
 }
 
