@@ -161,3 +161,61 @@ pub struct OsdSyncReport {
     /// Why it failed or refused any.
     pub reason: String,
 }
+
+/// The most settings one sync carries.
+pub const OSD_SYNC_RECORDS_MAX: usize = 128;
+
+/// The longest caption font name, in bytes.
+pub const OSD_SYNC_FONT_MAX: usize = 31;
+
+/// The longest caption text a unit shows, in bytes. It cuts a longer one
+/// short.
+pub const OSD_SYNC_TEXT_MAX: usize = 360;
+
+/// The largest logo image a unit takes, in bytes.
+pub const OSD_SYNC_IMAGE_MAX: usize = 512 * 1024;
+
+/// The widest and tallest logo image a unit takes, in pixels.
+pub const OSD_SYNC_IMAGE_WIDTH_MAX: u32 = 1920;
+/// See [`OSD_SYNC_IMAGE_WIDTH_MAX`].
+pub const OSD_SYNC_IMAGE_HEIGHT_MAX: u32 = 1080;
+
+/// The largest size a logo is shown at, in percent.
+pub const OSD_SYNC_PERCENT_MAX: u8 = 100;
+
+/// One setting of a sync this client sends.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OsdSyncEntry {
+    /// The output size it applies at.
+    pub size: OsdSyncSize,
+    /// The layers it applies to, a bit per layer. A unit leaves out the
+    /// layers it does not have, and skips the setting when none is left.
+    pub layers: u16,
+    /// The fields it gives, as in [`OsdSyncSetting::set`]. A field given its
+    /// default value goes back to the layout's.
+    pub set: u16,
+    /// What it sets.
+    pub value: OsdSyncValue,
+}
+
+/// The logo image for one slot.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OsdSyncImage {
+    /// The PNG. Empty empties the slot.
+    pub png: Vec<u8>,
+    /// The size it is shown at: 0 at its own pixels, 1 to 100 its longer
+    /// side as a percent of the large output's width.
+    pub percent: u8,
+}
+
+/// What this client has units copy.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OsdSyncContent {
+    /// The kinds of setting it copies.
+    /// [`OsdSyncWhat::LOGO_SLOTS`] follows from `images`.
+    pub what: OsdSyncWhat,
+    /// The settings, which units write in this order.
+    pub entries: Vec<OsdSyncEntry>,
+    /// The four logo slots, or `None` to leave every unit's own.
+    pub images: Option<[OsdSyncImage; OSD_SYNC_SLOTS]>,
+}

@@ -67,6 +67,9 @@ pub struct mxr_config_t {
     /// Where the identifier is kept. Null means `.mxr-uid` in the user's home
     /// directory.
     pub uid_path: *const c_char,
+    /// The TCP port units fetch an overlay sync's logo images from. Zero
+    /// picks a free one when the first sync with images is sent.
+    pub logo_port: u16,
 }
 
 /// Reads an address argument, where null means "not set".
@@ -128,6 +131,7 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.name = name.map(str::to_owned);
     config.uid = uid;
     config.uid_path = uid_path.map(PathBuf::from);
+    config.logo_port = (c.logo_port != 0).then_some(c.logo_port);
     Ok(config)
 }
 

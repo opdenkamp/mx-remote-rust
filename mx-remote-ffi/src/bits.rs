@@ -970,6 +970,64 @@ pub const MXR_OSD_SYNC_STATE_FAILED: u8 = 2;
 /// Kept for later, as the unit's video processor is off in power save.
 pub const MXR_OSD_SYNC_STATE_DEFERRED: u8 = 3;
 
+// ---- overlay sync settings, in `mxr_osd_sync_entry_t` ----
+
+/// The setting sets a caption.
+pub const MXR_OSD_SYNC_TYPE_CAPTION: u8 = 0;
+/// The setting sets which logo is shown, and where.
+pub const MXR_OSD_SYNC_TYPE_LOGO: u8 = 1;
+/// The setting sets a background colour.
+pub const MXR_OSD_SYNC_TYPE_BACKGROUND: u8 = 2;
+
+/// Large outputs, which every value but `SMALL` also means.
+pub const MXR_OSD_SYNC_SIZE_LARGE: u8 = 1;
+/// Small outputs.
+pub const MXR_OSD_SYNC_SIZE_SMALL: u8 = 2;
+
+/// A caption's lines aligned to the left.
+pub const MXR_OSD_CAPTION_ALIGN_LEFT: u8 = 0;
+/// Centred.
+pub const MXR_OSD_CAPTION_ALIGN_CENTRE: u8 = 1;
+/// To the right.
+pub const MXR_OSD_CAPTION_ALIGN_RIGHT: u8 = 2;
+/// The layout's default.
+pub const MXR_OSD_CAPTION_ALIGN_DEFAULT: u8 = 0xFF;
+
+/// A caption's text read as plain text.
+pub const MXR_OSD_CAPTION_FORMAT_PLAIN: u8 = 0;
+/// As Markdown.
+pub const MXR_OSD_CAPTION_FORMAT_MARKDOWN: u8 = 1;
+/// The layout's default.
+pub const MXR_OSD_CAPTION_FORMAT_DEFAULT: u8 = 0xFF;
+
+/// The caption fields a setting gives. A field left out keeps what the unit
+/// has.
+pub const MXR_OSD_CAPTION_FIELD_FONT: u16 = 1 << 0;
+/// The size.
+pub const MXR_OSD_CAPTION_FIELD_SIZE: u16 = 1 << 1;
+/// The horizontal position.
+pub const MXR_OSD_CAPTION_FIELD_X: u16 = 1 << 2;
+/// The vertical position.
+pub const MXR_OSD_CAPTION_FIELD_Y: u16 = 1 << 3;
+/// The alignment.
+pub const MXR_OSD_CAPTION_FIELD_ALIGN: u16 = 1 << 4;
+/// The format.
+pub const MXR_OSD_CAPTION_FIELD_FORMAT: u16 = 1 << 5;
+/// The colour.
+pub const MXR_OSD_CAPTION_FIELD_COLOUR: u16 = 1 << 6;
+/// The wrap width.
+pub const MXR_OSD_CAPTION_FIELD_WRAP: u16 = 1 << 7;
+/// The text.
+pub const MXR_OSD_CAPTION_FIELD_TEXT: u16 = 1 << 8;
+
+/// The logo fields a setting gives. A field left out keeps what the unit
+/// has.
+pub const MXR_OSD_LOGO_FIELD_LOGO: u16 = 1 << 0;
+/// The horizontal position.
+pub const MXR_OSD_LOGO_FIELD_X: u16 = 1 << 1;
+/// The vertical position.
+pub const MXR_OSD_LOGO_FIELD_Y: u16 = 1 << 2;
+
 // ---- reading the packed words ----
 
 /// The remote-control type a bay status word carries in bits 16-19.

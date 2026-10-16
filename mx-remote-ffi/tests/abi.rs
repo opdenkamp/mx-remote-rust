@@ -36,6 +36,7 @@ fn client(name: &CStr, uid: &CStr) -> *mut mxr_remote_t {
         name: name.as_ptr(),
         uid: uid.as_ptr(),
         uid_path: ptr::null(),
+        logo_port: 0,
     };
     // SAFETY: every pointer in the config is a live NUL-terminated string, and
     // a null callback table asks for no callbacks.
@@ -216,6 +217,7 @@ fn a_configuration_that_cannot_be_read_yields_no_client() {
         name: ptr::null(),
         uid: ptr::null(),
         uid_path: ptr::null(),
+        logo_port: 0,
     };
     // SAFETY: every non-null pointer in the config is a live NUL-terminated
     // string, and a null callback table asks for no callbacks.
@@ -419,7 +421,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 34] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 39] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_BAY_",
@@ -605,6 +607,36 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             core_bits(&enums, "OsdSyncState"),
             &[],
             4,
+        ),
+        (
+            "MXR_OSD_SYNC_SIZE_",
+            core_bits(&enums, "OsdSyncSize"),
+            &[],
+            2,
+        ),
+        (
+            "MXR_OSD_CAPTION_ALIGN_",
+            core_bits(&enums, "OsdCaptionAlign"),
+            &[],
+            4,
+        ),
+        (
+            "MXR_OSD_CAPTION_FORMAT_",
+            core_bits(&enums, "OsdCaptionFormat"),
+            &[],
+            3,
+        ),
+        (
+            "MXR_OSD_CAPTION_FIELD_",
+            core_bits(&enums, "OsdCaptionField"),
+            &[],
+            9,
+        ),
+        (
+            "MXR_OSD_LOGO_FIELD_",
+            core_bits(&enums, "OsdLogoField"),
+            &[],
+            3,
         ),
     ];
 
@@ -1465,6 +1497,83 @@ fn an_overlay_sync_of_a_device_never_heard_from_is_not_found() {
     // SAFETY: a live handle and a writable struct.
     let rc = unsafe { mxr_osd_sync_report(remote, uid_n(9), report.as_mut_ptr()) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(remote) };
+}
+
+#[test]
+fn the_overlay_sync_calls_check_their_arguments_first() {
+    // SAFETY: a null handle is what is under test.
+    let rc =
+        unsafe { mxr_send_osd_sync(ptr::null(), 1, ptr::null(), 0, ptr::null(), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    let remote = client(c"abi-osd-send", c"00000025.00000000.00000000.000000af");
+    let mut seq = 0x5A5Au16;
+    let background = mxr_osd_sync_entry_t {
+        kind: MXR_OSD_SYNC_TYPE_BACKGROUND,
+        size: MXR_OSD_SYNC_SIZE_LARGE,
+        layers: 1 << 4,
+        set: 1,
+        font: ptr::null(),
+        font_size: 0,
+        x: 0,
+        y: 0,
+        wrap: 0,
+        align: 0,
+        format: 0,
+        colour: 0x0010_2030,
+        text: ptr::null(),
+        logo: 0,
+    };
+
+    // SAFETY: a live handle, no entries and no images; a sync copying
+    // nothing is what is under test.
+    let rc = unsafe { mxr_send_osd_sync(remote, 0, ptr::null(), 0, ptr::null(), &mut seq) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    assert!(
+        last_error().contains("copying something"),
+        "the failure did not say why: {}",
+        last_error()
+    );
+    // SAFETY: a live handle and one entry; a logo of 5 is what is under test.
+    let rc = unsafe {
+        let mut logo = background;
+        logo.kind = MXR_OSD_SYNC_TYPE_LOGO;
+        logo.logo = 5;
+        mxr_send_osd_sync(
+            remote,
+            MXR_OSD_SYNC_WHAT_LOGO,
+            &logo,
+            1,
+            ptr::null(),
+            &mut seq,
+        )
+    };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    // A valid sync passes every check and fails only for the missing socket.
+    // SAFETY: a live handle and one entry with no strings.
+    let rc = unsafe {
+        mxr_send_osd_sync(
+            remote,
+            MXR_OSD_SYNC_WHAT_BACKGROUNDS,
+            &background,
+            1,
+            ptr::null(),
+            &mut seq,
+        )
+    };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
+    assert_eq!(seq, 0x5A5A, "a failed send writes no number");
+
+    // SAFETY: a live handle and a writable number.
+    let rc = unsafe { mxr_resend_osd_sync(remote, uid_n(9), &mut seq) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_clear_osd_sync(remote) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
 
     // SAFETY: the handle came from mxr_remote_new and is freed once.
     unsafe { mxr_remote_free(remote) };

@@ -19,22 +19,30 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, UNIX_EPOCH};
 
 use mx_remote::{
-    DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
-    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, UnitNetConfig, V2ipAudioFormat,
-    V2ipColourSpace, V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveLevel,
-    V2ipPowerSaveSchedule, V2ipPtpMode, V2ipRoute, V2ipRouteTarget, V2ipTestPattern, V2ipVlan,
-    V2ipVlanFlag, VideoWallWindow,
+    ControlError, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, UnitNetConfig,
+    V2ipAudioFormat, V2ipColourSpace, V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode,
+    V2ipPowerSaveLevel, V2ipPowerSaveSchedule, V2ipPtpMode, V2ipRoute, V2ipRouteTarget,
+    V2ipTestPattern, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
+};
+use mx_remote::{
+    OsdCaption, OsdCaptionAlign, OsdCaptionFormat, OsdLogo, OsdSyncContent, OsdSyncEntry,
+    OsdSyncImage, OsdSyncSize, OsdSyncValue, OsdSyncWhat,
 };
 
 use crate::abi::{
     fail, from_control, mxr_bay_uid_t, mxr_result_t, mxr_tribool_t, mxr_uid_t, opt_str, req_str,
+};
+use crate::bits::{
+    MXR_OSD_SYNC_TYPE_BACKGROUND, MXR_OSD_SYNC_TYPE_CAPTION, MXR_OSD_SYNC_TYPE_LOGO,
 };
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
 use crate::subsystems::{
     mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t,
     mxr_v2ip_ptp_settings_t, mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t,
+    MXR_OSD_SYNC_SLOTS,
 };
 
 /// A stream's sample rate and channel count.
@@ -2436,4 +2444,438 @@ pub unsafe extern "C" fn mxr_multiviewer_auto_route(
     with(handle, |r| {
         from_control(r.remote.multiviewer_auto_route(device.into()))
     })
+}
+
+// ---- overlay sync ----
+
+/// One setting of an overlay sync this client sends.
+///
+/// `kind` picks which fields are read: a caption reads `font` to `text`, a
+/// logo reads `logo`, `x` and `y`, and a background reads `colour`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_osd_sync_entry_t {
+    /// `MXR_OSD_SYNC_TYPE_*`.
+    pub kind: u8,
+    /// `MXR_OSD_SYNC_SIZE_*`: the output size it applies at.
+    pub size: u8,
+    /// The layers it applies to, a bit per layer.
+    pub layers: u16,
+    /// The fields it gives: `MXR_OSD_CAPTION_FIELD_*` for a caption,
+    /// `MXR_OSD_LOGO_FIELD_*` for a logo, and bit 0 for a background's
+    /// colour. A field given its default value goes back to the layout's.
+    pub set: u16,
+    /// A caption's font, null or empty for the layout's.
+    pub font: *const c_char,
+    /// A caption's size, zero for the layout's.
+    pub font_size: u16,
+    /// The horizontal position, `INT16_MIN` for the layout's.
+    pub x: i16,
+    /// The vertical position, `INT16_MIN` for the layout's.
+    pub y: i16,
+    /// A caption's wrap width in pixels: -1 automatic, 0 none, -2 the
+    /// layout's.
+    pub wrap: i16,
+    /// `MXR_OSD_CAPTION_ALIGN_*`.
+    pub align: u8,
+    /// `MXR_OSD_CAPTION_FORMAT_*`.
+    pub format: u8,
+    /// A caption's or background's colour as 0xRRGGBB, `UINT32_MAX` for the
+    /// layout's.
+    pub colour: u32,
+    /// A caption's text, null for none.
+    pub text: *const c_char,
+    /// The logo shown: 0 the built-in one, -1 none, 1 to 4 a slot.
+    pub logo: i8,
+}
+
+/// The logo image for one slot.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_osd_sync_image_t {
+    /// The PNG, null when `len` is zero.
+    pub png: *const u8,
+    /// Its size in bytes. Zero empties the slot.
+    pub len: usize,
+    /// The size it is shown at: 0 at its own pixels, 1 to 100 its longer
+    /// side as a percent of the large output's width.
+    pub percent: u8,
+}
+
+/// Reads one setting from the caller.
+///
+/// # Safety
+///
+/// `font` and `text` are null or NUL-terminated strings.
+unsafe fn osd_entry(e: &mxr_osd_sync_entry_t) -> Result<OsdSyncEntry, mxr_result_t> {
+    let value = match e.kind {
+        MXR_OSD_SYNC_TYPE_CAPTION => {
+            // SAFETY: the caller guarantees NUL-terminated strings or null.
+            let (font, text) = unsafe { (opt_str(e.font)?, opt_str(e.text)?) };
+            OsdSyncValue::Caption(OsdCaption {
+                font: font.unwrap_or_default().to_owned(),
+                size: e.font_size,
+                x: e.x,
+                y: e.y,
+                wrap: e.wrap,
+                align: OsdCaptionAlign::from_wire(e.align),
+                format: OsdCaptionFormat::from_wire(e.format),
+                colour: e.colour,
+                text: text.unwrap_or_default().to_owned(),
+            })
+        }
+        MXR_OSD_SYNC_TYPE_LOGO => OsdSyncValue::Logo(OsdLogo {
+            logo: e.logo,
+            x: e.x,
+            y: e.y,
+        }),
+        MXR_OSD_SYNC_TYPE_BACKGROUND => OsdSyncValue::Background(e.colour),
+        _ => {
+            return Err(fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "an overlay setting of a MXR_OSD_SYNC_TYPE_* kind",
+            ))
+        }
+    };
+    Ok(OsdSyncEntry {
+        size: OsdSyncSize::from_wire(e.size),
+        layers: e.layers,
+        set: e.set,
+        value,
+    })
+}
+
+/// Reads what the caller has units copy.
+///
+/// # Safety
+///
+/// `entries` is null or points at `count` entries, `images` is null or
+/// points at `MXR_OSD_SYNC_SLOTS` images, and every pointer in them is as
+/// their fields say.
+unsafe fn osd_content(
+    what: u8,
+    entries: *const mxr_osd_sync_entry_t,
+    count: usize,
+    images: *const mxr_osd_sync_image_t,
+) -> Result<OsdSyncContent, mxr_result_t> {
+    let entries: &[mxr_osd_sync_entry_t] = match (entries.is_null(), count) {
+        (_, 0) => &[],
+        (true, _) => {
+            return Err(fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "entries is null with a count above zero",
+            ))
+        }
+        // SAFETY: the caller guarantees count entries at entries.
+        (false, _) => unsafe { std::slice::from_raw_parts(entries, count) },
+    };
+    let entries = entries
+        .iter()
+        // SAFETY: the caller guarantees the strings in each entry.
+        .map(|e| unsafe { osd_entry(e) })
+        .collect::<Result<Vec<_>, _>>()?;
+    let images = if images.is_null() {
+        None
+    } else {
+        // SAFETY: the caller guarantees MXR_OSD_SYNC_SLOTS images at images.
+        let images = unsafe { std::slice::from_raw_parts(images, MXR_OSD_SYNC_SLOTS) };
+        let mut out: [OsdSyncImage; MXR_OSD_SYNC_SLOTS] = Default::default();
+        for (o, i) in out.iter_mut().zip(images) {
+            o.percent = i.percent;
+            if i.len == 0 {
+                continue;
+            }
+            if i.png.is_null() {
+                return Err(fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    "an image's png is null with a length above zero",
+                ));
+            }
+            // SAFETY: the caller guarantees len bytes at png.
+            o.png = unsafe { std::slice::from_raw_parts(i.png, i.len) }.to_vec();
+        }
+        Some(out)
+    };
+    Ok(OsdSyncContent {
+        what: OsdSyncWhat::from_bits(what),
+        entries,
+        images,
+    })
+}
+
+/// Reports a sync's number to a caller that asked for it.
+///
+/// # Safety
+///
+/// `out` is null or writable.
+unsafe fn sent_seq(result: Result<u16, ControlError>, out: *mut u16) -> mxr_result_t {
+    match result {
+        Ok(seq) => {
+            if !out.is_null() {
+                // SAFETY: the caller guarantees a writable u16 or null.
+                unsafe { out.write(seq) };
+            }
+            mxr_result_t::MXR_OK
+        }
+        Err(e) => from_control(Err(e)),
+    }
+}
+
+/// Has every unit copy the given overlay settings and logo images, and keeps
+/// them in place, writing the sync's number to `seq` when it is not null.
+///
+/// `what` is `MXR_OSD_SYNC_WHAT_*` bits; `MXR_OSD_SYNC_WHAT_LOGO_SLOTS`
+/// follows from `images`, which is null to leave every unit's own or
+/// `MXR_OSD_SYNC_SLOTS` images. The library keeps its own copies.
+///
+/// Units take it from the mesh controller or a management application,
+/// which this client announces itself as. Each unit fetches the images from
+/// an HTTP server this client runs on `mxr_config_t::logo_port`, then asks
+/// for the settings, which this client answers until the sync is replaced or
+/// `mxr_clear_osd_sync()`. Meanwhile it announces itself as the mesh's
+/// overlay sync manager, so a unit waking from power save takes this sync
+/// too, rather than the controller's. The controller can still send its own
+/// over it. `mxr_osd_sync_report()` on each unit says how it went.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a sync copying nothing, more than 128
+/// settings, a caption font over 31 or text over 360 bytes, a logo other than
+/// -1 to 4, or an image that is not a PNG of at most 512 KB and 1920 by 1080
+/// pixels, shown at over 100 percent; the sync held before stays. A sync
+/// that fails to go out leaves none held.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`. `entries` is
+/// null or points at `count` entries whose strings are null or
+/// NUL-terminated. `images` is null or points at `MXR_OSD_SYNC_SLOTS` images,
+/// each `png` null or pointing at `len` bytes. `seq` is null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_osd_sync(
+    remote: *const mxr_remote_t,
+    what: u8,
+    entries: *const mxr_osd_sync_entry_t,
+    count: usize,
+    images: *const mxr_osd_sync_image_t,
+    seq: *mut u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees the arrays and the strings in them.
+        let content = match unsafe { osd_content(what, entries, count, images) } {
+            Ok(content) => content,
+            Err(code) => return code,
+        };
+        // SAFETY: the caller guarantees a writable u16 or null.
+        unsafe { sent_seq(r.remote.send_osd_sync(content), seq) }
+    })
+}
+
+/// Has one unit copy the overlay sync this client holds again, writing the
+/// new sync's number to `seq` when it is not null. As `mxr_send_osd_sync()`.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` while no sync is held.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `seq` is
+/// null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_resend_osd_sync(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    seq: *mut u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees a writable u16 or null.
+        unsafe { sent_seq(r.remote.resend_osd_sync(device.into()), seq) }
+    })
+}
+
+/// Stops holding the overlay sync this client sent, and hands the overlay
+/// sync manager's part back to the controller. Units keep what they took.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_clear_osd_sync(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        r.remote.clear_osd_sync();
+        mxr_result_t::MXR_OK
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    //! The boundary tests open no socket, so a sync they send never goes
+    //! out and what it carried cannot be seen there. What the caller's
+    //! structs become is read here instead.
+
+    use std::ptr;
+
+    use super::*;
+
+    fn entry(kind: u8) -> mxr_osd_sync_entry_t {
+        mxr_osd_sync_entry_t {
+            kind,
+            size: 2,
+            layers: 0x2010,
+            set: 0x0155,
+            font: c"Sans".as_ptr(),
+            font_size: 0x0124,
+            x: -0x0203,
+            y: 0x0405,
+            wrap: -2,
+            align: 2,
+            format: 1,
+            colour: 0x00A1_B2C3,
+            text: c"No signal".as_ptr(),
+            logo: 3,
+        }
+    }
+
+    #[test]
+    fn each_kind_reads_its_own_fields() {
+        let entries = [
+            entry(MXR_OSD_SYNC_TYPE_CAPTION),
+            entry(MXR_OSD_SYNC_TYPE_LOGO),
+            entry(MXR_OSD_SYNC_TYPE_BACKGROUND),
+        ];
+        // SAFETY: three entries whose strings are literals; no images.
+        let c = unsafe { osd_content(0x05, entries.as_ptr(), 3, ptr::null()) }.expect("read");
+        assert_eq!(c.what, OsdSyncWhat::from_bits(0x05));
+        assert_eq!(c.images, None);
+        for e in &c.entries {
+            assert_eq!(e.size, OsdSyncSize::SMALL);
+            assert_eq!(e.layers, 0x2010);
+            assert_eq!(e.set, 0x0155);
+        }
+        assert_eq!(
+            c.entries[0].value,
+            OsdSyncValue::Caption(OsdCaption {
+                font: "Sans".to_owned(),
+                size: 0x0124,
+                x: -0x0203,
+                y: 0x0405,
+                wrap: -2,
+                align: OsdCaptionAlign::RIGHT,
+                format: OsdCaptionFormat::MARKDOWN,
+                colour: 0x00A1_B2C3,
+                text: "No signal".to_owned(),
+            })
+        );
+        assert_eq!(
+            c.entries[1].value,
+            OsdSyncValue::Logo(OsdLogo {
+                logo: 3,
+                x: -0x0203,
+                y: 0x0405,
+            })
+        );
+        assert_eq!(c.entries[2].value, OsdSyncValue::Background(0x00A1_B2C3));
+    }
+
+    #[test]
+    fn null_strings_read_as_empty() {
+        let mut e = entry(MXR_OSD_SYNC_TYPE_CAPTION);
+        e.font = ptr::null();
+        e.text = ptr::null();
+        // SAFETY: one entry with null strings; no images.
+        let c = unsafe { osd_content(1, &e, 1, ptr::null()) }.expect("read");
+        let OsdSyncValue::Caption(caption) = &c.entries[0].value else {
+            panic!("not a caption");
+        };
+        assert_eq!((caption.font.as_str(), caption.text.as_str()), ("", ""));
+    }
+
+    #[test]
+    fn images_are_copied_slot_by_slot() {
+        let png = [0x89u8, b'P', b'N', b'G'];
+        let images: [mxr_osd_sync_image_t; MXR_OSD_SYNC_SLOTS] = [
+            mxr_osd_sync_image_t {
+                png: png.as_ptr(),
+                len: 4,
+                percent: 25,
+            },
+            mxr_osd_sync_image_t {
+                png: ptr::null(),
+                len: 0,
+                percent: 0,
+            },
+            mxr_osd_sync_image_t {
+                png: png.as_ptr(),
+                len: 2,
+                percent: 100,
+            },
+            mxr_osd_sync_image_t {
+                png: png.as_ptr(),
+                len: 0,
+                percent: 7,
+            },
+        ];
+        // SAFETY: four images, each png pointing at len bytes or more.
+        let c = unsafe { osd_content(1, ptr::null(), 0, images.as_ptr()) }.expect("read");
+        let got = c.images.expect("images");
+        assert_eq!(got[0].png, png);
+        assert_eq!(got[0].percent, 25);
+        assert!(got[1].png.is_empty());
+        assert_eq!(got[2].png, &png[..2]);
+        assert_eq!(got[2].percent, 100);
+        assert!(got[3].png.is_empty());
+        assert_eq!(got[3].percent, 7);
+    }
+
+    #[test]
+    fn a_sent_sync_reports_its_number_and_a_failed_one_does_not() {
+        let mut seq = 0u16;
+        // SAFETY: a writable u16.
+        assert_eq!(
+            unsafe { sent_seq(Ok(0xA1B2), &mut seq) },
+            mxr_result_t::MXR_OK
+        );
+        assert_eq!(seq, 0xA1B2);
+        // SAFETY: a null output is allowed.
+        assert_eq!(
+            unsafe { sent_seq(Ok(1), ptr::null_mut()) },
+            mxr_result_t::MXR_OK
+        );
+        let refused = Err(ControlError::InvalidRequest("no overlay sync is held"));
+        // SAFETY: a writable u16.
+        let rc = unsafe { sent_seq(refused, &mut seq) };
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+        assert_eq!(seq, 0xA1B2);
+    }
+
+    #[test]
+    fn what_the_caller_cannot_mean_is_refused() {
+        let bad = entry(3);
+        // SAFETY: one entry; no images.
+        let r = unsafe { osd_content(1, &bad, 1, ptr::null()) };
+        assert!(
+            matches!(r, Err(mxr_result_t::MXR_ERR_INVALID_ARGUMENT)),
+            "kind"
+        );
+        // SAFETY: null entries with a count is what is under test.
+        let r = unsafe { osd_content(1, ptr::null(), 1, ptr::null()) };
+        assert!(
+            matches!(r, Err(mxr_result_t::MXR_ERR_INVALID_ARGUMENT)),
+            "entries"
+        );
+        let images = [mxr_osd_sync_image_t {
+            png: ptr::null(),
+            len: 1,
+            percent: 0,
+        }; MXR_OSD_SYNC_SLOTS];
+        // SAFETY: four images; a null png with a length is what is under test.
+        let r = unsafe { osd_content(1, ptr::null(), 0, images.as_ptr()) };
+        assert!(
+            matches!(r, Err(mxr_result_t::MXR_ERR_INVALID_ARGUMENT)),
+            "png"
+        );
+    }
 }

@@ -6,6 +6,8 @@
 
 mod control;
 mod info;
+mod logo_server;
+mod osd;
 mod schedule;
 
 #[cfg(test)]
@@ -22,7 +24,7 @@ use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -37,6 +39,7 @@ use crate::wire::{
 
 pub use control::ControlError;
 pub use info::{BayInfo, DeviceInfo};
+use osd::OsdSender;
 use schedule::Schedule;
 
 /// The name this client advertises when the caller sets none.
@@ -110,6 +113,9 @@ pub struct Config {
     /// Where the identifier is kept. Unset means `.mxr-uid` in the user's home
     /// directory.
     pub uid_path: Option<PathBuf>,
+    /// The TCP port units fetch an overlay sync's logo images from. Unset
+    /// picks a free one when the first sync with images is sent.
+    pub logo_port: Option<u16>,
 }
 
 /// Everything the threads share.
@@ -121,6 +127,10 @@ struct Shared {
     tx: Mutex<Tx>,
     schedule: Mutex<Schedule>,
     network: Mutex<Network>,
+    osd: Mutex<OsdSender>,
+    /// Woken when units ask for overlay settings.
+    osd_queued: Condvar,
+    logo_port: Option<u16>,
     closing: AtomicBool,
 }
 
@@ -201,6 +211,9 @@ impl Remote {
                     interface: config.interface,
                     broadcast: config.broadcast,
                 }),
+                osd: Mutex::new(OsdSender::new()),
+                osd_queued: Condvar::new(),
+                logo_port: config.logo_port,
                 closing: AtomicBool::new(false),
             }),
             workers: Mutex::new(Vec::new()),
@@ -229,6 +242,8 @@ impl Remote {
         for worker in std::mem::take(&mut *lock(&self.workers)) {
             let _ = worker.join();
         }
+        // A closed client answers no unit, so it holds no sync either.
+        self.shared.drop_osd_sync();
         // Only once no thread can still be reading from it: a descriptor
         // released while another thread is parked on it can be reissued to
         // something else before that thread returns.
@@ -243,6 +258,7 @@ impl Remote {
         for (name, body) in [
             ("mxr-rx", Shared::receive_loop as fn(&Shared)),
             ("mxr-probe", Shared::probe_loop as fn(&Shared)),
+            ("mxr-osd", Shared::osd_loop as fn(&Shared)),
         ] {
             let shared = Arc::clone(&self.shared);
             workers.push(
@@ -578,13 +594,14 @@ impl Shared {
     /// clock, and the one frame that may add a hello here is a ping addressed
     /// to this client, which asks for exactly that.
     fn process_datagram(&self, data: &[u8], from: Ipv4Addr) {
-        let (events, hello_requested, state_requests) = {
+        let (events, hello_requested, state_requests, osd_requests) = {
             let mut state = lock(&self.state);
             let events = process_frame(&mut state, data, Some(from), Instant::now());
             (
                 events,
                 std::mem::take(&mut state.hello_requested),
                 std::mem::take(&mut state.state_requests),
+                std::mem::take(&mut state.osd_requests),
             )
         };
         self.dispatch(events);
@@ -593,6 +610,9 @@ impl Shared {
         }
         for device in state_requests {
             self.request_state(device);
+        }
+        if !osd_requests.is_empty() {
+            self.answer_osd_requests(osd_requests);
         }
     }
 
@@ -628,13 +648,21 @@ impl Shared {
     /// rather than costing a whole interval of silence, which matters most at
     /// startup and after a network blip: exactly when being heard is worth the
     /// most.
+    ///
+    /// While it holds an overlay sync it also announces itself as the mesh's
+    /// overlay sync manager, which is what has the controller leave units'
+    /// requests for a new sync to it.
     fn announce(&self) {
+        let mut features = DeviceFeature::MANAGER;
+        if lock(&self.osd).holds() {
+            features |= DeviceFeature::OSD_SYNC;
+        }
         let payload = build_hello(
             PROTOCOL_VERSION,
             &self.name,
             CLIENT_SERIAL,
             VERSION,
-            DeviceFeature::MANAGER.bits(),
+            features.bits(),
         );
         match self.send(&Addressee::Broadcast, op::SYS_HELLO, &payload) {
             Ok(n) if n > 0 => lock(&self.schedule).announced(Instant::now()),

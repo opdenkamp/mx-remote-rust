@@ -1611,6 +1611,128 @@
 #define MXR_OSD_SYNC_STATE_DEFERRED 3
 
 /**
+ * The setting sets a caption.
+ */
+#define MXR_OSD_SYNC_TYPE_CAPTION 0
+
+/**
+ * The setting sets which logo is shown, and where.
+ */
+#define MXR_OSD_SYNC_TYPE_LOGO 1
+
+/**
+ * The setting sets a background colour.
+ */
+#define MXR_OSD_SYNC_TYPE_BACKGROUND 2
+
+/**
+ * Large outputs, which every value but `SMALL` also means.
+ */
+#define MXR_OSD_SYNC_SIZE_LARGE 1
+
+/**
+ * Small outputs.
+ */
+#define MXR_OSD_SYNC_SIZE_SMALL 2
+
+/**
+ * A caption's lines aligned to the left.
+ */
+#define MXR_OSD_CAPTION_ALIGN_LEFT 0
+
+/**
+ * Centred.
+ */
+#define MXR_OSD_CAPTION_ALIGN_CENTRE 1
+
+/**
+ * To the right.
+ */
+#define MXR_OSD_CAPTION_ALIGN_RIGHT 2
+
+/**
+ * The layout's default.
+ */
+#define MXR_OSD_CAPTION_ALIGN_DEFAULT 255
+
+/**
+ * A caption's text read as plain text.
+ */
+#define MXR_OSD_CAPTION_FORMAT_PLAIN 0
+
+/**
+ * As Markdown.
+ */
+#define MXR_OSD_CAPTION_FORMAT_MARKDOWN 1
+
+/**
+ * The layout's default.
+ */
+#define MXR_OSD_CAPTION_FORMAT_DEFAULT 255
+
+/**
+ * The caption fields a setting gives. A field left out keeps what the unit
+ * has.
+ */
+#define MXR_OSD_CAPTION_FIELD_FONT (1 << 0)
+
+/**
+ * The size.
+ */
+#define MXR_OSD_CAPTION_FIELD_SIZE (1 << 1)
+
+/**
+ * The horizontal position.
+ */
+#define MXR_OSD_CAPTION_FIELD_X (1 << 2)
+
+/**
+ * The vertical position.
+ */
+#define MXR_OSD_CAPTION_FIELD_Y (1 << 3)
+
+/**
+ * The alignment.
+ */
+#define MXR_OSD_CAPTION_FIELD_ALIGN (1 << 4)
+
+/**
+ * The format.
+ */
+#define MXR_OSD_CAPTION_FIELD_FORMAT (1 << 5)
+
+/**
+ * The colour.
+ */
+#define MXR_OSD_CAPTION_FIELD_COLOUR (1 << 6)
+
+/**
+ * The wrap width.
+ */
+#define MXR_OSD_CAPTION_FIELD_WRAP (1 << 7)
+
+/**
+ * The text.
+ */
+#define MXR_OSD_CAPTION_FIELD_TEXT (1 << 8)
+
+/**
+ * The logo fields a setting gives. A field left out keeps what the unit
+ * has.
+ */
+#define MXR_OSD_LOGO_FIELD_LOGO (1 << 0)
+
+/**
+ * The horizontal position.
+ */
+#define MXR_OSD_LOGO_FIELD_X (1 << 1)
+
+/**
+ * The vertical position.
+ */
+#define MXR_OSD_LOGO_FIELD_Y (1 << 2)
+
+/**
  * The colour space a V2IP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -2549,6 +2671,94 @@ typedef struct {
 } mxr_video_wall_window_t;
 
 /**
+ * One setting of an overlay sync this client sends.
+ *
+ * `kind` picks which fields are read: a caption reads `font` to `text`, a
+ * logo reads `logo`, `x` and `y`, and a background reads `colour`.
+ */
+typedef struct {
+  /**
+   * `MXR_OSD_SYNC_TYPE_*`.
+   */
+  uint8_t kind;
+  /**
+   * `MXR_OSD_SYNC_SIZE_*`: the output size it applies at.
+   */
+  uint8_t size;
+  /**
+   * The layers it applies to, a bit per layer.
+   */
+  uint16_t layers;
+  /**
+   * The fields it gives: `MXR_OSD_CAPTION_FIELD_*` for a caption,
+   * `MXR_OSD_LOGO_FIELD_*` for a logo, and bit 0 for a background's
+   * colour. A field given its default value goes back to the layout's.
+   */
+  uint16_t set;
+  /**
+   * A caption's font, null or empty for the layout's.
+   */
+  const char *font;
+  /**
+   * A caption's size, zero for the layout's.
+   */
+  uint16_t font_size;
+  /**
+   * The horizontal position, `INT16_MIN` for the layout's.
+   */
+  int16_t x;
+  /**
+   * The vertical position, `INT16_MIN` for the layout's.
+   */
+  int16_t y;
+  /**
+   * A caption's wrap width in pixels: -1 automatic, 0 none, -2 the
+   * layout's.
+   */
+  int16_t wrap;
+  /**
+   * `MXR_OSD_CAPTION_ALIGN_*`.
+   */
+  uint8_t align;
+  /**
+   * `MXR_OSD_CAPTION_FORMAT_*`.
+   */
+  uint8_t format;
+  /**
+   * A caption's or background's colour as 0xRRGGBB, `UINT32_MAX` for the
+   * layout's.
+   */
+  uint32_t colour;
+  /**
+   * A caption's text, null for none.
+   */
+  const char *text;
+  /**
+   * The logo shown: 0 the built-in one, -1 none, 1 to 4 a slot.
+   */
+  int8_t logo;
+} mxr_osd_sync_entry_t;
+
+/**
+ * The logo image for one slot.
+ */
+typedef struct {
+  /**
+   * The PNG, null when `len` is zero.
+   */
+  const uint8_t *png;
+  /**
+   * Its size in bytes. Zero empties the slot.
+   */
+  size_t len;
+  /**
+   * The size it is shown at: 0 at its own pixels, 1 to 100 its longer
+   * side as a percent of the large output's width.
+   */
+  uint8_t percent;
+} mxr_osd_sync_image_t;
+
+/**
  * What a device is, and what it is doing.
  */
 typedef struct {
@@ -2971,6 +3181,11 @@ typedef struct {
    * directory.
    */
   const char *uid_path;
+  /**
+   * The TCP port units fetch an overlay sync's logo images from. Zero
+   * picks a free one when the first sync with images is sent.
+   */
+  uint16_t logo_port;
 } mxr_config_t;
 
 /**
@@ -6287,6 +6502,66 @@ mxr_result_t mxr_set_multiviewer_input_source(const mxr_remote_t *remote,
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_multiviewer_auto_route(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Has every unit copy the given overlay settings and logo images, and keeps
+ * them in place, writing the sync's number to `seq` when it is not null.
+ *
+ * `what` is `MXR_OSD_SYNC_WHAT_*` bits; `MXR_OSD_SYNC_WHAT_LOGO_SLOTS`
+ * follows from `images`, which is null to leave every unit's own or
+ * `MXR_OSD_SYNC_SLOTS` images. The library keeps its own copies.
+ *
+ * Units take it from the mesh controller or a management application,
+ * which this client announces itself as. Each unit fetches the images from
+ * an HTTP server this client runs on `mxr_config_t::logo_port`, then asks
+ * for the settings, which this client answers until the sync is replaced or
+ * `mxr_clear_osd_sync()`. Meanwhile it announces itself as the mesh's
+ * overlay sync manager, so a unit waking from power save takes this sync
+ * too, rather than the controller's. The controller can still send its own
+ * over it. `mxr_osd_sync_report()` on each unit says how it went.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a sync copying nothing, more than 128
+ * settings, a caption font over 31 or text over 360 bytes, a logo other than
+ * -1 to 4, or an image that is not a PNG of at most 512 KB and 1920 by 1080
+ * pixels, shown at over 100 percent; the sync held before stays. A sync
+ * that fails to go out leaves none held.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`. `entries` is
+ * null or points at `count` entries whose strings are null or
+ * NUL-terminated. `images` is null or points at `MXR_OSD_SYNC_SLOTS` images,
+ * each `png` null or pointing at `len` bytes. `seq` is null or writable.
+ */
+mxr_result_t mxr_send_osd_sync(const mxr_remote_t *remote,
+                               uint8_t what,
+                               const mxr_osd_sync_entry_t *entries,
+                               size_t count,
+                               const mxr_osd_sync_image_t *images,
+                               uint16_t *seq);
+
+/**
+ * Has one unit copy the overlay sync this client holds again, writing the
+ * new sync's number to `seq` when it is not null. As `mxr_send_osd_sync()`.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` while no sync is held.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `seq` is
+ * null or writable.
+ */
+mxr_result_t mxr_resend_osd_sync(const mxr_remote_t *remote, mxr_uid_t device, uint16_t *seq);
+
+/**
+ * Stops holding the overlay sync this client sent, and hands the overlay
+ * sync manager's part back to the controller. Units keep what they took.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_clear_osd_sync(const mxr_remote_t *remote);
 
 /**
  * Fills `out` with what is known about a device.

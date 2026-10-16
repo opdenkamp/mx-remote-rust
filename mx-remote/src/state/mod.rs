@@ -21,6 +21,7 @@ use std::net::Ipv4Addr;
 use std::time::Instant;
 
 use crate::event::Event;
+use crate::types::OsdSyncRequest;
 use crate::wire::{BayFeatures, BayUid, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
@@ -41,6 +42,9 @@ pub(crate) struct State {
     /// Devices that may hold state this client never received, and have not
     /// yet been asked for it.
     pub(crate) state_requests: Vec<DeviceUid>,
+    /// Overlay sync requests this client may be the one to answer: those
+    /// asking for a new sync, and those naming this client as the source.
+    pub(crate) osd_requests: Vec<(DeviceUid, OsdSyncRequest)>,
 }
 
 impl State {
@@ -52,6 +56,7 @@ impl State {
             frames_received: 0,
             hello_requested: false,
             state_requests: Vec::new(),
+            osd_requests: Vec::new(),
         }
     }
 
