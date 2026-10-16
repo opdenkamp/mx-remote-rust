@@ -93,6 +93,17 @@ fn device_config_carries_dscp_and_rate() {
     );
     assert!(details.dscp.is_complete());
     assert_eq!(details.dscp.audio, Some(46));
+
+    // A marking for the video stream alone is not kept: a unit keeps the
+    // three only together.
+    let mut video_only = Cfg::addresses(sender, "239.9.9.9");
+    video_only.dscp_video = dscp(10);
+    h.feed(op::V2IP_DEVICE_CFG, &video_only.bytes());
+    let details = h.device().v2ip_details.expect("no details");
+    assert_eq!(
+        (details.dscp.video, details.dscp.audio),
+        (Some(34), Some(46))
+    );
 }
 
 #[test]

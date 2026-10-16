@@ -547,9 +547,8 @@ impl DeviceV2ipDetails {
         if self.tx_rate.is_none() {
             self.tx_rate = previous.tx_rate;
         }
-        // Firmware gates all three dscp bytes on the video byte's set bit
-        // alone, and stores whatever the other two carry.
-        if self.dscp.video.is_none() {
+        // A unit keeps the markings only when all three carry their set bit.
+        if !self.dscp.is_complete() {
             self.dscp = previous.dscp;
         }
         self.scaling = self.scaling.merge(previous.scaling);
