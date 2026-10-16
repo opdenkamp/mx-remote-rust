@@ -124,6 +124,16 @@ const STREAM_HDR: u8 = 1 << 4;
 /// library fills in from a signal report.
 const NO_SIGNAL: &str = "no signal";
 
+/// Where the timing block gives the active width and height.
+const VSYNC_H_ACTIVE: usize = 58;
+const VSYNC_V_ACTIVE: usize = 68;
+
+/// What a device calls a stream it detects but cannot take.
+const INVALID_SIGNAL: &str = "invalid signal";
+
+/// The support flag bit marking a stream as detected.
+const SUPPORT_STREAM_DETECTED: u8 = 1 << 0;
+
 /// The support-flags bit that says the stream block holds a real signal.
 const SUPPORT_STREAM_VALID: u8 = 1 << 1;
 
@@ -174,6 +184,7 @@ pub(super) fn signal_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     }
     let support_flags = p[2];
     let stream_flags = p[3];
+    let stream_detected = support_flags & SUPPORT_STREAM_DETECTED != 0;
     let stream_valid = support_flags & SUPPORT_STREAM_VALID != 0;
 
     let bay_block = &p[100..112];
@@ -190,30 +201,26 @@ pub(super) fn signal_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
         frame_rate = (frame_rate * 1000.0 / 1001.0 * 100.0).round() / 100.0;
     }
 
-    let signal_type = match lookup_svd(svd_id) {
-        Some(svd) if stream_valid && svd_id != 0 => {
-            let mut description = format!(
-                "{}x{} / {} / {}bpp",
-                svd.horizontal_active,
-                svd.vertical_active,
-                colour_space(video[1]),
-                video[2]
-            );
-            if stream_flags & STREAM_INTERLACED != 0 {
-                description.push_str(" interlaced");
-            }
-            if stream_flags & STREAM_HDR != 0 {
-                description.push_str(" HDR");
-            }
-            description.push_str(&format!(" / {frame_rate}Hz"));
-            description
+    // A stream with no mode in the CTA table is described by the active
+    // area its timing measures, as a device describes it.
+    let (h, v) = match lookup_svd(svd_id) {
+        Some(svd) if svd_id != 0 => (svd.horizontal_active, svd.vertical_active),
+        _ => (u16_at(p, VSYNC_H_ACTIVE), u16_at(p, VSYNC_V_ACTIVE)),
+    };
+    let signal_type = if !stream_detected {
+        NO_SIGNAL.to_owned()
+    } else if !stream_valid {
+        INVALID_SIGNAL.to_owned()
+    } else {
+        let mut description = format!("{h}x{v} / {} / {}bpp", colour_space(video[1]), video[2]);
+        if stream_flags & STREAM_INTERLACED != 0 {
+            description.push_str(" interlaced");
         }
-        // Spelled as the firmware spells it. A device sends its own signal
-        // description in its bay configuration, including this one for a bay
-        // with nothing on it, and both land in the same field: a second
-        // spelling here would put two states on a caller's screen where the
-        // device is describing one.
-        _ => NO_SIGNAL.to_owned(),
+        if stream_flags & STREAM_HDR != 0 {
+            description.push_str(" HDR");
+        }
+        description.push_str(&format!(" / {frame_rate}Hz"));
+        description
     };
 
     let details = BaySignalDetails {
@@ -225,8 +232,11 @@ pub(super) fn signal_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
         audio: audio_details(&p[24..40], support_flags),
     };
 
+    // The bay's status word is applied as a bay configuration's is, which is
+    // what says whether a signal is detected.
     if let Some(bay) = state.bay_mut(bay) {
+        bay.apply_bay_status(details.status, ev);
         bay.set_signal_details(details);
-        bay.apply_signal_status(stream_valid, Some(signal_type), ev);
+        bay.set_signal_type(signal_type, ev);
     }
 }

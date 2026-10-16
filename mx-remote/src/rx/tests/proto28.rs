@@ -801,9 +801,13 @@ fn a_captured_output_report_decodes_to_the_mode_it_names() {
 fn a_bay_with_no_signal_is_described_as_firmware_describes_it() {
     let mut h = captured_unit();
     let mut p = CAPTURED_INPUT_BAY;
-    p[2] &= !(1 << 1); // the stream block no longer holds a real signal
+    p[2] &= !(1 << 1); // a stream that is detected but not valid
     h.feed(op::BAY_SIGNAL_STATUS, &p);
+    assert_eq!(h.bay(0).signal_type.as_deref(), Some("invalid signal"));
 
+    p[2] &= !1; // no stream at all
+    p[102] &= !(1 << 3); // and the bay's status says so
+    h.feed(op::BAY_SIGNAL_STATUS, &p);
     assert_eq!(h.bay(0).signal_type.as_deref(), Some("no signal"));
     assert_eq!(h.bay(0).signal_detected, Some(false));
 }

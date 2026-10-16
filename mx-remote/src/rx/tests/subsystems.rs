@@ -642,20 +642,29 @@ fn svd_lookup_and_signal_status() {
     );
 
     let mut p = poisoned(112);
-    p[2] = 1 << 1; // support flags: the stream block is valid
+    p[2] = 0b11; // support flags: a stream is detected and valid
+    p[3] = 0; // stream flags: none
     p[40] = 16; // svd 16 (1920x1080)
     p[41] = 0; // RGB
     p[42] = 8; // 8 bits per component
-    p[48] = 60; // frame rate
+    p[48..50].copy_from_slice(&60u16.to_le_bytes()); // frame rate
     p[100..102].copy_from_slice(&2u16.to_le_bytes()); // port number
+    let status = BayStatus::SIGNAL_DETECTED | BayStatus::HPD_DETECTED;
+    p[102..106].copy_from_slice(&status.bits().to_le_bytes());
     h.feed(op::BAY_SIGNAL_STATUS, &p);
 
+    // The bay status word is applied as a bay configuration's is.
     let bay = h.bay(2);
     assert_eq!(bay.signal_detected, Some(true));
+    assert_eq!(bay.hpd_detected, Some(true));
     let described = bay.signal_type.clone().expect("no signal description");
-    assert_ne!(described, "no signal");
-    assert!(
-        described.starts_with("1920x1080 / RGB / 8bpp"),
-        "description = {described}"
-    );
+    assert_eq!(described, "1920x1080 / RGB / 8bpp / 60Hz");
+
+    // A mode the CTA table does not have is described by its timing.
+    p[40] = 0;
+    p[58..60].copy_from_slice(&1440u16.to_le_bytes()); // active width
+    p[68..70].copy_from_slice(&900u16.to_le_bytes()); // active height
+    h.feed(op::BAY_SIGNAL_STATUS, &p);
+    let described = h.bay(2).signal_type.clone().expect("no description");
+    assert_eq!(described, "1440x900 / RGB / 8bpp / 60Hz");
 }
