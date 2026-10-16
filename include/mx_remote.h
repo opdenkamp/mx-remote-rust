@@ -286,7 +286,7 @@
 #define MXR_BAY_STATUS_HIDDEN (1 << 1)
 
 /**
- * The bay has power.
+ * The amplifier zone the bay drives is powered on.
  */
 #define MXR_BAY_STATUS_POWERED (1 << 2)
 
@@ -2964,9 +2964,9 @@ typedef struct {
    */
   mxr_tribool_t faulty;
   /**
-   * Whether the bay is delivering power over the link.
+   * Whether the amplifier zone the bay drives is powered on.
    */
-  mxr_tribool_t poe_powered;
+  mxr_tribool_t zone_powered;
   /**
    * Whether an HDBaseT link is up.
    */
@@ -4024,9 +4024,9 @@ typedef struct {
    */
   mxr_bay_bool_cb on_hidden_changed;
   /**
-   * Power over Ethernet started or stopped supplying the bay.
+   * The amplifier zone the bay drives was powered on or off.
    */
-  mxr_bay_bool_cb on_poe_powered_changed;
+  mxr_bay_bool_cb on_zone_powered_changed;
   /**
    * The HDBaseT link came up or went down.
    */

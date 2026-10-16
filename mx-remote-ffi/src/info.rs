@@ -274,8 +274,8 @@ pub struct mxr_bay_info_t {
     pub hidden: mxr_tribool_t,
     /// Whether the device reports the bay as faulty.
     pub faulty: mxr_tribool_t,
-    /// Whether the bay is delivering power over the link.
-    pub poe_powered: mxr_tribool_t,
+    /// Whether the amplifier zone the bay drives is powered on.
+    pub zone_powered: mxr_tribool_t,
     /// Whether an HDBaseT link is up.
     pub hdbt_connected: mxr_tribool_t,
     /// Whether a signal is present.
@@ -551,7 +551,7 @@ impl mxr_bay_info_t {
             power_status: info.power_status.into(),
             hidden: info.hidden.into(),
             faulty: info.faulty.into(),
-            poe_powered: info.poe_powered.into(),
+            zone_powered: info.zone_powered.into(),
             hdbt_connected: info.hdbt_connected.into(),
             signal_detected: info.signal_detected.into(),
             hpd_detected: info.hpd_detected.into(),

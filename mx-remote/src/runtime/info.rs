@@ -149,8 +149,8 @@ pub struct BayInfo {
     pub hidden: Option<bool>,
     /// Whether the device reports the bay as faulty.
     pub faulty: Option<bool>,
-    /// Whether the bay is delivering power over the link.
-    pub poe_powered: Option<bool>,
+    /// Whether the amplifier zone the bay drives is powered on.
+    pub zone_powered: Option<bool>,
     /// Whether an HDBaseT link is up.
     pub hdbt_connected: Option<bool>,
     /// Whether a signal is present.
@@ -223,7 +223,7 @@ impl BayInfo {
             power_status: bay.power_status,
             hidden: bay.hidden,
             faulty: bay.faulty,
-            poe_powered: bay.poe_powered,
+            zone_powered: bay.zone_powered,
             hdbt_connected: bay.hdbt_connected,
             signal_detected: bay.signal_detected,
             hpd_detected: bay.hpd_detected,

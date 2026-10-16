@@ -592,8 +592,8 @@ pub struct mxr_callbacks_t {
     pub on_faulty_changed: mxr_bay_bool_cb,
     /// The bay was hidden or shown.
     pub on_hidden_changed: mxr_bay_bool_cb,
-    /// Power over Ethernet started or stopped supplying the bay.
-    pub on_poe_powered_changed: mxr_bay_bool_cb,
+    /// The amplifier zone the bay drives was powered on or off.
+    pub on_zone_powered_changed: mxr_bay_bool_cb,
     /// The HDBaseT link came up or went down.
     pub on_hdbt_connected_changed: mxr_bay_bool_cb,
     /// The signal format description changed.
@@ -1030,8 +1030,8 @@ impl EventHandler for Bridge {
         forward!(self.on_hidden_changed(bay.into(), hidden));
     }
 
-    fn on_poe_powered_changed(&self, bay: BayUid, powered: bool) {
-        forward!(self.on_poe_powered_changed(bay.into(), powered));
+    fn on_zone_powered_changed(&self, bay: BayUid, powered: bool) {
+        forward!(self.on_zone_powered_changed(bay.into(), powered));
     }
 
     fn on_hdbt_connected_changed(&self, bay: BayUid, connected: bool) {

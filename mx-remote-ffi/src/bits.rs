@@ -198,7 +198,7 @@ pub const MXR_BAY_STATUS_FAULT: u32 = 1 << 0;
 /// The bay is hidden from the user interface.
 pub const MXR_BAY_STATUS_HIDDEN: u32 = 1 << 1;
 
-/// The bay has power.
+/// The amplifier zone the bay drives is powered on.
 pub const MXR_BAY_STATUS_POWERED: u32 = 1 << 2;
 
 /// A signal is present.

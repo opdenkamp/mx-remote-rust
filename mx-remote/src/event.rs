@@ -278,8 +278,8 @@ events! {
         FaultyChanged => on_faulty_changed(faulty: bool);
         /// The bay was hidden or shown.
         HiddenChanged => on_hidden_changed(hidden: bool);
-        /// Power over Ethernet started or stopped supplying the bay.
-        PoePoweredChanged => on_poe_powered_changed(powered: bool);
+        /// The amplifier zone the bay drives was powered on or off.
+        ZonePoweredChanged => on_zone_powered_changed(powered: bool);
         /// The HDBaseT link came up or went down.
         HdbtConnectedChanged => on_hdbt_connected_changed(connected: bool);
         /// The signal format description changed.

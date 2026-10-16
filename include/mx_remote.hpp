@@ -167,7 +167,7 @@ inline std::string last_error() { return std::string(mxr_last_error()); }
     X(on_signal_detected_changed) \
     X(on_faulty_changed) \
     X(on_hidden_changed) \
-    X(on_poe_powered_changed) \
+    X(on_zone_powered_changed) \
     X(on_hdbt_connected_changed) \
     X(on_hpd_detected_changed) \
     X(on_cec_detected_changed) \

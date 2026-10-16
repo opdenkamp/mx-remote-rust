@@ -37,7 +37,7 @@ pub(crate) struct Bay {
     pub(crate) power_status: Option<PowerStatus>,
     pub(crate) faulty: Option<bool>,
     pub(crate) hidden: Option<bool>,
-    pub(crate) poe_powered: Option<bool>,
+    pub(crate) zone_powered: Option<bool>,
     pub(crate) hdbt_connected: Option<bool>,
     pub(crate) signal_detected: Option<bool>,
     pub(crate) hpd_detected: Option<bool>,
@@ -80,7 +80,7 @@ impl Bay {
             power_status: None,
             faulty: None,
             hidden: None,
-            poe_powered: None,
+            zone_powered: None,
             hdbt_connected: None,
             signal_detected: None,
             hpd_detected: None,
@@ -477,7 +477,7 @@ impl Bay {
         }
         flag!(faulty, FAULT, FaultyChanged { faulty });
         flag!(hidden, HIDDEN, HiddenChanged { hidden });
-        flag!(poe_powered, POWERED, PoePoweredChanged { powered });
+        flag!(zone_powered, POWERED, ZonePoweredChanged { powered });
         flag!(
             hdbt_connected,
             HDBT_CONNECTED,

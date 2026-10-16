@@ -678,7 +678,7 @@ bitmask! {
         FAULT = 1 << 0;
         /// The bay is hidden from the user interface.
         HIDDEN = 1 << 1;
-        /// The bay has power.
+        /// The amplifier zone the bay drives is powered on.
         POWERED = 1 << 2;
         /// A signal is present.
         SIGNAL_DETECTED = 1 << 3;
