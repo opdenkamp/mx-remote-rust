@@ -567,9 +567,9 @@ fn command_handlers_reach_their_events() {
     assert!(h.saw(|e| matches!(e, Event::MonitoringPulse { .. })));
 
     h.feed(op::SYS_REBOOT, target.as_bytes());
-    assert!(
-        h.saw(|e| matches!(e, Event::RebootRequested { request, .. } if request.target == target))
-    );
+    assert!(h.saw(
+        |e| matches!(e, Event::RebootRequested { request, .. } if request.target == Some(target))
+    ));
 
     let mut ep = target.as_bytes().to_vec();
     ep.extend_from_slice(&EdidProfile::UHD_4K.to_wire().to_le_bytes());

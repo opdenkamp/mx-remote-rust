@@ -3428,8 +3428,7 @@ typedef struct {
    */
   bool all;
   /**
-   * The single device addressed, zero when `all` is set or when the request
-   * addresses only its sender.
+   * The one device addressed, zero when `all` is set.
    */
   mxr_uid_t target;
 } mxr_factory_reset_request_t;
@@ -3906,7 +3905,8 @@ typedef struct {
   mxr_edid_profile_change_cb on_edid_profile_change_requested;
   /**
    * A peer asked a device to reboot. The second identifier is the device
-   * being asked, which is not always the sender.
+   * being asked, which is not always the sender, or zero when every unit
+   * is asked.
    */
   mxr_device_uid_cb on_reboot_requested;
   /**

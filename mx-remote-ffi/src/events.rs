@@ -174,8 +174,7 @@ pub struct mxr_edid_profile_change_t {
 pub struct mxr_factory_reset_request_t {
     /// Set by the broadcast form, which targets every peer.
     pub all: bool,
-    /// The single device addressed, zero when `all` is set or when the request
-    /// addresses only its sender.
+    /// The one device addressed, zero when `all` is set.
     pub target: mxr_uid_t,
 }
 
@@ -545,7 +544,8 @@ pub struct mxr_callbacks_t {
     /// A peer asked a device to switch its EDID profile.
     pub on_edid_profile_change_requested: mxr_edid_profile_change_cb,
     /// A peer asked a device to reboot. The second identifier is the device
-    /// being asked, which is not always the sender.
+    /// being asked, which is not always the sender, or zero when every unit
+    /// is asked.
     pub on_reboot_requested: mxr_device_uid_cb,
     /// A peer asked devices to factory-reset.
     pub on_factory_reset_requested: mxr_factory_reset_cb,
@@ -900,7 +900,7 @@ impl EventHandler for Bridge {
     }
 
     fn on_reboot_requested(&self, device: DeviceUid, request: RebootRequest) {
-        forward!(self.on_reboot_requested(device.into(), request.target.into()));
+        forward!(self.on_reboot_requested(device.into(), uid_or_zero(request.target)));
     }
 
     fn on_factory_reset_requested(&self, device: DeviceUid, request: FactoryResetRequest) {

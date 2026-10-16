@@ -12,11 +12,11 @@ use std::net::Ipv4Addr;
 
 use crate::event::Event;
 use crate::types::{
-    AudioChangeSource, MultiviewerCommand, V2ipDecoderDetail, V2ipDecoderFormat, V2ipDecoderReason,
-    V2ipDecoderState, V2ipPowerSaveSchedule, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan,
-    VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,
-    SCALING_FLAG_SKIP_420,
+    AudioChangeSource, MultiviewerCommand, RebootRequest, V2ipDecoderDetail, V2ipDecoderFormat,
+    V2ipDecoderReason, V2ipDecoderState, V2ipPowerSaveSchedule, V2ipTestSync, V2ipTestTone,
+    V2ipTestcard, V2ipVlan, VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
+    SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
 };
 use crate::wire::{
     op, BayFeatures, BayStatus, DeviceFeature, DeviceUid, FirmwareType, MultiviewerViewMode,
@@ -778,23 +778,74 @@ fn a_factory_reset_arrives_in_three_forms() {
     assert!(!got.all);
     assert_eq!(got.target, Some(target));
 
-    // Neither form: the request addresses only the sender.
+    // An empty payload addresses every unit too.
     h.feed(op::SYS_FACTORY_RESET, &[]);
     let got = latest(&h);
-    assert!(!got.all);
+    assert!(got.all);
     assert_eq!(got.target, None);
 
-    // A payload that reaches no form is not the empty one. Reading it as the
-    // sender resetting itself would report a destructive request built from a
-    // frame nothing understood, so it is dropped and the last request stands.
-    let before = h.events.len();
-    h.feed(op::SYS_FACTORY_RESET, &[0x01, 0x02, 0x03]);
-    assert!(
-        !h.events[before..]
+    // A unit takes no other length, not even a uid with bytes behind it, so
+    // nothing is reported for one.
+    let mut grown = target.as_bytes().to_vec();
+    grown.push(0);
+    for p in [&[0x01, 0x02, 0x03][..], &[0xFF, 0xFF], &grown] {
+        let before = h.events.len();
+        h.feed(op::SYS_FACTORY_RESET, p);
+        assert!(
+            !h.events[before..]
+                .iter()
+                .any(|e| matches!(e, Event::FactoryResetRequested { .. })),
+            "a {}-byte payload was read as a reset",
+            p.len()
+        );
+    }
+}
+
+#[test]
+fn a_reboot_arrives_in_three_forms() {
+    let mut h = command_device(57);
+    let latest = |h: &Harness| {
+        h.events
             .iter()
-            .any(|e| matches!(e, Event::FactoryResetRequested { .. })),
-        "a payload matching no form was read as a reset of the sender"
+            .rev()
+            .find_map(|e| match e {
+                Event::RebootRequested { request, .. } => Some(*request),
+                _ => None,
+            })
+            .expect("no reboot request")
+    };
+    let target = uid_n(58);
+    h.feed(op::SYS_REBOOT, target.as_bytes());
+    assert_eq!(
+        latest(&h),
+        RebootRequest {
+            all: false,
+            target: Some(target)
+        }
     );
+    for every in [&[][..], &[0xFF]] {
+        h.feed(op::SYS_REBOOT, every);
+        assert_eq!(
+            latest(&h),
+            RebootRequest {
+                all: true,
+                target: None
+            }
+        );
+    }
+    let mut grown = target.as_bytes().to_vec();
+    grown.push(0);
+    for p in [&[0x01][..], &grown] {
+        let before = h.events.len();
+        h.feed(op::SYS_REBOOT, p);
+        assert!(
+            !h.events[before..]
+                .iter()
+                .any(|e| matches!(e, Event::RebootRequested { .. })),
+            "a {}-byte payload was read as a reboot",
+            p.len()
+        );
+    }
 }
 
 #[test]
@@ -840,13 +891,6 @@ fn a_payload_that_grew_at_the_back_is_still_read() {
         h.saw(|e| matches!(e, Event::PowerSaveRequested { request, .. }
         if request.target == Some(target) && request.enabled)),
         "an addressed power-save request with bytes appended lost its target"
-    );
-
-    h.feed(op::SYS_FACTORY_RESET, &grown(target.as_bytes()));
-    assert!(
-        h.saw(|e| matches!(e, Event::FactoryResetRequested { request, .. }
-        if request.target == Some(target) && !request.all)),
-        "a factory reset with bytes appended lost the device it names"
     );
 }
 

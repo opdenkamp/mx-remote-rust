@@ -198,7 +198,9 @@ pub(super) fn ir_capture(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     // its output shows a source on another unit, so the capture belongs to
     // that output, which on a OneIP is its only one.
     let port = if capture.port == PORT_NONE {
-        state.device(rx.sender()).and_then(|d| d.first_output_port())
+        state
+            .device(rx.sender())
+            .and_then(|d| d.first_output_port())
     } else {
         Some(capture.port)
     };
@@ -370,10 +372,13 @@ pub(super) fn reboot(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
-    if let Some(target) = rx.frame.uid(0) {
+    if let Some(target) = manage_target(rx.frame.payload()) {
         ev.push(Event::RebootRequested {
             device,
-            request: RebootRequest { target },
+            request: RebootRequest {
+                all: target.is_none(),
+                target,
+            },
         });
     }
 }
@@ -452,37 +457,31 @@ pub(super) fn filter_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     }
 }
 
-/// The payload a factory-reset broadcast carries when it addresses every
-/// device rather than one.
-const FACTORY_RESET_ALL: u8 = 0xFF;
+/// The one-byte payload a reboot or factory reset carries when it addresses
+/// every unit.
+const MANAGE_ALL: u8 = 0xFF;
 
-/// Decodes a factory-reset request: one addressing a named device, one
-/// addressing every device, and an empty payload that addresses only the
-/// sender.
-///
-/// The forms are told apart longest first, so a sender that appends to one is
-/// still read as that form rather than falling through to the next. A payload
-/// that reaches none of them is dropped: the form that carries nothing is
-/// empty, so anything shorter than a uid and not marked for every device is
-/// unrecognised rather than argument-free, and reading it as the sender
-/// resetting itself would aim a destructive request from a frame that was not
-/// understood.
+/// Reads whom a reboot or factory reset addresses: `Some(None)` for every unit,
+/// `Some(Some(uid))` for one. A unit takes a 16-byte uid, an empty payload, or
+/// the single byte 0xFF, and drops any other length.
+fn manage_target(p: &[u8]) -> Option<Option<DeviceUid>> {
+    match p {
+        [] | [MANAGE_ALL] => Some(None),
+        _ if p.len() == 16 => Some(Some(uid_at(p, 0))),
+        _ => None,
+    }
+}
+
 pub(super) fn factory_reset(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
-    let p = rx.frame.payload();
-    let request = match p.len() {
-        n if n >= 16 => FactoryResetRequest {
-            all: false,
-            target: Some(uid_at(p, 0)),
-        },
-        n if n >= 1 && p[0] == FACTORY_RESET_ALL => FactoryResetRequest {
-            all: true,
-            target: None,
-        },
-        0 => FactoryResetRequest::default(),
-        _ => return,
+    let Some(target) = manage_target(rx.frame.payload()) else {
+        return;
+    };
+    let request = FactoryResetRequest {
+        all: target.is_none(),
+        target,
     };
     ev.push(Event::FactoryResetRequested { device, request });
 }

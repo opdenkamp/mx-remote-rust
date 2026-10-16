@@ -79,21 +79,22 @@ pub struct EdidProfileChange {
     pub profile: EdidProfile,
 }
 
-/// Asks peers to factory-reset.
+/// Asks every unit, or one, to factory-reset.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FactoryResetRequest {
-    /// Set by the broadcast form, which targets every peer.
+    /// Set when the request addresses every unit.
     pub all: bool,
-    /// Set by the single-uid form. With neither this nor `all`, the request
-    /// addresses only the sender.
+    /// The one unit addressed, or `None` when `all` is set.
     pub target: Option<DeviceUid>,
 }
 
-/// Asks one device to reboot.
+/// Asks every unit, or one, to reboot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RebootRequest {
-    /// The device to reboot.
-    pub target: DeviceUid,
+    /// Set when the request addresses every unit.
+    pub all: bool,
+    /// The one unit addressed, or `None` when `all` is set.
+    pub target: Option<DeviceUid>,
 }
 
 /// The window a sink is currently told to show.
