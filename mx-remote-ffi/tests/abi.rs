@@ -969,6 +969,7 @@ fn the_ptp_message_calls_check_their_arguments_first() {
         dscp: 46,
         sap_expire_min: 60,
         sap_interval_s: 30,
+        stream_ttl: 0,
     };
     let dscp = MXR_V2IP_SETTING_PTP_DSCP;
     // SAFETY: a live handle; a null struct is what is under test.
@@ -1023,6 +1024,19 @@ fn the_ptp_message_calls_check_their_arguments_first() {
         mxr_set_all_v2ip_ptp_messages(remote, MXR_V2IP_SETTING_SAP_LISTEN, &messages)
     };
     assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "a switch");
+
+    // So does the stream TTL, which is never 0.
+    let ttl = MXR_V2IP_SETTING_STREAM_TTL;
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, ttl, &messages) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "a TTL of 0");
+    let one = mxr_v2ip_ptp_messages_t {
+        stream_ttl: 1,
+        ..messages
+    };
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, ttl, &one) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
     let all = mxr_v2ip_device_settings_t {
         valid: sap,
         flags: 0,

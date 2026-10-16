@@ -1384,10 +1384,11 @@ pub unsafe extern "C" fn mxr_v2ip_power_save_level(
     })
 }
 
-/// How a V2IP device paces its PTP messages, and its SAP timings, which a
-/// frame carries in the same block. Intervals are base-2 logarithms of
-/// seconds, so -3 is 125 ms and 1 is 2 s. Each value is meaningful only behind
-/// its `MXR_V2IP_SETTING_PTP_*` or `MXR_V2IP_SETTING_SAP_*` bit in
+/// How a V2IP device paces its PTP messages, its SAP timings and its streams'
+/// TTL, which a frame carries in the same block. Intervals are base-2
+/// logarithms of seconds, so -3 is 125 ms and 1 is 2 s. Each value is
+/// meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
+/// `MXR_V2IP_SETTING_SAP_*` or `MXR_V2IP_SETTING_STREAM_TTL` bit in
 /// `mxr_v2ip_device_settings_t`'s `valid`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1406,6 +1407,10 @@ pub struct mxr_v2ip_ptp_messages_t {
     pub sap_expire_min: u8,
     /// The seconds between the device's SAP announcements.
     pub sap_interval_s: u16,
+    /// The TTL of the device's streams, 1 to 255. A device whose video
+    /// processor cannot change it keeps the setting and sends
+    /// `MXR_V2IP_STREAM_TTL_DEFAULT`.
+    pub stream_ttl: u8,
 }
 
 impl From<V2ipPtpMessages> for mxr_v2ip_ptp_messages_t {
@@ -1418,6 +1423,7 @@ impl From<V2ipPtpMessages> for mxr_v2ip_ptp_messages_t {
             dscp: m.dscp,
             sap_expire_min: m.sap_expire_min,
             sap_interval_s: m.sap_interval_s,
+            stream_ttl: m.stream_ttl,
         }
     }
 }
@@ -1432,6 +1438,7 @@ impl From<mxr_v2ip_ptp_messages_t> for V2ipPtpMessages {
             dscp: m.dscp,
             sap_expire_min: m.sap_expire_min,
             sap_interval_s: m.sap_interval_s,
+            stream_ttl: m.stream_ttl,
         }
     }
 }

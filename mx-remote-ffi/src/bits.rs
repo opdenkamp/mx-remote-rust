@@ -769,6 +769,13 @@ pub const MXR_V2IP_SETTING_SAP_INTERVAL: u32 = 1 << 27;
 /// An on/off setting, which a power save level write switches off.
 pub const MXR_V2IP_SETTING_POWER_SAVE_DISABLED: u32 = 1 << 28;
 
+/// The TTL of the device's streams, in `mxr_v2ip_ptp_messages_t`'s
+/// `stream_ttl`. Reported only by a device with an encoder.
+pub const MXR_V2IP_SETTING_STREAM_TTL: u32 = 1 << 29;
+
+/// The TTL a V2IP device's streams carry until it is set.
+pub const MXR_V2IP_STREAM_TTL_DEFAULT: u8 = 64;
+
 // ---- what a V2IP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
 
 /// The output plays a stream from a description.

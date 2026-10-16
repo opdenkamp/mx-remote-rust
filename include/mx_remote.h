@@ -1202,6 +1202,17 @@
 #define MXR_V2IP_SETTING_POWER_SAVE_DISABLED (1 << 28)
 
 /**
+ * The TTL of the device's streams, in `mxr_v2ip_ptp_messages_t`'s
+ * `stream_ttl`. Reported only by a device with an encoder.
+ */
+#define MXR_V2IP_SETTING_STREAM_TTL (1 << 29)
+
+/**
+ * The TTL a V2IP device's streams carry until it is set.
+ */
+#define MXR_V2IP_STREAM_TTL_DEFAULT 64
+
+/**
  * The output plays a stream from a description.
  */
 #define MXR_V2IP_SDP_FLAG_ACTIVE (1 << 0)
@@ -2484,10 +2495,11 @@ typedef struct {
 } mxr_v2ip_device_settings_t;
 
 /**
- * How a V2IP device paces its PTP messages, and its SAP timings, which a
- * frame carries in the same block. Intervals are base-2 logarithms of
- * seconds, so -3 is 125 ms and 1 is 2 s. Each value is meaningful only behind
- * its `MXR_V2IP_SETTING_PTP_*` or `MXR_V2IP_SETTING_SAP_*` bit in
+ * How a V2IP device paces its PTP messages, its SAP timings and its streams'
+ * TTL, which a frame carries in the same block. Intervals are base-2
+ * logarithms of seconds, so -3 is 125 ms and 1 is 2 s. Each value is
+ * meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
+ * `MXR_V2IP_SETTING_SAP_*` or `MXR_V2IP_SETTING_STREAM_TTL` bit in
  * `mxr_v2ip_device_settings_t`'s `valid`.
  */
 typedef struct {
@@ -2519,6 +2531,12 @@ typedef struct {
    * The seconds between the device's SAP announcements.
    */
   uint16_t sap_interval_s;
+  /**
+   * The TTL of the device's streams, 1 to 255. A device whose video
+   * processor cannot change it keeps the setting and sends
+   * `MXR_V2IP_STREAM_TTL_DEFAULT`.
+   */
+  uint8_t stream_ttl;
 } mxr_v2ip_ptp_messages_t;
 
 /**
@@ -5882,10 +5900,11 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
  * when one only a device reports is, for a PTP setting, which
  * `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
- * `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message or SAP
- * timing setting, which `mxr_set_all_v2ip_ptp_messages()` carries, for a profile out of range or a
- * schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
- * device that applies a change reports it.
+ * `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message, SAP
+ * timing or stream TTL setting, which `mxr_set_all_v2ip_ptp_messages()`
+ * carries, for a profile out of range or a schedule time not below
+ * `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a device that applies a
+ * change reports it.
  *
  * # Safety
  *
@@ -5927,11 +5946,12 @@ mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
 mxr_result_t mxr_set_all_v2ip_power_save_level(const mxr_remote_t *remote, uint8_t level);
 
 /**
- * Sets how a V2IP device paces its PTP messages, and its SAP timings: the
- * values of `messages` behind the `MXR_V2IP_SETTING_PTP_*` message bits and
- * `MXR_V2IP_SETTING_SAP_EXPIRE` and `_SAP_INTERVAL` in `valid`.
- * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `messages`, for no
- * such bit or any other bit in `valid`, or for a DSCP above 63. Otherwise as
+ * Sets how a V2IP device paces its PTP messages, its SAP timings and its
+ * streams' TTL: the values of `messages` behind the `MXR_V2IP_SETTING_PTP_*`
+ * message bits, `MXR_V2IP_SETTING_SAP_EXPIRE` and `_SAP_INTERVAL`, and
+ * `MXR_V2IP_SETTING_STREAM_TTL` in `valid`. `MXR_ERR_INVALID_ARGUMENT`,
+ * sending nothing, for a null `messages`, for no such bit or any other bit in
+ * `valid`, for a DSCP above 63 or for a stream TTL of 0. Otherwise as
  * `mxr_set_v2ip_device_setting()`.
  *
  * # Safety

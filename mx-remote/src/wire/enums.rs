@@ -307,6 +307,9 @@ bitmask! {
         /// still powers it down. Writing
         /// [`POWER_SAVE_LEVEL`](Self::POWER_SAVE_LEVEL) switches it off.
         POWER_SAVE_DISABLED = 1 << 28;
+        /// The TTL of the device's streams, video, audio and ancillary
+        /// alike. Reported only by a device with an encoder.
+        STREAM_TTL = 1 << 29;
     }
 }
 
@@ -628,9 +631,9 @@ impl V2ipDeviceSetting {
 
     /// The settings whose values a frame carries in a block of their own
     /// behind the rest, [`V2ipPtpMessages`](crate::V2ipPtpMessages): the PTP
-    /// message settings and the two SAP values.
+    /// message settings, the two SAP values and the stream TTL.
     pub const SETTINGS_BLOCK: Self =
-        Self(Self::PTP_MESSAGES.0 | Self::SAP_EXPIRE.0 | Self::SAP_INTERVAL.0);
+        Self(Self::PTP_MESSAGES.0 | Self::SAP_EXPIRE.0 | Self::SAP_INTERVAL.0 | Self::STREAM_TTL.0);
 
     /// These bits with every bit of `other` cleared.
     pub(crate) const fn without(self, other: Self) -> Self {

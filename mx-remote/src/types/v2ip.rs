@@ -674,8 +674,8 @@ pub struct V2ipDeviceSettings {
     pub ptp_messages: V2ipPtpMessages,
 }
 
-/// How a V2IP device paces its PTP messages, and its SAP timings, which a
-/// frame carries in the same block. Each value is behind its own bit of
+/// How a V2IP device paces its PTP messages, its SAP timings and its streams'
+/// TTL, which a frame carries in the same block. Each value is behind its own bit of
 /// [`V2ipDeviceSettings::valid`], one of
 /// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK).
 ///
@@ -702,7 +702,15 @@ pub struct V2ipPtpMessages {
     /// The seconds between the device's SAP announcements, behind
     /// [`SAP_INTERVAL`](V2ipDeviceSetting::SAP_INTERVAL).
     pub sap_interval_s: u16,
+    /// The TTL of the device's streams, 1 to 255, behind
+    /// [`STREAM_TTL`](V2ipDeviceSetting::STREAM_TTL). A device whose video
+    /// processor cannot change it keeps the setting and sends
+    /// [`V2IP_STREAM_TTL_DEFAULT`].
+    pub stream_ttl: u8,
 }
+
+/// The TTL a V2IP device's streams carry until it is set.
+pub const V2IP_STREAM_TTL_DEFAULT: u8 = 64;
 
 impl V2ipPtpMessages {
     /// The values behind the bits of `which` copied from `from`, the rest
@@ -730,6 +738,9 @@ impl V2ipPtpMessages {
         }
         if which.has(V2ipDeviceSetting::SAP_INTERVAL) {
             out.sap_interval_s = from.sap_interval_s;
+        }
+        if which.has(V2ipDeviceSetting::STREAM_TTL) {
+            out.stream_ttl = from.stream_ttl;
         }
         out
     }
@@ -899,6 +910,9 @@ impl V2ipDeviceSettings {
         }
         if self.ptp_messages.dscp > V2IP_DSCP_MAX {
             valid = valid.without(V2ipDeviceSetting::PTP_DSCP);
+        }
+        if self.ptp_messages.stream_ttl == 0 {
+            valid = valid.without(V2ipDeviceSetting::STREAM_TTL);
         }
         Self { valid, ..self }
     }

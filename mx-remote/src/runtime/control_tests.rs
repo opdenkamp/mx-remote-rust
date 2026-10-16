@@ -3000,6 +3000,7 @@ fn a_ptp_message_write_carries_its_block() {
         dscp: 46,
         sap_expire_min: 60,
         sap_interval_s: 0x0102,
+        stream_ttl: 8,
     };
     let which =
         V2ipDeviceSetting::PTP_SYNC | V2ipDeviceSetting::PTP_DSCP | V2ipDeviceSetting::SAP_INTERVAL;
@@ -3029,6 +3030,7 @@ fn a_ptp_message_write_carries_its_block() {
                 dscp: 7,
                 sap_expire_min: 5,
                 sap_interval_s: 9,
+                stream_ttl: 9,
             },
         )
         .expect("the device has reported the settings");
@@ -4036,4 +4038,127 @@ fn a_change_made_here_reaches_the_mesh_bays() {
         seen.contains(&(BayUid::new(receiver, 1), "Kodi".to_owned())),
         "{seen:?}"
     );
+}
+
+/// The stream TTL runs the settings block on to 16 bytes, and only a write
+/// carrying it does; a TTL of 0 is refused.
+#[test]
+fn a_stream_ttl_write_runs_the_block_on() {
+    let f = Fixture::new();
+    let uid = uid_n(240);
+    f.everything(uid, 0x2F, "TT0001");
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let ttl = V2ipDeviceSetting::STREAM_TTL;
+    let mut p = cfg.bytes_with_power_save(ttl.bits(), 0, 0, &V2ipPowerSaveSchedule::default());
+    p.resize(232, 0);
+    p[224] = 32;
+    f.feed(uid, op::V2IP_DEVICE_CFG, &p);
+    let reported = f
+        .remote
+        .v2ip_device_settings(uid)
+        .and_then(|s| s.ptp_messages())
+        .map(|m| m.stream_ttl);
+    assert_eq!(reported, Some(32));
+    f.connect();
+
+    let messages = V2ipPtpMessages {
+        stream_ttl: 16,
+        ..V2ipPtpMessages::default()
+    };
+    f.tap.clear();
+    f.remote
+        .set_v2ip_ptp_messages(uid, ttl, messages)
+        .expect("the device has reported the setting");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 232);
+    assert_eq!(p[224], 16);
+    assert!(p[225..].iter().all(|b| *b == 0), "a reserved byte is set");
+
+    f.tap.clear();
+    let all = V2ipDeviceSettings {
+        valid: ttl,
+        ptp_messages: messages,
+        ..V2ipDeviceSettings::default()
+    };
+    f.remote
+        .set_all_v2ip_device_settings(all)
+        .expect("a TTL in range");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!((p.len(), p[56]), (64, 16));
+
+    let zero = V2ipPtpMessages::default();
+    assert!(matches!(
+        f.remote.set_v2ip_ptp_messages(uid, ttl, zero),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        f.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
+            ptp_messages: zero,
+            ..all
+        }),
+        Err(ControlError::InvalidRequest(_))
+    ));
+}
+
+/// A report reads the settings block by its length: one of 8 bytes, as every
+/// device before the stream TTL sends, has no TTL to give, and a shorter one
+/// none of the block's values.
+#[test]
+fn a_settings_block_is_read_by_its_length() {
+    let f = Fixture::new();
+    let uid = uid_n(241);
+    f.everything(uid, 0x2F, "TT0002");
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let both = V2ipDeviceSetting::STREAM_TTL | V2ipDeviceSetting::SAP_INTERVAL;
+    let report = |len: usize| {
+        let mut p = cfg.bytes_with_power_save(both.bits(), 0, 0, &V2ipPowerSaveSchedule::default());
+        p.resize(len, 0);
+        if len > 223 {
+            p[222] = 30;
+        }
+        p
+    };
+    let valid = || f.remote.v2ip_device_settings(uid).map(|s| s.valid);
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(223));
+    assert_eq!(valid(), None, "a block too short for any value");
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(224));
+    assert_eq!(valid(), Some(V2ipDeviceSetting::SAP_INTERVAL));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(232));
+    assert_eq!(valid(), Some(both));
+}
+
+/// A unit refuses a stream TTL of 0, so another sender's write of one leaves
+/// what it reported.
+#[test]
+fn another_senders_stream_ttl_of_0_changes_nothing() {
+    let f = Fixture::new();
+    let (uid, controller) = (uid_n(242), uid_n(243));
+    f.everything(uid, 0x2F, "TT0003");
+    f.feed(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "Ctrl", "TT0004", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let ttl = V2ipDeviceSetting::STREAM_TTL;
+    let frame = |value| {
+        let mut p = cfg.bytes_with_power_save(ttl.bits(), 0, 0, &V2ipPowerSaveSchedule::default());
+        p.resize(232, 0);
+        p[224] = value;
+        p
+    };
+    let cached = || {
+        f.remote
+            .v2ip_device_settings(uid)
+            .and_then(|s| s.ptp_messages())
+            .map(|m| m.stream_ttl)
+    };
+    f.feed(uid, op::V2IP_DEVICE_CFG, &frame(32));
+    f.feed(controller, op::V2IP_DEVICE_CFG, &frame(0));
+    assert_eq!(cached(), Some(32));
+    f.feed(controller, op::V2IP_DEVICE_CFG, &frame(20));
+    assert_eq!(cached(), Some(20), "a write in range");
 }

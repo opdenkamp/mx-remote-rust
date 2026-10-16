@@ -540,11 +540,22 @@ const V2IP_PTP_SIZE: usize = 24;
 /// The PTP message settings, behind the PTP state.
 const V2IP_PTP_MESSAGES_AT: usize = V2IP_PTP_AT + V2IP_PTP_SIZE;
 const V2IP_PTP_MESSAGES_SIZE: usize = 8;
+/// Where in that block the stream TTL is, which only a longer block holds.
+const V2IP_STREAM_TTL_AT: usize = 8;
 
-/// Reads a PTP message settings block: the three intervals as signed bytes,
-/// the announce timeout and the DSCP, then the SAP expiry in minutes and the
-/// SAP interval in seconds.
-pub(super) fn ptp_messages(m: &[u8]) -> V2ipPtpMessages {
+/// Reads a settings block, the last block of its frame, and clears the bits
+/// of `valid` whose values it is too short to hold: the three PTP intervals as
+/// signed bytes, the announce timeout and the DSCP, then the SAP expiry in
+/// minutes, the SAP interval in seconds, and from 8 the stream TTL.
+pub(super) fn ptp_messages(m: &[u8], valid: &mut V2ipDeviceSetting) -> V2ipPtpMessages {
+    if m.len() < V2IP_PTP_MESSAGES_SIZE {
+        *valid = valid.without(V2ipDeviceSetting::SETTINGS_BLOCK);
+        return V2ipPtpMessages::default();
+    }
+    let stream_ttl = m.get(V2IP_STREAM_TTL_AT).copied();
+    if stream_ttl.is_none() {
+        *valid = valid.without(V2ipDeviceSetting::STREAM_TTL);
+    }
     V2ipPtpMessages {
         log_announce_interval: m[0] as i8,
         log_sync_interval: m[1] as i8,
@@ -553,6 +564,7 @@ pub(super) fn ptp_messages(m: &[u8]) -> V2ipPtpMessages {
         dscp: m[4],
         sap_expire_min: m[5],
         sap_interval_s: u16_at(m, 6),
+        stream_ttl: stream_ttl.unwrap_or(0),
     }
 }
 
@@ -731,12 +743,8 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
         }
         // The message settings' values travel in a block of their own behind
         // the PTP state, so their bits mean nothing in a frame without it.
-        match p.get(V2IP_PTP_MESSAGES_AT..V2IP_PTP_MESSAGES_AT + V2IP_PTP_MESSAGES_SIZE) {
-            Some(m) => frame.ptp_messages = ptp_messages(m),
-            None => {
-                frame.valid = frame.valid.without(V2ipDeviceSetting::SETTINGS_BLOCK);
-            }
-        }
+        let block = p.get(V2IP_PTP_MESSAGES_AT..).unwrap_or_default();
+        frame.ptp_messages = ptp_messages(block, &mut frame.valid);
         if let Some(device) = state.device_mut(subject) {
             let frame = if subject == rx.sender() {
                 frame

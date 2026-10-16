@@ -1529,8 +1529,8 @@ impl Remote {
     /// Sets how a V2IP device paces its PTP messages, and its SAP timings: the
     /// values of `messages` behind the bits of `which`, each one of
     /// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK). A DSCP above
-    /// [`V2IP_DSCP_MAX`](crate::V2IP_DSCP_MAX) is refused. The terms of
-    /// [`Remote::set_v2ip_device_setting`] apply.
+    /// [`V2IP_DSCP_MAX`](crate::V2IP_DSCP_MAX) and a stream TTL of 0 are
+    /// refused. The terms of [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_messages(
         &self,
         device: DeviceUid,
@@ -1539,11 +1539,14 @@ impl Remote {
     ) -> Result<(), ControlError> {
         if which.is_empty() || !V2ipDeviceSetting::SETTINGS_BLOCK.has(which) {
             return Err(ControlError::InvalidRequest(
-                "only PTP message and SAP timing settings are carried here",
+                "only PTP message, SAP timing and stream TTL settings are carried here",
             ));
         }
         if which.has(V2ipDeviceSetting::PTP_DSCP) && messages.dscp > V2IP_DSCP_MAX {
             return Err(ControlError::InvalidRequest("a DSCP above 63"));
+        }
+        if which.has(V2ipDeviceSetting::STREAM_TTL) && messages.stream_ttl == 0 {
+            return Err(ControlError::InvalidRequest("a stream TTL of 0"));
         }
         self.set_v2ip_device_settings(
             device,
@@ -1616,7 +1619,8 @@ impl Remote {
     /// device applies those it has and ignores the rest, and none that
     /// predates the frame applies any. A setting only a device reports about
     /// itself, a profile, PTP mode, PTP domain, power save level or PTP DSCP
-    /// out of range and a schedule time that is not a time of day are refused
+    /// out of range, a stream TTL of 0 and a schedule time that is not a time
+    /// of day are refused
     /// here, since every device would ignore them.
     ///
     /// Nothing is cached: each device that applies a change reports its
@@ -1662,6 +1666,9 @@ impl Remote {
         }
         if valid.has(V2ipDeviceSetting::PTP_DSCP) && settings.ptp_messages.dscp > V2IP_DSCP_MAX {
             return Err(ControlError::InvalidRequest("a DSCP above 63"));
+        }
+        if valid.has(V2ipDeviceSetting::STREAM_TTL) && settings.ptp_messages.stream_ttl == 0 {
+            return Err(ControlError::InvalidRequest("a stream TTL of 0"));
         }
         self.shared.send(
             &Addressee::Broadcast,

@@ -504,7 +504,8 @@ pub(crate) fn build_v2ip_scaling(
 /// Settings that carry a PTP message setting run on to 224 bytes: a zeroed
 /// VLAN block at 176, which without its valid bit carries nothing, a zeroed
 /// PTP state at 192, which a receiver takes only from a device describing
-/// itself, and the PTP message block at 216.
+/// itself, and the PTP message block at 216, which runs on to 232 when it
+/// carries the stream TTL.
 pub(crate) fn build_v2ip_device_settings(
     target: DeviceUid,
     settings: &V2ipDeviceSettings,
@@ -521,7 +522,10 @@ pub(crate) fn build_v2ip_device_settings(
     p.extend_from_slice(&build_v2ip_settings_block(settings));
     if carries_ptp_messages(settings) {
         p.resize(216, 0);
-        p.extend_from_slice(&build_ptp_messages_block(&settings.ptp_messages));
+        p.extend_from_slice(&build_ptp_messages_block(
+            settings.valid,
+            &settings.ptp_messages,
+        ));
     }
     p
 }
@@ -531,12 +535,16 @@ fn carries_ptp_messages(settings: &V2ipDeviceSettings) -> bool {
     !(settings.valid & V2ipDeviceSetting::SETTINGS_BLOCK).is_empty()
 }
 
-/// The 8-byte PTP message block: the announce, sync and delay request
-/// intervals as signed bytes at 0, 1 and 2, the announce timeout at 3, the
-/// DSCP at 4, the SAP expiry at 5 and the SAP interval as a u16 at 6.
-fn build_ptp_messages_block(m: &V2ipPtpMessages) -> [u8; 8] {
+/// The PTP message block: the announce, sync and delay request intervals as
+/// signed bytes at 0, 1 and 2, the announce timeout at 3, the DSCP at 4, the
+/// SAP expiry at 5 and the SAP interval as a u16 at 6.
+///
+/// 8 bytes, or 16 with the stream TTL at 8 when `valid` carries it. Only a
+/// device that has the TTL reads past 8, so a frame without it keeps the
+/// length every device knows.
+fn build_ptp_messages_block(valid: V2ipDeviceSetting, m: &V2ipPtpMessages) -> Vec<u8> {
     let [i0, i1] = m.sap_interval_s.to_le_bytes();
-    [
+    let mut block = vec![
         m.log_announce_interval as u8,
         m.log_sync_interval as u8,
         m.log_delay_req_interval as u8,
@@ -545,7 +553,12 @@ fn build_ptp_messages_block(m: &V2ipPtpMessages) -> [u8; 8] {
         m.sap_expire_min,
         i0,
         i1,
-    ]
+    ];
+    if valid.has(V2ipDeviceSetting::STREAM_TTL) {
+        block.push(m.stream_ttl);
+        block.resize(16, 0);
+    }
+    block
 }
 
 /// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's VLAN
@@ -647,11 +660,15 @@ pub(crate) fn build_time_zone(zone: &str, rule: &str) -> Vec<u8> {
 
 /// Builds the `V2IP_SETTINGS_ALL` (0x4C) payload, the settings every device of
 /// the mesh applies: the settings block, and behind it the PTP message block
-/// when the settings carry a PTP message setting.
+/// when the settings carry a PTP message setting, as
+/// [`build_v2ip_device_settings`] sizes it.
 pub(crate) fn build_v2ip_settings_all(settings: &V2ipDeviceSettings) -> Vec<u8> {
     let mut p = build_v2ip_settings_block(settings);
     if carries_ptp_messages(settings) {
-        p.extend_from_slice(&build_ptp_messages_block(&settings.ptp_messages));
+        p.extend_from_slice(&build_ptp_messages_block(
+            settings.valid,
+            &settings.ptp_messages,
+        ));
     }
     p
 }

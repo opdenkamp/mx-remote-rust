@@ -1135,10 +1135,11 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_schedule(
 /// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
 /// when one only a device reports is, for a PTP setting, which
 /// `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
-/// `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message or SAP
-/// timing setting, which `mxr_set_all_v2ip_ptp_messages()` carries, for a profile out of range or a
-/// schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
-/// device that applies a change reports it.
+/// `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message, SAP
+/// timing or stream TTL setting, which `mxr_set_all_v2ip_ptp_messages()`
+/// carries, for a profile out of range or a schedule time not below
+/// `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a device that applies a
+/// change reports it.
 ///
 /// # Safety
 ///
@@ -1177,7 +1178,7 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
         if !(valid & V2ipDeviceSetting::SETTINGS_BLOCK).is_empty() {
             return fail(
                 mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
-                "PTP message and SAP timing settings go through mxr_set_all_v2ip_ptp_messages()",
+                "PTP message, SAP timing and stream TTL settings go through mxr_set_all_v2ip_ptp_messages()",
             );
         }
         let needs_power_save = valid.has(V2ipDeviceSetting::AUTO_POWER_SAVE)
@@ -1264,11 +1265,12 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_power_save_level(
     })
 }
 
-/// Sets how a V2IP device paces its PTP messages, and its SAP timings: the
-/// values of `messages` behind the `MXR_V2IP_SETTING_PTP_*` message bits and
-/// `MXR_V2IP_SETTING_SAP_EXPIRE` and `_SAP_INTERVAL` in `valid`.
-/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `messages`, for no
-/// such bit or any other bit in `valid`, or for a DSCP above 63. Otherwise as
+/// Sets how a V2IP device paces its PTP messages, its SAP timings and its
+/// streams' TTL: the values of `messages` behind the `MXR_V2IP_SETTING_PTP_*`
+/// message bits, `MXR_V2IP_SETTING_SAP_EXPIRE` and `_SAP_INTERVAL`, and
+/// `MXR_V2IP_SETTING_STREAM_TTL` in `valid`. `MXR_ERR_INVALID_ARGUMENT`,
+/// sending nothing, for a null `messages`, for no such bit or any other bit in
+/// `valid`, for a DSCP above 63 or for a stream TTL of 0. Otherwise as
 /// `mxr_set_v2ip_device_setting()`.
 ///
 /// # Safety
@@ -1328,7 +1330,7 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_messages(
         if valid.is_empty() || !V2ipDeviceSetting::SETTINGS_BLOCK.has(valid) {
             return fail(
                 mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
-                "only PTP message and SAP timing settings are carried here",
+                "only PTP message, SAP timing and stream TTL settings are carried here",
             );
         }
         from_control(r.remote.set_all_v2ip_device_settings(V2ipDeviceSettings {
