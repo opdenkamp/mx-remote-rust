@@ -1127,8 +1127,7 @@ impl Remote {
         Ok(())
     }
 
-    /// Asks every peer to report its monitoring data now rather than on its own
-    /// schedule.
+    /// Tells every unit to check its update server for new firmware now.
     pub fn send_monitoring_pulse(&self) -> Result<(), ControlError> {
         self.shared
             .send(&Addressee::Broadcast, op::SYS_MONITORING_PULSE, &[])?;

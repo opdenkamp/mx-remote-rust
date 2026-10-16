@@ -549,7 +549,7 @@ pub struct mxr_callbacks_t {
     pub on_reboot_requested: mxr_device_uid_cb,
     /// A peer asked devices to factory-reset.
     pub on_factory_reset_requested: mxr_factory_reset_cb,
-    /// A device sent its monitoring pulse.
+    /// A device told every unit to check for new firmware now.
     pub on_monitoring_pulse: mxr_device_cb,
     /// A peer asked a device to upgrade its FPGA.
     pub on_upgrade_fpga_requested: mxr_device_cb,

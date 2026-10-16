@@ -3914,7 +3914,7 @@ typedef struct {
    */
   mxr_factory_reset_cb on_factory_reset_requested;
   /**
-   * A device sent its monitoring pulse.
+   * A device told every unit to check for new firmware now.
    */
   mxr_device_cb on_monitoring_pulse;
   /**
@@ -5711,7 +5711,7 @@ mxr_result_t mxr_clear_mesh_time_zone(const mxr_remote_t *remote);
 mxr_result_t mxr_set_mesh_time(const mxr_remote_t *remote, uint64_t utc);
 
 /**
- * Sends the monitoring pulse that tells devices this client is watching.
+ * Tells every unit to check its update server for new firmware now.
  *
  * # Safety
  *

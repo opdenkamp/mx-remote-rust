@@ -235,7 +235,7 @@ events! {
         UnitCommandRequested => on_unit_command_requested(command: UnitCommand);
         /// A peer asked devices to factory-reset.
         FactoryResetRequested => on_factory_reset_requested(request: FactoryResetRequest);
-        /// A device sent its monitoring pulse.
+        /// A device told every unit to check for new firmware now.
         MonitoringPulse => on_monitoring_pulse();
         /// A peer asked a device to upgrade its FPGA.
         UpgradeFpgaRequested => on_upgrade_fpga_requested();

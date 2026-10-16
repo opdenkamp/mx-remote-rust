@@ -899,7 +899,7 @@ pub unsafe extern "C" fn mxr_set_mesh_time(remote: *const mxr_remote_t, utc: u64
     })
 }
 
-/// Sends the monitoring pulse that tells devices this client is watching.
+/// Tells every unit to check its update server for new firmware now.
 ///
 /// # Safety
 ///
