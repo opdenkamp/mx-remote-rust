@@ -2879,11 +2879,11 @@ fn a_session_description_goes_out_in_pages() {
     f.everything(uid, 0x2E, "SD0001");
     f.connect();
 
-    let sdp: String = (0..2500).map(|i| (b'a' + (i % 26) as u8) as char).collect();
+    let sdp: String = (0..2000).map(|i| (b'a' + (i % 26) as u8) as char).collect();
     f.tap.clear();
     f.remote.play_v2ip_sdp(uid, &sdp).expect("sent");
     let frames = f.tap.frames();
-    assert_eq!(frames.len(), 3);
+    assert_eq!(frames.len(), 2);
     let mut joined = Vec::new();
     for (i, frame) in frames.iter().enumerate() {
         assert_eq!(&frame[20..22], &op::V2IP_SINK_SDP.0.to_le_bytes());
@@ -2891,8 +2891,8 @@ fn a_session_description_goes_out_in_pages() {
         let p = &frame[HEADER_LEN..];
         assert_eq!(&p[..16], uid.as_bytes(), "the output");
         assert_eq!(&p[16..20], &[1, 0, 0, 0], "a page");
-        let len = [1024u16, 1024, 452][i];
-        assert_eq!(&p[20..22], &2500u16.to_le_bytes(), "the whole");
+        let len = [1024u16, 976][i];
+        assert_eq!(&p[20..22], &2000u16.to_le_bytes(), "the whole");
         assert_eq!(&p[22..24], &((i * 1024) as u16).to_le_bytes(), "the offset");
         assert_eq!(&p[24..26], &len.to_le_bytes(), "the page");
         assert_eq!(&p[26..28], &[0, 0]);
@@ -2946,13 +2946,17 @@ fn a_session_description_the_output_would_not_take_is_refused() {
     let unit = uid_n(240);
     f.everything(unit, 0x2E, "SD0004");
     f.tap.clear();
-    for sdp in [String::new(), "x".repeat(65536)] {
+    for sdp in [String::new(), "x".repeat(2049)] {
         assert!(matches!(
             f.remote.play_v2ip_sdp(unit, &sdp),
             Err(ControlError::InvalidRequest(_))
         ));
     }
     assert!(f.tap.frames().is_empty(), "a refused description was sent");
+    f.connect();
+    f.remote
+        .play_v2ip_sdp(unit, &"x".repeat(2048))
+        .expect("an output takes 2 KB");
 }
 
 /// Settings for every device go out as the bare settings block, to everyone,

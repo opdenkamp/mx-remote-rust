@@ -884,7 +884,7 @@ impl V2ipDeviceSettings {
 }
 
 /// The longest session description a V2IP output takes, in bytes.
-pub const V2IP_SDP_MAX: usize = 65535;
+pub const V2IP_SDP_MAX: usize = 2048;
 
 /// What a V2IP output plays from a session description, as it last reported
 /// it. The stream's fields are zero while it plays none.

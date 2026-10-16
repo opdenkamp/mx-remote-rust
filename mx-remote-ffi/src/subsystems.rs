@@ -1451,7 +1451,7 @@ pub unsafe extern "C" fn mxr_v2ip_ptp_messages(
 }
 
 /// The longest session description a V2IP output takes, in bytes.
-pub const MXR_V2IP_SDP_MAX: usize = 65535;
+pub const MXR_V2IP_SDP_MAX: usize = 2048;
 /// Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.
 pub const MXR_V2IP_SDP_NAME_LEN: usize = 48;
 /// Bytes in `mxr_v2ip_sink_sdp_t.layout`, its NUL included.

@@ -1948,7 +1948,7 @@
 /**
  * The longest session description a V2IP output takes, in bytes.
  */
-#define MXR_V2IP_SDP_MAX 65535
+#define MXR_V2IP_SDP_MAX 2048
 
 /**
  * Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.
