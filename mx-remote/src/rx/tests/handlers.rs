@@ -543,6 +543,13 @@ fn routing_and_device_handlers() {
     bm[8..24].copy_from_slice(mapped.as_bytes());
     h.feed(op::V2IP_BAY_MAPPINGS, &bm);
     assert_eq!(h.bay(1).v2ip_uid, mapped);
+    // A page counting two uids but carrying one is not taken.
+    let mut short = bm.clone();
+    short[0..2].copy_from_slice(&((2u16 << 1) | 1).to_le_bytes());
+    short[8..24].copy_from_slice(uid_n(113).as_bytes());
+    short.extend_from_slice(&[0; 15]);
+    h.feed(op::V2IP_BAY_MAPPINGS, &short);
+    assert_eq!(h.bay(1).v2ip_uid, mapped, "a short page was taken");
 
     // 0x40 V2IP_TILING addressed at a known device caches as its window
     let mut tl = sender.as_bytes().to_vec();

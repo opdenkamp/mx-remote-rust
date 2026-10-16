@@ -978,8 +978,12 @@ pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]
     let (Some(header), Some(first_port)) = (f.u16(0), f.u16(2)) else {
         return;
     };
+    // A unit takes no page shorter than the uids it counts.
     let count = usize::from(header >> 1);
-    let page: Vec<DeviceUid> = (0..count).map_while(|i| f.uid(8 + 16 * i)).collect();
+    if f.payload().len() < 8 + 16 * count {
+        return;
+    }
+    let page: Vec<DeviceUid> = (0..count).filter_map(|i| f.uid(8 + 16 * i)).collect();
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_v2ip_bay_mapping_page(first_port, page);
     }
