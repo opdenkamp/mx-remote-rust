@@ -2783,7 +2783,7 @@ typedef struct {
   size_t len;
   /**
    * The size it is shown at: 0 at its own pixels, 1 to 100 its longer
-   * side as a percent of the large output's width.
+   * side as a percent of the large overlay.
    */
   uint8_t percent;
 } mxr_osd_sync_image_t;

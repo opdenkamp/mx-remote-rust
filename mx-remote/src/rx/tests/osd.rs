@@ -249,8 +249,9 @@ fn a_setting_is_read_field_by_field() {
         &setting_frame(unit, 2, &0x0012_3456u32.to_le_bytes()),
     );
 
+    // A unit does not take a caption missing text it counts.
     let seen = settings(&h);
-    assert_eq!(seen.len(), 4);
+    assert_eq!(seen.len(), 3);
     let s = &seen[0];
     assert_eq!(
         (s.seq, s.target, s.index, s.records),
@@ -268,19 +269,15 @@ fn a_setting_is_read_field_by_field() {
     assert_eq!(c.colour, 0x00AB_CDEF);
     // Five bytes of text, of the six that follow.
     assert_eq!(c.text, "h\u{e9}ll");
-    let OsdSyncValue::Caption(c) = &seen[1].value else {
-        panic!("not a caption");
-    };
-    assert_eq!(c.text, "short", "a length past the frame was not cut");
     assert_eq!(
-        seen[2].value,
+        seen[1].value,
         OsdSyncValue::Logo(crate::types::OsdLogo {
             logo: -1,
             x: 0x1234,
             y: i16::MIN,
         })
     );
-    assert_eq!(seen[3].value, OsdSyncValue::Background(0x0012_3456));
+    assert_eq!(seen[2].value, OsdSyncValue::Background(0x0012_3456));
 }
 
 #[test]

@@ -44,7 +44,7 @@ pub(crate) struct State {
     pub(crate) state_requests: Vec<DeviceUid>,
     /// Overlay sync requests this client may be the one to answer: those
     /// asking for a new sync, and those naming this client as the source.
-    pub(crate) osd_requests: Vec<(DeviceUid, OsdSyncRequest)>,
+    pub(crate) osd_requests: Vec<OsdSyncRequest>,
 }
 
 impl State {

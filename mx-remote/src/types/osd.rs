@@ -53,9 +53,13 @@ pub struct OsdSync {
     pub slots: Option<[OsdSyncSlot; OSD_SYNC_SLOTS]>,
 }
 
-/// A unit asking for a sync, or for settings of one it is taking.
+/// A unit asking for a sync, or for settings of one it is taking, or
+/// management asking for a new sync for a unit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OsdSyncRequest {
+    /// The unit the sync is for, which sent the request unless management
+    /// did.
+    pub target: DeviceUid,
     /// The sync whose settings it asks for, or zero asking for a new sync.
     pub seq: u16,
     /// What it asks a new sync to copy.
@@ -204,7 +208,7 @@ pub struct OsdSyncImage {
     /// The PNG. Empty empties the slot.
     pub png: Vec<u8>,
     /// The size it is shown at: 0 at its own pixels, 1 to 100 its longer
-    /// side as a percent of the large output's width.
+    /// side as a percent of the large overlay.
     pub percent: u8,
 }
 

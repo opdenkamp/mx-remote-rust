@@ -48,20 +48,8 @@ pub(super) fn osd_sync(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                 }
             }
         }
-        osd_kind::REQUEST if target == sender && p.len() >= OSD_REQUEST_SIZE => {
-            let request = OsdSyncRequest {
-                seq,
-                what: OsdSyncWhat::from_bits(p[20]),
-                missing: core::array::from_fn(|i| p[22 + i]),
-                source: uid_at(p, OSD_REQUEST_SOURCE_AT),
-            };
-            if seq == 0 || request.source == state.uid {
-                state.osd_requests.push((sender, request.clone()));
-            }
-            ev.push(Event::OsdSyncRequested {
-                device: sender,
-                request,
-            });
+        osd_kind::REQUEST if p.len() >= OSD_REQUEST_SIZE => {
+            request(state, sender, p, seq, target, ev);
         }
         osd_kind::SETTING if is_management(state, sender) => {
             if let Some(setting) = setting(p, seq, target) {
@@ -89,6 +77,44 @@ pub(super) fn osd_sync(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 
 /// Whether a unit counts `uid` as management: the mesh controller, or a
 /// device announcing itself as one.
+/// Reads a request. A unit asks about itself; management may also ask for a
+/// new sync for another unit. One this client answers is queued for the
+/// runtime: one asking for a new sync, and one asking for settings of a sync
+/// that names this client as its source or, from an older overlay module,
+/// names none. The runtime leaves one naming none to the controller unless
+/// this client sent that sync.
+fn request(
+    state: &mut State,
+    sender: DeviceUid,
+    p: &[u8],
+    seq: u16,
+    target: DeviceUid,
+    ev: &mut Vec<Event>,
+) {
+    let by = if seq == 0 {
+        target == sender || is_management(state, sender)
+    } else {
+        target == sender
+    };
+    if !by {
+        return;
+    }
+    let request = OsdSyncRequest {
+        target,
+        seq,
+        what: OsdSyncWhat::from_bits(p[20]),
+        missing: core::array::from_fn(|i| p[22 + i]),
+        source: uid_at(p, OSD_REQUEST_SOURCE_AT),
+    };
+    if seq == 0 || request.source == state.uid || request.source.is_zero() {
+        state.osd_requests.push(request.clone());
+    }
+    ev.push(Event::OsdSyncRequested {
+        device: sender,
+        request,
+    });
+}
+
 fn is_management(state: &State, uid: DeviceUid) -> bool {
     state.device(uid).is_some_and(Device::is_management)
         || state.devices.values().any(|d| d.mesh_master == uid)
@@ -130,9 +156,13 @@ fn setting(p: &[u8], seq: u16, target: DeviceUid) -> Option<OsdSyncSetting> {
     }
     let i16_at = |at: usize| u16_at(body, at) as i16;
     let value = match p[24] {
+        // A unit takes a caption only with all the text it counts.
         osd_setting::CAPTION if body.len() >= OSD_CAPTION_SIZE => {
             let text = &body[OSD_CAPTION_SIZE..];
-            let len = usize::from(u16_at(body, 46)).min(text.len());
+            let len = usize::from(u16_at(body, 46));
+            if text.len() < len {
+                return None;
+            }
             OsdSyncValue::Caption(OsdCaption {
                 font: cstr(&body[..OSD_FONT_LEN]),
                 size: u16_at(body, 32),

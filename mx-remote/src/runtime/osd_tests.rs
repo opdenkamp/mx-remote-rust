@@ -54,7 +54,13 @@ fn mesh() -> Mesh {
         m.feed(
             uid,
             op::SYS_HELLO,
-            &hello_payload(0x2F, "OneIP", serial, "4.8.0", DeviceFeature::V2IP_SINK),
+            &hello_payload(
+                0x2F,
+                "OneIP",
+                serial,
+                "4.8.0",
+                DeviceFeature::V2IP_SINK | DeviceFeature::OSD_SYNC,
+            ),
         );
     }
     m.tap.clear();
@@ -262,9 +268,29 @@ fn a_request_for_another_source_is_left_to_it() {
     let seq = m.remote.send_osd_sync(content(3)).expect("sent");
     m.tap.clear();
     m.request(m.a, seq, 0x05, &[0], Some(m.b));
-    m.request(m.a, seq, 0x05, &[0], None);
+    // An older module names no source, and one for a sync this client did
+    // not send is the controller's.
+    m.request(m.a, seq.wrapping_add(500), 0x05, &[0], None);
     assert_eq!(m.remote.shared.osd_pass(), 0);
     assert!(m.sent().is_empty());
+}
+
+/// An older overlay module names no source, and sends its request to the
+/// sync's sender; one for this client's sync is answered, since the
+/// controller would otherwise send its own.
+#[test]
+fn a_request_naming_no_source_for_this_clients_sync_is_answered() {
+    let m = mesh();
+    let old = m.remote.send_osd_sync(content(3)).expect("sent");
+    let held = m.remote.send_osd_sync(content(2)).expect("sent");
+    m.tap.clear();
+    m.request(m.a, held, 0x05, &[1], None);
+    assert_eq!(m.remote.shared.osd_pass(), 1, "the setting it lacks");
+    m.tap.clear();
+    m.request(m.a, old, 0x01, &[0], None);
+    let sent = m.sent();
+    assert_eq!(sent.len(), 1, "a new sync for one no longer held");
+    assert_eq!(sent[0][1], 0);
 }
 
 #[test]
@@ -286,13 +312,19 @@ fn a_request_for_a_sync_no_longer_held_gets_a_new_one() {
         "a unit takes no sync numbered as its last"
     );
     assert_eq!(target(p), m.a);
-    assert_eq!(p[20], 0x05, "everything held, whatever it asked");
+    assert_eq!(p[20], 0x01, "what it asked, of what is held");
     assert_eq!(u16_at(p, 28), 2);
 
     // The new one is answered like the first.
+    let new = u16_at(p, 2);
     m.tap.clear();
-    m.request(m.a, u16_at(p, 2), 0x05, &[1], Some(m.uid()));
+    m.request(m.a, new, 0x05, &[1], Some(m.uid()));
     assert_eq!(m.remote.shared.osd_pass(), 1);
+
+    // Asking for nothing held gets nothing.
+    m.tap.clear();
+    m.request(m.a, old, 0x02, &[0], Some(m.uid()));
+    assert!(m.sent().is_empty(), "a sync copying nothing");
 }
 
 #[test]
@@ -349,7 +381,7 @@ fn settings_queued_for_a_sync_aged_out_are_not_sent() {
     for _ in 0..SEQS_KEPT - 1 {
         m.remote.resend_osd_sync(m.b).expect("sent");
     }
-    m.request(m.a, seq, 0x05, &[1], Some(m.uid()));
+    m.request(m.a, seq, 0x05, &[0, 1], Some(m.uid()));
     assert_eq!(m.remote.shared.osd_pass(), 2, "still the last {SEQS_KEPT}");
     m.request(m.a, seq, 0x05, &[0], Some(m.uid()));
     m.remote.resend_osd_sync(m.b).expect("sent");
@@ -539,4 +571,90 @@ fn closing_drops_the_sync() {
     let osd = lock(&m.remote.shared.osd);
     assert!(!osd.holds());
     assert!(osd.server.is_none());
+}
+
+#[test]
+fn a_new_ask_replaces_what_was_still_queued_for_the_unit() {
+    let m = mesh();
+    let seq = m.remote.send_osd_sync(content(3)).expect("sent");
+    m.request(m.a, seq, 0x05, &[0, 1, 2], Some(m.uid()));
+    m.request(m.b, seq, 0x05, &[0], Some(m.uid()));
+    m.request(m.a, seq, 0x05, &[2], Some(m.uid()));
+    m.tap.clear();
+    assert_eq!(m.remote.shared.osd_pass(), 2, "one for each unit");
+    let sent: Vec<_> = m
+        .sent()
+        .iter()
+        .map(|p| (target(p), u16_at(p, 20)))
+        .collect();
+    assert_eq!(sent, [(m.b, 0), (m.a, 2)]);
+}
+
+#[test]
+fn the_units_take_turns() {
+    let m = mesh();
+    let seq = m.remote.send_osd_sync(content(3)).expect("sent");
+    m.request(m.a, seq, 0x05, &[0, 1, 2], Some(m.uid()));
+    m.request(m.b, seq, 0x05, &[0, 1, 2], Some(m.uid()));
+    m.tap.clear();
+    assert_eq!(m.remote.shared.osd_pass(), SETTINGS_PER_PASS);
+    assert_eq!(m.remote.shared.osd_pass(), 2);
+    let order: Vec<_> = m
+        .sent()
+        .iter()
+        .map(|p| (target(p), u16_at(p, 20)))
+        .collect();
+    let (a, b) = (m.a, m.b);
+    assert_eq!(order, [(a, 0), (b, 0), (a, 1), (b, 1), (a, 2), (b, 2)]);
+}
+
+#[test]
+fn management_may_ask_a_sync_for_another_unit() {
+    let m = mesh();
+    m.remote.send_osd_sync(content(2)).expect("sent");
+    let manager = uid_n(0x23);
+    m.feed(
+        manager,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "Mgr", "MG0023", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let ask_for = |from: DeviceUid, unit: DeviceUid| {
+        let mut p = vec![2, 1, 0, 0];
+        p.extend_from_slice(unit.as_bytes());
+        p.extend_from_slice(&[0x01, 0]);
+        p.extend_from_slice(&[0; 16]);
+        m.feed(from, op::V2IP_OSD_SYNC, &p);
+    };
+    let ask = |from: DeviceUid| ask_for(from, m.b);
+    m.tap.clear();
+    ask_for(manager, DeviceUid::ZERO);
+    ask_for(manager, m.uid());
+    assert!(
+        m.sent().is_empty(),
+        "a sync for no unit, or for this client"
+    );
+    ask(m.a);
+    assert!(m.sent().is_empty(), "a unit asked for another");
+    ask(manager);
+    let sent = m.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!((sent[0][1], target(&sent[0])), (0, m.b));
+}
+
+#[test]
+fn a_resend_goes_only_to_a_unit_taking_overlay_syncs() {
+    let m = mesh();
+    m.remote.send_osd_sync(content(2)).expect("sent");
+    let c = uid_n(0x24);
+    m.feed(
+        c,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "OI0024", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    m.tap.clear();
+    assert!(matches!(
+        m.remote.resend_osd_sync(c),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(m.sent().is_empty());
 }

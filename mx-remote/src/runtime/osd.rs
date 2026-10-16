@@ -24,7 +24,7 @@ use crate::types::{
     OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
 };
 use crate::wire::{
-    build_osd_setting, build_osd_sync, crc32, op, Addressee, DeviceUid, OsdSyncWhat,
+    build_osd_setting, build_osd_sync, crc32, op, Addressee, DeviceFeature, DeviceUid, OsdSyncWhat,
 };
 
 use super::control::ControlError;
@@ -49,6 +49,8 @@ const PNG_IHDR_AT: usize = 12;
 pub(super) struct OsdSender {
     held: Option<Held>,
     next_seq: u16,
+    /// The syncs this client sent, of whatever it held, oldest first.
+    issued: VecDeque<u16>,
     queue: VecDeque<Pending>,
     server: Option<LogoServer>,
 }
@@ -74,8 +76,8 @@ struct Pending {
 
 impl OsdSender {
     /// A sender numbering from the wall clock, so a restarted client does not
-    /// repeat a number the units still remember from it: a unit takes no
-    /// second sync with the number of the last one it took from a source.
+    /// reuse a recent number: requests and reports name a sync by its number,
+    /// and a unit drops a sync repeating the last one's within two seconds.
     pub(super) fn new() -> Self {
         let ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -83,6 +85,7 @@ impl OsdSender {
         Self {
             held: None,
             next_seq: (ms as u16).max(1),
+            issued: VecDeque::new(),
             queue: VecDeque::new(),
             server: None,
         }
@@ -99,6 +102,10 @@ impl OsdSender {
     fn sync_frame(&mut self, target: DeviceUid, what: OsdSyncWhat) -> Option<(u16, Vec<u8>)> {
         let seq = self.next_seq;
         self.next_seq = seq.wrapping_add(1).max(1);
+        if self.issued.len() == SEQS_KEPT {
+            self.issued.pop_front();
+        }
+        self.issued.push_back(seq);
         let held = self.held.as_mut()?;
         if held.seqs.len() == SEQS_KEPT {
             held.seqs.pop_front();
@@ -109,30 +116,39 @@ impl OsdSender {
         Some((seq, frame))
     }
 
-    /// Queues the settings `unit` lacks of sync `seq`, each once.
+    /// Replaces what is still to be sent to `unit` with the settings it
+    /// lacks of sync `seq`.
     fn queue_missing(&mut self, unit: DeviceUid, request: &OsdSyncRequest) {
         let Some(held) = &self.held else {
             return;
         };
+        self.queue.retain(|p| p.unit != unit);
         for index in 0..held.entries.len() as u16 {
-            let pending = Pending {
-                unit,
-                seq: request.seq,
-                index,
-            };
-            if request.is_missing(index) && !self.queue.contains(&pending) {
-                self.queue.push_back(pending);
+            if request.is_missing(index) {
+                self.queue.push_back(Pending {
+                    unit,
+                    seq: request.seq,
+                    index,
+                });
             }
         }
     }
 
     /// The next few settings to send, as their unit and frame.
+    ///
+    /// The units take turns: a unit's other settings go behind everyone
+    /// else's each time one of its own is taken, so one asking for many does
+    /// not hold the rest past the time a unit allows a sync.
     fn next_pass(&mut self) -> Vec<(DeviceUid, Vec<u8>)> {
         let mut pass = Vec::new();
         while pass.len() < SETTINGS_PER_PASS {
             let Some(p) = self.queue.pop_front() else {
                 break;
             };
+            let (theirs, others): (VecDeque<_>, VecDeque<_>) =
+                self.queue.drain(..).partition(|q| q.unit == p.unit);
+            self.queue = others;
+            self.queue.extend(theirs);
             let Some(held) = &self.held else {
                 break;
             };
@@ -163,11 +179,12 @@ impl Shared {
     ///
     /// One asking for a new sync is sent one of its own, copying what it
     /// asks for of what this client holds. One naming a sync of the held
-    /// content has the settings it lacks queued. One naming any other sync
-    /// of this client's is sent a new one of the held content, since the
-    /// unit can take no other.
-    pub(super) fn answer_osd_requests(&self, requests: Vec<(DeviceUid, OsdSyncRequest)>) {
-        for (unit, request) in requests {
+    /// content has the settings it lacks queued, in place of what was still
+    /// queued for it. One naming any other sync of this client's is sent a
+    /// new sync the same way, since the unit can take no other.
+    pub(super) fn answer_osd_requests(&self, requests: Vec<OsdSyncRequest>) {
+        for request in requests {
+            let unit = request.target;
             let Some(to) = self.addressee(unit) else {
                 continue;
             };
@@ -177,18 +194,25 @@ impl Shared {
                     return;
                 };
                 let (held_what, current) = (held.what, held.seqs.contains(&request.seq));
-                if request.seq == 0 {
+                // A request naming no source, as an older overlay module
+                // sends, is this client's to answer only for a sync it sent;
+                // any other is the controller's.
+                let ours = current || osd.issued.contains(&request.seq);
+                if request.seq != 0 && request.source.is_zero() && !ours {
+                    continue;
+                }
+                if request.seq != 0 && current {
+                    osd.queue_missing(unit, &request);
+                    self.osd_queued.notify_one();
+                    None
+                } else {
+                    // A new sync copies what the request asks for, of what
+                    // is held; a request asking for none of it gets none.
                     let what = request.what & held_what;
                     if what.is_empty() {
                         continue;
                     }
                     osd.sync_frame(unit, what)
-                } else if current {
-                    osd.queue_missing(unit, &request);
-                    self.osd_queued.notify_one();
-                    None
-                } else {
-                    osd.sync_frame(unit, held_what)
                 }
             };
             if let Some((_, frame)) = sync {
@@ -307,12 +331,22 @@ impl Remote {
     /// Has one unit copy the sync this client holds again, returning the
     /// new sync's number. As [`Remote::send_osd_sync`].
     ///
-    /// Refused while no sync is held.
+    /// Refused while no sync is held, and for a unit that does not announce
+    /// [`OSD_SYNC`](DeviceFeature::OSD_SYNC), as one that does not take
+    /// overlay syncs.
     pub fn resend_osd_sync(&self, device: DeviceUid) -> Result<u16, ControlError> {
         let to = self
             .shared
             .addressee(device)
             .ok_or(ControlError::UnknownDevice(device))?;
+        let takes = self.shared.read(|state| {
+            state
+                .device(device)
+                .is_some_and(|d| d.hello.features.has(DeviceFeature::OSD_SYNC))
+        });
+        if !takes {
+            return Err(ControlError::Unsupported("the unit takes no overlay sync"));
+        }
         let (seq, frame) = {
             let mut osd = lock(&self.shared.osd);
             let what = osd.held.as_ref().map(|h| h.what);

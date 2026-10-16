@@ -2504,7 +2504,7 @@ pub struct mxr_osd_sync_image_t {
     /// Its size in bytes. Zero empties the slot.
     pub len: usize,
     /// The size it is shown at: 0 at its own pixels, 1 to 100 its longer
-    /// side as a percent of the large output's width.
+    /// side as a percent of the large overlay.
     pub percent: u8,
 }
 
