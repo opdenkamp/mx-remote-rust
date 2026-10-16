@@ -1684,6 +1684,43 @@ fn stepping_a_linked_output_starts_from_the_zone_volume() {
         .get(HEADER_LEN..)
         .expect("a frame shorter than a header");
     assert_eq!(payload[18], 52, "the step did not start from the zone's 51");
+    // It keeps the mute state the zone reported rather than leaving it to
+    // "unchanged", which an older matrix reads as mute.
+    assert_eq!(payload[20], 0, "the step did not carry the zone's mute");
+    f.feed(zone.device, op::AUDIO_VOLUME_MUTE, &[1, 51, 51, 3]);
+    f.tap.clear();
+    let _ = f.remote.volume_down(output);
+    let frame = f.tap.frames().pop().expect("no frame was built");
+    assert_eq!(frame[HEADER_LEN + 20], 3);
+}
+
+/// A OneIP output takes a volume: it carries a digital audio output.
+#[test]
+fn a_oneip_output_takes_a_volume() {
+    let f = Fixture::new();
+    let uid = uid_n(214);
+    f.feed(
+        uid,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "VO0001", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    f.feed(
+        uid,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            127,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::from_bits(0x10605),
+        ),
+    );
+    assert!(matches!(
+        f.remote.set_volume(BayUid::new(uid, 127), 40, None),
+        Err(ControlError::Send(SendError::NotConnected))
+    ));
 }
 
 #[test]

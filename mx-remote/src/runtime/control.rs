@@ -619,26 +619,32 @@ impl Remote {
     }
 
     /// Raises a bay's volume by one percent.
+    ///
+    /// The step carries the mute state the bay last reported rather than
+    /// "unchanged", which an older matrix reads as mute.
     pub fn volume_up(&self, bay: BayUid) -> Result<(), ControlError> {
-        self.set_volume(bay, self.current_volume(bay)?.saturating_add(1), None)
+        let (volume, muted) = self.current_volume(bay)?;
+        self.set_volume(bay, volume.saturating_add(1), muted)
     }
 
-    /// Lowers a bay's volume by one percent.
+    /// Lowers a bay's volume by one percent, as [`Remote::volume_up`] does.
     pub fn volume_down(&self, bay: BayUid) -> Result<(), ControlError> {
-        self.set_volume(bay, self.current_volume(bay)?.saturating_sub(1), None)
+        let (volume, muted) = self.current_volume(bay)?;
+        self.set_volume(bay, volume.saturating_sub(1), muted)
     }
 
     /// Mutes or unmutes a bay, keeping the volume it is set to.
     pub fn set_muted(&self, bay: BayUid, muted: bool) -> Result<(), ControlError> {
-        self.set_volume(bay, self.current_volume(bay)?, Some(muted))
+        self.set_volume(bay, self.current_volume(bay)?.0, Some(muted))
     }
 
-    /// The volume a step or a mute is relative to.
-    fn current_volume(&self, bay: BayUid) -> Result<u8, ControlError> {
+    /// The volume a step or a mute is relative to, and the mute state it
+    /// keeps.
+    fn current_volume(&self, bay: BayUid) -> Result<(u8, Option<bool>), ControlError> {
         self.shared.read(|state| {
             let (_, b) = bay_of(state, state.volume_bay(bay))?;
             b.audio_volume
-                .map(|v| v.volume())
+                .map(|v| (v.volume(), v.muted()))
                 .ok_or(ControlError::NotReported("the bay's volume"))
         })
     }

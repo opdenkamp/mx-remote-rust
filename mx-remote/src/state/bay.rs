@@ -177,8 +177,11 @@ impl Bay {
         !self.is_v2ip_remote()
     }
 
+    /// Whether a unit takes a volume for the bay. A OneIP output carries a
+    /// digital audio output and takes one.
     pub(crate) fn has_volume_control(&self) -> bool {
         self.features.has(BayFeatures::AUDIO_ANA_OUT)
+            || self.features.has(BayFeatures::AUDIO_DIG_OUT)
             || self.features.has(BayFeatures::AUDIO_AMP_OUT)
             || self.features.has(BayFeatures::AUDIO_ANA_IN)
             || self.features.has(BayFeatures::AUDIO_DIG_IN)
