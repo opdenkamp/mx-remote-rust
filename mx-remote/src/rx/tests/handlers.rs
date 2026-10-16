@@ -164,31 +164,30 @@ fn no_payload_length_takes_a_handler_out_of_bounds() {
     }
 }
 
-/// The volume request has two layouts, and the length is what separates them.
+/// The volume request has two layouts, and the header protocol is what
+/// separates them: below 0x11 the target is a serial, from 0x11 a uid.
 #[test]
-fn a_volume_request_is_read_at_the_layout_its_length_says() {
+fn a_volume_request_is_read_at_the_layout_its_stamp_says() {
     let mut h = bay_state(127);
     let sender = h.sender;
 
-    // The superseded 20-byte form: a serial rather than a uid, and a one-byte
-    // bay. Nothing but the length says so - it is fed at the stamp the
-    // current form uses, so a decoder selecting on the stamp reads it as the
-    // current layout and takes the volume from the wrong offsets entirely.
-    let mut legacy = vec![0u8; 20];
+    // The superseded form: a serial rather than a uid, and a one-byte bay.
+    // Padded to the current form's 24 bytes, so a decoder selecting on the
+    // length reads it as the current layout.
+    let mut legacy = vec![0u8; 24];
     field(&mut legacy, 0, 16, "HD0001");
-    legacy[16..].copy_from_slice(&[2, 33, 44, 1]);
-    h.feed_proto(op::AUDIO_SET_VOLUME, 0x11, &legacy);
+    legacy[16..20].copy_from_slice(&[2, 33, 44, 1]);
+    h.feed_proto(op::AUDIO_SET_VOLUME, 0x10, &legacy);
     let v = h.bay(2).audio_volume.expect("the old form did not decode");
     assert_eq!((v.volume_left, v.volume_right), (Some(33), Some(44)));
     assert_eq!((v.muted_left, v.muted_right), (Some(true), Some(false)));
 
-    // The current 24-byte form, for the paired direction: the two layouts put
-    // the volume at different offsets, so a test on one alone would pass for a
+    // The current form, for the paired direction: the two layouts put the
+    // volume at different offsets, so a test on one alone would pass for a
     // decoder that had them the wrong way round.
     let mut current = sender.as_bytes().to_vec();
     current.extend_from_slice(&[2, 0, 55, 66, 2, 0, 0, 0]);
-    assert_eq!(current.len(), 24);
-    h.feed(op::AUDIO_SET_VOLUME, &current);
+    h.feed_proto(op::AUDIO_SET_VOLUME, 0x11, &current);
     let v = h
         .bay(2)
         .audio_volume
@@ -196,20 +195,18 @@ fn a_volume_request_is_read_at_the_layout_its_length_says() {
     assert_eq!((v.volume_left, v.volume_right), (Some(55), Some(66)));
     assert_eq!((v.muted_left, v.muted_right), (Some(false), Some(true)));
 
-    // The current form stops at the mute byte, without the three bytes of tail
-    // padding that round its struct to 24. Gating on the padded size rather
-    // than on the last field would drop this, and the superseded layout is what
-    // decides the boundary: anything past its length is the current one.
+    // A unit takes the current form only with its tail padding, so one that
+    // stops at the mute byte changes nothing there and nothing here.
     let mut unpadded = sender.as_bytes().to_vec();
     unpadded.extend_from_slice(&[2, 0, 77, 88, 1]);
-    assert_eq!(unpadded.len(), 21);
-    h.feed(op::AUDIO_SET_VOLUME, &unpadded);
-    let v = h
-        .bay(2)
-        .audio_volume
-        .expect("an unpadded request was dropped");
-    assert_eq!((v.volume_left, v.volume_right), (Some(77), Some(88)));
-    assert_eq!((v.muted_left, v.muted_right), (Some(true), Some(false)));
+    h.feed_proto(op::AUDIO_SET_VOLUME, 0x11, &unpadded);
+    let v = h.bay(2).audio_volume.expect("no volume");
+    assert_eq!((v.volume_left, v.volume_right), (Some(55), Some(66)));
+
+    // Nor does it take the old form without its mute byte.
+    h.feed_proto(op::AUDIO_SET_VOLUME, 0x10, &legacy[..19]);
+    let v = h.bay(2).audio_volume.expect("no volume");
+    assert_eq!((v.volume_left, v.volume_right), (Some(55), Some(66)));
 }
 
 /// A volume request names the bay it is for, and a controller is not it.
@@ -244,7 +241,13 @@ fn a_volume_request_lands_on_the_bay_it_names() {
     let mut legacy = vec![0u8; 20];
     field(&mut legacy, 0, 16, "HD0001");
     legacy[16..].copy_from_slice(&[2, 33, 44, 1]);
-    h.feed_as(controller, op::AUDIO_SET_VOLUME, &legacy);
+    h.feed_full(
+        controller,
+        op::AUDIO_SET_VOLUME,
+        0x10,
+        &legacy,
+        std::time::Instant::now(),
+    );
     let v = h.bay(2).audio_volume.expect("no volume");
     assert_eq!((v.volume_left, v.volume_right), (Some(33), Some(44)));
 }

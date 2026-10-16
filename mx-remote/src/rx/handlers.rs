@@ -36,11 +36,15 @@ use super::Rx;
 const RC_NARROW_SIZE: usize = 3;
 const RC_WIDE_SIZE: usize = 4;
 
-/// Payload length of the superseded `AUDIO_SET_VOLUME` layout, which addresses
-/// its target by serial and carries a one-byte bay. Anything longer is the
-/// current layout, which addresses its target by uid and carries two bay bytes;
-/// that one is 24 with its tail padding and readable from 21 without it.
+/// The header protocol from which `AUDIO_SET_VOLUME` names its target by uid
+/// and carries a two-byte bay. Below it the target is named by serial and the
+/// bay takes one byte.
+const SET_VOLUME_UID_SINCE: u16 = 0x11;
+
+/// The shortest payload a unit takes in each `AUDIO_SET_VOLUME` layout. The uid
+/// one is 24 with its tail padding, and a unit wants the padding too.
 const SET_VOLUME_LEGACY_SIZE: usize = 20;
+const SET_VOLUME_SIZE: usize = 24;
 
 /// The bay and the value a remote-control key or action frame carries.
 fn rc_bay_and_value(f: &Frame) -> Option<(u16, u16)> {
@@ -196,25 +200,25 @@ pub(super) fn rc_key(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 /// frames that do file under the sender are reports a device makes about
 /// itself.
 ///
-/// Two layouts, told apart by length alone. The superseded form names its
-/// target by serial and carries a one-byte bay; anything longer is the current
-/// form, which names it by uid and carries two. Both stamp the same version, so
-/// there is no stamp to select on - unlike `NET_LINK_STATUS`, where a widened
-/// field did raise one. The two cannot be confused for each other anyway: the
-/// first sixteen bytes are a printable serial in one and a binary identifier in
-/// the other.
+/// Two layouts, told apart by the header protocol as a unit tells them apart;
+/// the length plays no part in the choice.
 pub(super) fn volume_set(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
-    let (target, port, at) = match f.payload().len() {
-        n if n > SET_VOLUME_LEGACY_SIZE => (rx.uid_or_zero(0), f.u16(16), 18),
-        SET_VOLUME_LEGACY_SIZE => {
-            let serial = f.str(0, 16).unwrap_or_default();
-            let Some(device) = state.device_by_serial(&serial) else {
-                return;
-            };
-            (device.uid, f.u8(16).map(u16::from), 17)
+    let len = f.payload().len();
+    let (target, port, at) = if f.protocol() >= SET_VOLUME_UID_SINCE {
+        if len < SET_VOLUME_SIZE {
+            return;
         }
-        _ => return,
+        (rx.uid_or_zero(0), f.u16(16), 18)
+    } else {
+        if len < SET_VOLUME_LEGACY_SIZE {
+            return;
+        }
+        let serial = f.str(0, 16).unwrap_or_default();
+        let Some(device) = state.device_by_serial(&serial) else {
+            return;
+        };
+        (device.uid, f.u8(16).map(u16::from), 17)
     };
     let Some(port) = port else {
         return;
