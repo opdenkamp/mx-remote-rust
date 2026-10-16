@@ -744,10 +744,10 @@ wire_enum! {
         POWER_ON = 1;
         /// Power off.
         POWER_OFF = 2;
-        /// Volume down.
-        VOLUME_DOWN = 3;
         /// Volume up.
-        VOLUME_UP = 4;
+        VOLUME_UP = 3;
+        /// Volume down.
+        VOLUME_DOWN = 4;
         /// Toggle mute.
         VOLUME_MUTE = 5;
     }

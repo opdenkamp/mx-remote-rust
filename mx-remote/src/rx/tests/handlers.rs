@@ -63,6 +63,25 @@ fn bay_state(n: u8) -> Harness {
 /// at that stamp, which is what a real device sends: a decoder selecting on
 /// the stamp reads every one of them as the narrow form.
 #[test]
+fn an_action_names_what_the_unit_performs() {
+    let mut h = bay_state(126);
+    for (wire, action) in [
+        (0u8, RcAction::POWER_TOGGLE),
+        (1, RcAction::POWER_ON),
+        (2, RcAction::POWER_OFF),
+        (3, RcAction::VOLUME_UP),
+        (4, RcAction::VOLUME_DOWN),
+        (5, RcAction::VOLUME_MUTE),
+    ] {
+        h.feed_proto(op::RC_ACTION, 0x01, &[1, 0, wire, 0]);
+        assert!(
+            h.saw(|e| matches!(e, Event::ActionReceived { action: a, .. } if *a == action)),
+            "{wire} did not read as {action:?}"
+        );
+    }
+}
+
+#[test]
 fn a_key_or_action_frame_is_read_at_the_width_its_length_says() {
     let mut h = bay_state(126);
 
