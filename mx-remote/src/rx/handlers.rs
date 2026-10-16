@@ -133,7 +133,8 @@ pub(super) fn power_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
 /// audio at 7. Reading them a byte wide puts "selected" in video and "video" in
 /// audio, which agrees with the wire only while the selected input is the one
 /// actually being shown.
-/// The video port a OneIP reports for an output that shows nothing.
+/// The port a OneIP reports for no source: an output that shows nothing, or
+/// audio with no source of its own, which follows the video.
 const ROUTE_NONE: u16 = 0xFFFE;
 
 pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
@@ -149,6 +150,7 @@ pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
         return;
     }
     let unrouted = f.u16(4) == Some(ROUTE_NONE);
+    let audio_follows = f.u16(7) == Some(ROUTE_NONE);
     let video = f.u16(4).and_then(|p| device.routed_source(p));
     let audio = f.u16(7).and_then(|p| device.routed_source(p));
 
@@ -158,7 +160,9 @@ pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
         } else if let Some(video) = video {
             bay.set_video_source(Some(video), ev);
         }
-        if let Some(audio) = audio {
+        if audio_follows {
+            bay.set_audio_source(None, ev);
+        } else if let Some(audio) = audio {
             bay.set_audio_source(Some(audio), ev);
         }
     }

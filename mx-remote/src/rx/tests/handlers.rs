@@ -801,6 +801,35 @@ fn a_route_to_nothing_clears_the_source() {
     assert_eq!(h.bay(2).video_source.map(|b| b.port), Some(1));
 }
 
+/// Audio a OneIP reports as having no source follows the video again.
+#[test]
+fn audio_with_no_source_follows_the_video() {
+    let mut h = bay_state(126);
+    let mut rt = poisoned(9);
+    rt[0..2].copy_from_slice(&2u16.to_le_bytes()); // sink
+    rt[4..6].copy_from_slice(&1u16.to_le_bytes()); // video
+    rt[7..9].copy_from_slice(&3u16.to_le_bytes()); // audio of its own
+    h.feed(op::MX_ROUTE, &rt);
+    assert_eq!(h.bay(2).effective_audio_source().map(|b| b.port), Some(3));
+
+    h.events.clear();
+    rt[7..9].copy_from_slice(&0xFFFEu16.to_le_bytes());
+    h.feed(op::MX_ROUTE, &rt);
+    assert_eq!(h.bay(2).audio_source, None);
+    assert_eq!(h.bay(2).effective_audio_source().map(|b| b.port), Some(1));
+    assert!(h.saw(|e| matches!(
+        e,
+        Event::AudioSourceChanged { source: Some(b), .. } if b.port == 1
+    )));
+
+    // An invalid port leaves the audio where it is.
+    rt[7..9].copy_from_slice(&3u16.to_le_bytes());
+    h.feed(op::MX_ROUTE, &rt);
+    rt[7..9].copy_from_slice(&0xFFFFu16.to_le_bytes());
+    h.feed(op::MX_ROUTE, &rt);
+    assert_eq!(h.bay(2).effective_audio_source().map(|b| b.port), Some(3));
+}
+
 /// Target 8 routes remote control inside the bay's own device.
 #[test]
 fn an_internal_remote_control_target_is_named() {
