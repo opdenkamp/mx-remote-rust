@@ -649,11 +649,15 @@ impl Shared {
     /// startup and after a network blip: exactly when being heard is worth the
     /// most.
     ///
+    /// It announces `CONFIG_INITIALISED` because a unit uses the scaling
+    /// fields of a 0x3C write only from a sender that does, and this client
+    /// zeroes every field it does not set.
+    ///
     /// While it holds an overlay sync it also announces itself as the mesh's
     /// overlay sync manager, which is what has the controller leave units'
     /// requests for a new sync to it.
     fn announce(&self) {
-        let mut features = DeviceFeature::MANAGER;
+        let mut features = DeviceFeature::MANAGER | DeviceFeature::CONFIG_INITIALISED;
         if lock(&self.osd).holds() {
             features |= DeviceFeature::OSD_SYNC;
         }

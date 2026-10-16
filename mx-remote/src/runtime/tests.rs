@@ -289,6 +289,10 @@ fn the_announcement_describes_this_client() {
     assert_eq!(seen.version, VERSION);
     assert_eq!(seen.supported_protocol, PROTOCOL_VERSION);
     assert!(seen.features.has(DeviceFeature::MANAGER));
+    assert!(
+        seen.features.has(DeviceFeature::CONFIG_INITIALISED),
+        "a unit ignores the scaling in a 0x3C write without it"
+    );
     peer.close();
 }
 

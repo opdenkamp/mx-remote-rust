@@ -204,7 +204,7 @@ fn a_sync_goes_to_every_unit_and_names_its_settings() {
 fn holding_a_sync_announces_the_manager_part() {
     let m = mesh();
     m.remote.send_osd_sync(content(1)).expect("sent");
-    let manager = DeviceFeature::MANAGER.bits();
+    let manager = (DeviceFeature::MANAGER | DeviceFeature::CONFIG_INITIALISED).bits();
     let osd = DeviceFeature::OSD_SYNC.bits();
     assert_eq!(m.hellos(), vec![manager | osd]);
     m.tap.clear();
