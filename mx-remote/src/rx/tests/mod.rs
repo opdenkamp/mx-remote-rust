@@ -5,6 +5,7 @@
 
 mod commands;
 mod handlers;
+mod mesh_bays;
 mod osd;
 mod proto28;
 mod state;

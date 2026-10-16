@@ -115,6 +115,13 @@ impl DeviceInfo {
 ///
 /// A status this bay has never reported is `None`, which is not the same as
 /// the status being off: a device reports only what it has.
+///
+/// A mesh bay, a V2IP bay on one unit standing for another unit's input or
+/// output, reports that unit's own bay 0 in the same direction. Only its
+/// identity is its own: `uid`, `port_name`, `bay_num`, `features`, its
+/// direction, `is_local` and `v2ip_uid`, which names that unit. Every change
+/// to that bay is reported for each mesh bay standing for it as well. Until
+/// the unit has reported the bay, the rest reads as never reported.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct BayInfo {
@@ -196,7 +203,7 @@ pub struct BayInfo {
     /// elsewhere that belongs to this one, such as the amplifier zone carrying
     /// a OneIP output's volume. [`BayInfo::volume`] is already read through it.
     pub linked_bay: Option<BayUid>,
-    /// The source device a V2IP bay maps to, or the zero uid.
+    /// The unit a V2IP bay stands for, or the zero uid.
     pub v2ip_uid: DeviceUid,
     /// What the source on an input is showing, as its unit last reported.
     ///
@@ -207,10 +214,11 @@ pub struct BayInfo {
 
 impl BayInfo {
     pub(crate) fn of(state: &State, bay: &Bay) -> Self {
+        let d = state.described(bay);
         Self {
             uid: bay.uid(),
             port_name: bay.port_name.clone(),
-            user_name: bay.user_name().to_owned(),
+            user_name: d.user_name().to_owned(),
             bay_num: bay.bay_num(),
             features: bay.features,
             is_input: bay.is_input(),
@@ -218,34 +226,34 @@ impl BayInfo {
             is_audio: bay.is_audio(),
             has_dolby: bay.has_dolby(),
             is_local: bay.is_local(),
-            video_source: bay.video_source,
-            audio_source: bay.effective_audio_source(),
-            power_status: bay.power_status,
-            hidden: bay.hidden,
-            faulty: bay.faulty,
-            zone_powered: bay.zone_powered,
-            hdbt_connected: bay.hdbt_connected,
-            signal_detected: bay.signal_detected,
-            hpd_detected: bay.hpd_detected,
-            cec_detected: bay.cec_detected,
-            encoder_disabled: bay.encoder_disabled,
-            decoder_disabled: bay.decoder_disabled,
-            signal_type: bay.signal_type.clone(),
-            signal_details: bay.signal_details,
-            signal_mode: bay.signal_mode,
-            arc: bay.arc,
+            video_source: d.video_source,
+            audio_source: d.effective_audio_source(),
+            power_status: d.power_status,
+            hidden: d.hidden,
+            faulty: d.faulty,
+            zone_powered: d.zone_powered,
+            hdbt_connected: d.hdbt_connected,
+            signal_detected: d.signal_detected,
+            hpd_detected: d.hpd_detected,
+            cec_detected: d.cec_detected,
+            encoder_disabled: d.encoder_disabled,
+            decoder_disabled: d.decoder_disabled,
+            signal_type: d.signal_type.clone(),
+            signal_details: d.signal_details,
+            signal_mode: d.signal_mode,
+            arc: d.arc,
             volume: state
-                .bay(state.volume_bay(bay.uid()))
+                .bay(state.volume_bay(d.uid()))
                 .and_then(|b| b.audio_volume),
-            rc_type: bay.rc_type,
-            edid_profile: bay.edid_profile,
-            mirror: bay.mirror,
-            audio_endpoint: bay.audio_endpoint,
-            amp_settings: bay.amp_settings,
-            filtered: bay.filtered.clone(),
-            linked_bay: state.linked_bay(bay.uid()),
+            rc_type: d.rc_type,
+            edid_profile: d.edid_profile,
+            mirror: d.mirror,
+            audio_endpoint: d.audio_endpoint,
+            amp_settings: d.amp_settings,
+            filtered: d.filtered.clone(),
+            linked_bay: state.linked_bay(d.uid()),
             v2ip_uid: bay.v2ip_uid,
-            content: bay.content.clone(),
+            content: d.content.clone(),
         }
     }
 }

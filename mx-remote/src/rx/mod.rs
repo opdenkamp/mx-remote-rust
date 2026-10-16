@@ -124,6 +124,7 @@ pub(crate) fn process_frame(
             state.state_requests.push(sender);
         }
     }
+    state.mirror_mesh_events(&mut ev);
     ev
 }
 

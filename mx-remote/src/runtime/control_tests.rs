@@ -3980,3 +3980,60 @@ fn a_power_save_level_switches_power_save_disabled_off() {
         .expect("a level the device has reported");
     assert_eq!(disabled(), Some(false));
 }
+
+/// The bay names a handler was told of.
+#[derive(Default)]
+struct Names(Mutex<Vec<(BayUid, String)>>);
+
+impl EventHandler for Names {
+    fn on_name_changed(&self, bay: BayUid, name: String) {
+        self.0.lock().expect("test handler").push((bay, name));
+    }
+}
+
+/// A change this client makes to a unit's own bay is reported for the mesh
+/// bays standing for it, as a change the unit reports is.
+#[test]
+fn a_change_made_here_reaches_the_mesh_bays() {
+    let names = Arc::new(Names::default());
+    let f = Fixture::with_handler(Arc::clone(&names) as Arc<dyn EventHandler>);
+    let (owner, receiver) = (uid_n(238), uid_n(239));
+    f.feed(
+        owner,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "ONEIP", "MB0001", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+    f.feed(
+        owner,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            0,
+            0,
+            "Input 1",
+            "Apple TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN | BayFeatures::V2IP_SOURCE_LOCAL,
+        ),
+    );
+    f.feed(
+        receiver,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "ONEIP", "MB0002", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    let mut page = vec![0u8; 8];
+    page[0..2].copy_from_slice(&((1u16 << 1) | 1).to_le_bytes());
+    page[2..4].copy_from_slice(&1u16.to_le_bytes());
+    page.extend_from_slice(owner.as_bytes());
+    f.feed(receiver, op::V2IP_BAY_MAPPINGS, &page);
+    f.connect();
+
+    f.remote
+        .set_bay_name(BayUid::new(owner, 0), "Kodi")
+        .expect("a bay the unit has reported");
+    let seen = names.0.lock().expect("test handler").clone();
+    assert!(
+        seen.contains(&(BayUid::new(receiver, 1), "Kodi".to_owned())),
+        "{seen:?}"
+    );
+}

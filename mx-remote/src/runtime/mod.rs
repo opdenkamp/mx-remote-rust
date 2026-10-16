@@ -576,7 +576,12 @@ impl Shared {
     /// may call back into the library.
     fn mutate<R>(&self, f: impl FnOnce(&mut State, &mut Vec<Event>) -> R) -> R {
         let mut events = Vec::new();
-        let result = f(&mut lock(&self.state), &mut events);
+        let result = {
+            let mut state = lock(&self.state);
+            let result = f(&mut state, &mut events);
+            state.mirror_mesh_events(&mut events);
+            result
+        };
         self.dispatch(events);
         result
     }

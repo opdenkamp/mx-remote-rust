@@ -451,8 +451,8 @@ impl Remote {
     fn source_port(&self, sink: BayUid, name: &str) -> Result<u16, ControlError> {
         self.shared.read(|state| {
             let (device, _) = bay_of(state, sink)?;
-            device
-                .bay_by_user_name(name)
+            state
+                .input_by_user_name(device, name)
                 .map(|b| b.port)
                 .ok_or_else(|| ControlError::UnknownSource(name.to_owned()))
         })

@@ -239,6 +239,13 @@ pub struct mxr_device_info_t {
 }
 
 /// What a bay is, and what is connected to it.
+///
+/// A mesh bay, a V2IP bay on one unit standing for another unit's input or
+/// output (`is_local` false), reports that unit's own bay 0 in the same
+/// direction. Only its identity is its own: `uid`, `port_name`, `bay_num`,
+/// `features`, its direction, `is_local` and `v2ip_uid`, which names that
+/// unit. Every change to that bay is reported for each mesh bay standing for
+/// it as well.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_bay_info_t {
@@ -321,7 +328,7 @@ pub struct mxr_bay_info_t {
     /// output's volume. `volume` is already read through it, and
     /// `mxr_set_volume()` already writes through it.
     pub linked_bay: mxr_bay_uid_t,
-    /// The source device a V2IP bay maps to, zero when it maps to none.
+    /// The unit a V2IP bay stands for, zero when it maps to none.
     pub v2ip_uid: mxr_uid_t,
     /// How many devices `mxr_bay_filtered()` would return.
     pub filtered_count: usize,

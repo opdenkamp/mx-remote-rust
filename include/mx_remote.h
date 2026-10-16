@@ -2905,6 +2905,13 @@ typedef struct {
 
 /**
  * What a bay is, and what is connected to it.
+ *
+ * A mesh bay, a V2IP bay on one unit standing for another unit's input or
+ * output (`is_local` false), reports that unit's own bay 0 in the same
+ * direction. Only its identity is its own: `uid`, `port_name`, `bay_num`,
+ * `features`, its direction, `is_local` and `v2ip_uid`, which names that
+ * unit. Every change to that bay is reported for each mesh bay standing for
+ * it as well.
  */
 typedef struct {
   /**
@@ -3057,7 +3064,7 @@ typedef struct {
    */
   mxr_bay_uid_t linked_bay;
   /**
-   * The source device a V2IP bay maps to, zero when it maps to none.
+   * The unit a V2IP bay stands for, zero when it maps to none.
    */
   mxr_uid_t v2ip_uid;
   /**

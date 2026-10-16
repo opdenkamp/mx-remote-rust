@@ -25,7 +25,7 @@ use crate::types::OsdSyncRequest;
 use crate::wire::{BayFeatures, BayUid, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
-pub(crate) use device::{Device, HelloInfo, CONFIG_GRACE};
+pub(crate) use device::{Device, HelloInfo, MeshBayChange, CONFIG_GRACE};
 pub(crate) use links::{BayLink, BayLinks};
 
 /// Every device this client has heard from, and the links between their bays.
@@ -80,6 +80,58 @@ impl State {
         self.device_mut(uid.device)?.bay_mut(uid.port)
     }
 
+    /// The bay a mesh bay stands for: bay 0 in the same direction on the unit
+    /// it maps to, once that unit has reported it. `None` for a bay that is
+    /// not a mesh bay.
+    pub(crate) fn mesh_owner(&self, bay: &Bay) -> Option<&Bay> {
+        if !bay.is_v2ip_remote() {
+            return None;
+        }
+        self.device(bay.v2ip_uid)?.local_bay(bay.is_input())
+    }
+
+    /// What describes `bay`: the bay a mesh bay stands for, or `bay` itself.
+    pub(crate) fn described<'a>(&'a self, bay: &'a Bay) -> &'a Bay {
+        self.mesh_owner(bay).unwrap_or(bay)
+    }
+
+    /// The input bay on `device` carrying the given user-assigned name.
+    ///
+    /// Inputs only, and hidden ones are skipped: this resolves the name a
+    /// picker shows, and a picker does not offer what it does not list.
+    pub(crate) fn input_by_user_name<'a>(
+        &'a self,
+        device: &'a Device,
+        name: &str,
+    ) -> Option<&'a Bay> {
+        device.bays.values().filter(|b| b.is_input()).find(|b| {
+            let d = self.described(b);
+            d.hidden != Some(true) && d.user_name() == name
+        })
+    }
+
+    /// Repeats each change to a unit's own bay 0 for the mesh bays standing
+    /// for it, which describe themselves through it.
+    ///
+    /// A request that arrived on the bay, such as a key press, concerns the
+    /// bay it arrived on and is not repeated.
+    pub(crate) fn mirror_mesh_events(&self, ev: &mut Vec<Event>) {
+        let mut mirrored = Vec::new();
+        for event in ev.iter() {
+            let Some(uid) = event.mirrored_bay() else {
+                continue;
+            };
+            for device in self.devices.values() {
+                for bay in device.bays.values() {
+                    if self.mesh_owner(bay).is_some_and(|o| o.uid() == uid) {
+                        mirrored.push(event.for_bay(bay.uid()));
+                    }
+                }
+            }
+        }
+        ev.extend(mirrored);
+    }
+
     /// The bay a link record names: a device serial and a port name.
     pub(crate) fn bay_by_serial_and_name(&self, serial: &str, port_name: &str) -> Option<BayUid> {
         Some(self.device_by_serial(serial)?.bay_by_name(port_name)?.uid())
@@ -94,7 +146,7 @@ impl State {
             let input = device.first_input()?;
             let source = device.v2ip_source_for(input)?;
             let stream = if audio { source.audio } else { source.video };
-            (stream.ip == ip).then(|| input.uid())
+            (stream.ip == ip).then(|| self.described(input).uid())
         })
     }
 

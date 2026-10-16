@@ -67,13 +67,58 @@ const MODE_OUTPUT: u8 = 1;
 impl Bay {
     pub(crate) fn new(device: DeviceUid, cfg: &BayConfig) -> Self {
         Self {
-            device,
-            port: u16::from(cfg.port),
-            port_name: cfg.bay_name.clone(),
-            user_name: None,
-            features: cfg.features,
-            mode: cfg.modenum,
             status_mask: cfg.status,
+            ..Self::blank(
+                device,
+                u16::from(cfg.port),
+                cfg.bay_name.clone(),
+                cfg.features,
+                cfg.modenum,
+            )
+        }
+    }
+
+    /// A V2IP bay standing for bay 0 of the same direction on `owner`, as a
+    /// bay mapping names it: input `number` or output `number`, on `port`.
+    ///
+    /// It carries only its identity. What it describes is read from the
+    /// owner's own bay, since what a unit reports about another unit's bay is
+    /// never refreshed.
+    pub(crate) fn mesh(
+        device: DeviceUid,
+        port: u16,
+        is_input: bool,
+        number: u8,
+        owner: DeviceUid,
+    ) -> Self {
+        let (mode, features, name) = if is_input {
+            (MODE_INPUT, BayFeatures::V2IP_SOURCE_REMOTE, "Input")
+        } else {
+            (MODE_OUTPUT, BayFeatures::V2IP_SINK_REMOTE, "Output")
+        };
+        let port_name = format!("{name} {}", u16::from(number) + 1);
+        Self {
+            mbay_id: Some(number),
+            v2ip_uid: owner,
+            ..Self::blank(device, port, port_name, features, mode)
+        }
+    }
+
+    fn blank(
+        device: DeviceUid,
+        port: u16,
+        port_name: String,
+        features: BayFeatures,
+        mode: u8,
+    ) -> Self {
+        Self {
+            device,
+            port,
+            port_name,
+            user_name: None,
+            features,
+            mode,
+            status_mask: BayStatus::NONE,
             mbay_id: None,
             video_source: None,
             audio_source: None,

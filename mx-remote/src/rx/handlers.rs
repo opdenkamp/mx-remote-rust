@@ -6,7 +6,7 @@
 use std::net::Ipv4Addr;
 
 use crate::event::Event;
-use crate::state::{Device, HelloInfo, State};
+use crate::state::{Device, HelloInfo, MeshBayChange, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
@@ -982,7 +982,7 @@ pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
 /// second is the port of the bay the page starts at. A device may split its
 /// list over several pages, so each is filed on its own and none replaces what
 /// another said.
-pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]) {
+pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
     let (Some(header), Some(first_port)) = (f.u16(0), f.u16(2)) else {
         return;
@@ -993,8 +993,21 @@ pub(super) fn v2ip_bay_mapping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]
         return;
     }
     let page: Vec<DeviceUid> = (0..count).filter_map(|i| f.uid(8 + 16 * i)).collect();
-    if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_v2ip_bay_mapping_page(first_port, page);
+    let Some(device) = state.device_mut(rx.sender()) else {
+        return;
+    };
+    for (bay, change) in device.set_v2ip_bay_mapping_page(first_port, &page) {
+        ev.push(match change {
+            MeshBayChange::Registered => Event::BayRegistered { bay },
+            // The bay now describes another unit's bay, under that one's name.
+            MeshBayChange::Remapped => Event::NameChanged {
+                bay,
+                name: state
+                    .bay(bay)
+                    .map(|b| state.described(b).user_name().to_owned())
+                    .unwrap_or_default(),
+            },
+        });
     }
 }
 

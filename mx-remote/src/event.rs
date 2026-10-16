@@ -95,6 +95,24 @@ macro_rules! events {
         }
 
         impl Event {
+            /// The bay a bay-level event concerns.
+            fn bay(&self) -> Option<BayUid> {
+                match self {
+                    $( Self::$bvariant { bay, .. } => Some(*bay), )*
+                    _ => None,
+                }
+            }
+
+            /// This bay-level event about another bay.
+            pub(crate) fn for_bay(&self, to: BayUid) -> Self {
+                let mut event = self.clone();
+                match &mut event {
+                    $( Self::$bvariant { bay, .. } => *bay = to, )*
+                    _ => {}
+                }
+                event
+            }
+
             /// Delivers this event to `handler`, then the generic update it
             /// fans in to.
             pub(crate) fn dispatch(self, handler: &dyn EventHandler) {
@@ -122,6 +140,23 @@ macro_rules! events {
             }
         }
     };
+}
+
+impl Event {
+    /// The bay whose state this event says changed, for a change the mesh
+    /// bays standing for that bay share. A bay's registration and the
+    /// requests that arrive on it concern that bay alone.
+    pub(crate) fn mirrored_bay(&self) -> Option<BayUid> {
+        match self {
+            Self::BayRegistered { .. }
+            | Self::KeyPressed { .. }
+            | Self::ActionReceived { .. }
+            | Self::VolumeStep { .. }
+            | Self::AudioClipped { .. }
+            | Self::IrCaptured { .. } => None,
+            _ => self.bay(),
+        }
+    }
 }
 
 /// Ignores every event.

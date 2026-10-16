@@ -15,7 +15,9 @@ use crate::types::{
     V2ipDeviceStats, V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources,
     V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
-use crate::wire::{BayConfig, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature};
+use crate::wire::{
+    BayConfig, BayFeatures, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature,
+};
 
 use super::bay::Bay;
 
@@ -104,18 +106,6 @@ pub(crate) struct Device {
     /// records are held by position and `v2ip_sources` is the run of them that
     /// has arrived from the start.
     pub(crate) v2ip_source_pages: BTreeMap<u16, V2ipStreamSources>,
-    /// The source device behind each of this device's V2IP bays, by bay mode
-    /// and number.
-    ///
-    /// Held here as well as on the bays because a device may send them before
-    /// the bay configuration that creates those bays, and a bay that arrives
-    /// later picks its mapping up from here.
-    pub(crate) v2ip_bay_mappings: BTreeMap<(&'static str, u8), DeviceUid>,
-    /// Bay mapping pages whose first port names no bay yet, by that port.
-    ///
-    /// A page runs on by bay number from the bay at its first port, so it
-    /// cannot be filed until that bay's configuration says which one it is.
-    pub(crate) v2ip_bay_mapping_pages: BTreeMap<u16, Vec<DeviceUid>>,
     pub(crate) v2ip_details: Option<DeviceV2ipDetails>,
     /// The time zone the device last announced for its mesh.
     pub(crate) time_zone: Option<TimeZone>,
@@ -183,8 +173,6 @@ impl Device {
             bay_config_received: false,
             v2ip_sources: None,
             v2ip_source_pages: BTreeMap::new(),
-            v2ip_bay_mappings: BTreeMap::new(),
-            v2ip_bay_mapping_pages: BTreeMap::new(),
             v2ip_details: None,
             time_zone: None,
             clock: None,
@@ -344,20 +332,15 @@ impl Device {
         self.bays.get(&port)
     }
 
+    /// A bay to change, which a mesh bay is not: it describes itself through
+    /// the bay it stands for, so what the unit listing it says about it is
+    /// the unit's copy of that bay, and changes nothing.
     pub(crate) fn bay_mut(&mut self, port: u16) -> Option<&mut Bay> {
-        self.bays.get_mut(&port)
+        self.bays.get_mut(&port).filter(|b| !b.is_v2ip_remote())
     }
 
     pub(crate) fn bay_by_name(&self, name: &str) -> Option<&Bay> {
         self.bays.values().find(|b| b.port_name == name)
-    }
-
-    /// The input bay carrying the given user-assigned name.
-    ///
-    /// Inputs only, and hidden ones are skipped: this resolves the name a
-    /// picker shows, and a picker does not offer what it does not list.
-    pub(crate) fn bay_by_user_name(&self, name: &str) -> Option<&Bay> {
-        self.inputs().find(|b| b.user_name() == name)
     }
 
     /// The bay the device's own API would call `mode` number `bay`.
@@ -375,14 +358,16 @@ impl Device {
         self.bays.values().find(|b| b.is_output())
     }
 
-    pub(crate) fn first_output_port(&self) -> Option<u16> {
-        self.first_output().map(|b| b.port)
-    }
-
-    pub(crate) fn inputs(&self) -> impl Iterator<Item = &Bay> {
+    /// The unit's own bay 0 in the given direction, which its mesh bays on
+    /// other units stand for.
+    pub(crate) fn local_bay(&self, input: bool) -> Option<&Bay> {
         self.bays
             .values()
-            .filter(|b| b.is_input() && b.hidden != Some(true))
+            .find(|b| b.is_local() && if input { b.is_input() } else { b.is_output() })
+    }
+
+    pub(crate) fn first_output_port(&self) -> Option<u16> {
+        self.first_output().map(|b| b.port)
     }
 
     /// The streams the given source bay advertises.
@@ -567,10 +552,15 @@ impl Device {
     /// the bays this device already has.
     ///
     /// A record with an empty name describes no bay, as a unit sends for an
-    /// input it cannot number, and is dropped.
+    /// input it cannot number, and is dropped. So is a record for a V2IP bay
+    /// standing for another unit: what it says about that unit's bay is never
+    /// refreshed, and the bay is built from the bay mappings instead.
     pub(crate) fn apply_bay_config(&mut self, cfg: &BayConfig, now: Instant, ev: &mut Vec<Event>) {
         self.last_ping = now;
-        if cfg.bay_name.is_empty() {
+        if cfg.bay_name.is_empty()
+            || cfg.features.has(BayFeatures::V2IP_SOURCE_REMOTE)
+            || cfg.features.has(BayFeatures::V2IP_SINK_REMOTE)
+        {
             return;
         }
         let is_v2ip = self.is_v2ip();
@@ -590,12 +580,9 @@ impl Device {
         if bay.mbay_id.is_none() {
             bay.mbay_id = Some(cfg.bay);
         }
-        let page = self.v2ip_bay_mapping_pages.remove(&bay.port);
-        if let Some(page) = &page {
-            file_v2ip_bay_mappings(&mut self.v2ip_bay_mappings, bay, page);
-        }
-        if let Some(uid) = self.v2ip_bay_mappings.get(&(bay.mode_str(), bay.bay_num())) {
-            bay.v2ip_uid = *uid;
+        // A unit maps its own V2IP bay to itself.
+        if bay.is_v2ip_source() || bay.is_v2ip_sink() {
+            bay.v2ip_uid = self.uid;
         }
         bay.apply_bay_status(cfg.status, ev);
         bay.signal_mode = cfg.signal_mode;
@@ -612,11 +599,6 @@ impl Device {
             bay.set_edid_profile(cfg.edid_profile, ev);
         }
 
-        // The page this bay starts also names the bays after it.
-        if page.is_some() {
-            self.apply_v2ip_bay_mappings();
-        }
-
         if is_new {
             ev.push(Event::BayRegistered {
                 bay: BayUid::new(self.uid, u16::from(cfg.port)),
@@ -628,34 +610,69 @@ impl Device {
         }
     }
 
-    /// Takes one page of the device's V2IP bay mappings.
+    /// Takes one page of the device's V2IP bay mappings: the unit owning
+    /// each bay from the one on `first_port` on, and returns the mesh bays it
+    /// registered or pointed at another unit.
     ///
-    /// `first_port` is the port of the bay the page starts at, and the entries
-    /// run on from it by bay number rather than by port: inputs and outputs
-    /// share one port space, so a run of bays need not be a run of ports. A
-    /// page whose first port names no bay yet waits for that bay's
-    /// configuration.
-    pub(crate) fn set_v2ip_bay_mapping_page(&mut self, first_port: u16, page: Vec<DeviceUid>) {
-        let Some(first) = self.bays.get(&first_port) else {
-            self.v2ip_bay_mapping_pages.insert(first_port, page);
-            return;
+    /// The entries run on by bay number in the direction of the first bay,
+    /// which is a run of ports only in some numberings. The unit's own bays
+    /// come from its bay configuration, and an entry naming the unit itself is
+    /// one of them. Every other entry is a mesh bay, which a page creates. A
+    /// zero uid maps nothing: released firmware counts more bays than it has,
+    /// and sends one for each extra. The page ends past the last bay.
+    pub(crate) fn set_v2ip_bay_mapping_page(
+        &mut self,
+        first_port: u16,
+        page: &[DeviceUid],
+    ) -> Vec<(BayUid, MeshBayChange)> {
+        let layout = self.port_layout();
+        let mut changes = Vec::new();
+        let Some((is_input, first)) = layout.decode(first_port) else {
+            return changes;
         };
-        file_v2ip_bay_mappings(&mut self.v2ip_bay_mappings, first, &page);
-        self.apply_v2ip_bay_mappings();
+        let bays = (first..=u8::MAX).map_while(|n| Some((n, layout.encode(is_input, n)?)));
+        for ((number, port), owner) in bays.zip(page) {
+            if owner.is_zero() || *owner == self.uid {
+                continue;
+            }
+            match self.bays.get_mut(&port) {
+                Some(bay) if bay.v2ip_uid == *owner => {}
+                Some(bay) => {
+                    bay.v2ip_uid = *owner;
+                    changes.push((bay.uid(), MeshBayChange::Remapped));
+                }
+                None => {
+                    let bay = Bay::mesh(self.uid, port, is_input, number, *owner);
+                    changes.push((bay.uid(), MeshBayChange::Registered));
+                    self.bays.insert(port, bay);
+                }
+            }
+        }
+        changes
     }
 
-    /// Hands every filed bay mapping to the bay it names.
-    fn apply_v2ip_bay_mappings(&mut self) {
-        for bay in self.bays.values_mut() {
-            if let Some(uid) = self.v2ip_bay_mappings.get(&(bay.mode_str(), bay.bay_num())) {
-                bay.v2ip_uid = *uid;
-            }
+    /// How the unit numbers its bays' ports, as its protocol says.
+    fn port_layout(&self) -> PortLayout {
+        if self.hello.supported_protocol >= FIXED_PORTS_SINCE {
+            PortLayout::Fixed
+        } else {
+            PortLayout::Split
         }
     }
 
     /// The identity of a local bay named by port number in a routing report.
+    ///
+    /// A V2IP unit's input port names a bay even before the unit's mappings
+    /// have created it, as they do after its bay configuration.
     fn routed_source(&self, port: u8) -> Option<BayUid> {
-        self.bays.get(&u16::from(port)).map(Bay::uid)
+        let port = u16::from(port);
+        let named = self.bays.contains_key(&port)
+            || (self.is_v2ip()
+                && self
+                    .port_layout()
+                    .decode(port)
+                    .is_some_and(|(input, _)| input));
+        named.then(|| BayUid::new(self.uid, port))
     }
 
     /// Treats the device as undescribed until it sends its bays again, as a
@@ -1249,15 +1266,64 @@ impl Device {
     }
 }
 
-/// Files a bay mapping page under the bays it names: `first` and then the
-/// bays numbered on from it in the same direction.
-fn file_v2ip_bay_mappings(
-    mappings: &mut BTreeMap<(&'static str, u8), DeviceUid>,
-    first: &Bay,
-    page: &[DeviceUid],
-) {
-    let mode = first.mode_str();
-    for (number, uid) in (first.bay_num()..=u8::MAX).zip(page) {
-        mappings.insert((mode, number), *uid);
+/// The protocol from which a V2IP unit numbers its ports
+/// [`PortLayout::Fixed`].
+const FIXED_PORTS_SINCE: u16 = 0x2B;
+
+/// The bays a V2IP unit numbers in each direction.
+const V2IP_BAYS: u8 = 127;
+
+/// The bays of each direction that come first in [`PortLayout::Split`].
+const SPLIT_FIRST: u8 = 16;
+
+/// How a V2IP unit numbers the ports of its bays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PortLayout {
+    /// Input n on port n, output n on port 127 + n.
+    Fixed,
+    /// Inputs 0-15 on ports 0-15 and outputs 0-15 on 16-31, then inputs
+    /// 16-126 on 32-142 and outputs 16-126 on 143-253.
+    Split,
+}
+
+impl PortLayout {
+    /// The direction and number of the bay on `port`. A port past the last
+    /// output reads as an output numbered past the last bay, which
+    /// [`PortLayout::encode`] gives no port.
+    fn decode(self, port: u16) -> Option<(bool, u8)> {
+        let (is_input, first_port) = match (self, port) {
+            (Self::Fixed, 0..=126) | (Self::Split, 0..=15) => (true, 0),
+            (Self::Split, 16..=31) => (false, 16),
+            (Self::Split, 32..=142) => (true, 16),
+            (Self::Fixed | Self::Split, _) => (false, 127),
+        };
+        let bay = u8::try_from(port - first_port).ok()?;
+        Some((is_input, bay))
     }
+
+    /// The port of input or output `bay`, `None` past the last bay.
+    fn encode(self, is_input: bool, bay: u8) -> Option<u16> {
+        if bay >= V2IP_BAYS {
+            return None;
+        }
+        let bay = u16::from(bay);
+        let split = u16::from(SPLIT_FIRST);
+        Some(match (self, is_input) {
+            (Self::Fixed, true) => bay,
+            (Self::Fixed, false) => bay + 127,
+            (Self::Split, true) if bay < split => bay,
+            (Self::Split, false) if bay < split => bay + split,
+            (Self::Split, true) => bay + split,
+            (Self::Split, false) => bay + 127,
+        })
+    }
+}
+
+/// What a bay mapping page did to a mesh bay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MeshBayChange {
+    /// The bay is new.
+    Registered,
+    /// The bay now stands for another unit.
+    Remapped,
 }
