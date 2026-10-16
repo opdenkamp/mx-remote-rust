@@ -502,6 +502,10 @@ pub struct mxr_multiviewer_status_t {
     pub output_itc: u8,
     /// The EDID presented to sources.
     pub edid_template: u8,
+    /// How a two, three or four screen layout is arranged: 1 large, 2 small,
+    /// 0 in a single or picture-in-picture layout or while the hardware has
+    /// not said.
+    pub screen_mode: u8,
     /// How a source is fitted into its window.
     pub aspect_ratio: u8,
     /// Whether automatic source switching is on.
@@ -2025,6 +2029,7 @@ fn multiviewer_of(s: MultiviewerStatus) -> mxr_multiviewer_status_t {
         hdcp_mode: s.hdcp_mode.to_wire(),
         output_itc: s.output_itc.to_wire(),
         edid_template: s.edid_template.to_wire(),
+        screen_mode: s.screen_mode,
         aspect_ratio: s.aspect_ratio.to_wire(),
         auto_switch: s.auto_switch.to_wire(),
         audio_source: s.audio_source.to_wire(),

@@ -64,6 +64,15 @@ fn multiviewer_status_parses() {
     p[183] = 3; // window 1 shows input 4, which one-based numbering cannot reach
     p[179] = 0; // audio source: input 1
     p[186] = 1; // remote control follows input 2
+    p[176] = 2; // the small screen arrangement
+                // A status names the unit it describes, and a unit reports only on
+                // itself.
+    p[24..40].copy_from_slice(uid_n(5).as_bytes());
+    h.feed(op::V2IP_MULTIVIEWER, &p);
+    assert!(
+        h.device().multiviewer.is_none(),
+        "a status about another unit"
+    );
     p[24..40].copy_from_slice(uid_n(4).as_bytes());
     h.feed(op::V2IP_MULTIVIEWER, &p);
 
@@ -80,6 +89,7 @@ fn multiviewer_status_parses() {
     assert_eq!(mv.video_sources[1], MultiviewerSource::INPUT_4);
     assert_eq!(mv.audio_source, MultiviewerSource::INPUT_1);
     assert_eq!(mv.remote_control, MultiviewerSource::INPUT_2);
+    assert_eq!(mv.screen_mode, 2);
     assert_eq!(mv.window_count(), Some(4));
 }
 
@@ -611,9 +621,14 @@ fn firmware_and_system_status() {
     assert_eq!(v.version, "1.2.3");
     assert_eq!((v.hash, v.timestamp), (0xCAFE, 1_700_000_000));
 
+    // A unit reports only its own status, naming itself first.
     let mut ss = poisoned(18);
+    ss[0..16].copy_from_slice(uid_n(11).as_bytes());
     ss[16..18].copy_from_slice(&7u16.to_le_bytes());
     ss.extend_from_slice(b"overheating");
+    h.feed(op::SYS_STATUS, &ss);
+    assert_eq!(h.device().sys_status, None, "a status naming another unit");
+    ss[0..16].copy_from_slice(h.sender.as_bytes());
     h.feed(op::SYS_STATUS, &ss);
     assert_eq!(
         h.device().sys_status.clone(),

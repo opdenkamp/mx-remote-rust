@@ -2135,8 +2135,8 @@ impl Remote {
         let mut args = Vec::with_capacity(24);
         args.extend_from_slice(source.as_bytes());
         args.push(input);
-        // mv_config_source_t is 4-aligned behind its uid, so seven bytes of
-        // padding follow the input index.
+        // The body is 8-aligned, so seven bytes of padding round the uid and
+        // the input index up to 24.
         args.extend_from_slice(&[0; 7]);
         self.multiviewer(device, mv_sub::CONFIG_SOURCE, &args)
     }

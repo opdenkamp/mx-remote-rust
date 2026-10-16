@@ -1143,8 +1143,16 @@ fn every_multiviewer_sub_command_surfaces() {
     let mut h = command_device(74);
     let sender = h.sender;
 
+    // Commands come from management; a unit takes them from no one else.
+    h.feed(op::V2IP_MULTIVIEWER, &mv_cmd(sender, 1, &[1, 2, 3]));
+    assert!(!h.saw(|e| matches!(e, Event::MultiviewerCommand { .. })));
+    let controller = h.controller();
     for sub in 0..16u8 {
-        h.feed(op::V2IP_MULTIVIEWER, &mv_cmd(sender, sub, &[1, 2, 3]));
+        h.feed_as(
+            controller,
+            op::V2IP_MULTIVIEWER,
+            &mv_cmd(sender, sub, &[1, 2, 3]),
+        );
     }
 
     let seen: Vec<u8> = h
@@ -1172,8 +1180,10 @@ fn an_unnamed_enum_value_reaches_the_caller_as_itself() {
         DeviceFeature::V2IP_SINK | DeviceFeature::MULTIVIEWER,
     );
 
-    // The 192 bytes a status report carries; a shorter one is not decoded.
+    // The 192 bytes a status report carries, naming its sender; a shorter
+    // one is not decoded.
     let mut p = vec![0u8; 192];
+    p[24..40].copy_from_slice(h.sender.as_bytes());
     p[169] = 200; // a view mode far beyond anything named
     h.feed(op::V2IP_MULTIVIEWER, &p);
     let status = h.device().multiviewer.clone().expect("no multiviewer");
@@ -3482,6 +3492,15 @@ fn only_a_whole_testcard_state_is_recorded() {
     h.feed(op::V2IP_TESTCARD, &testcard_frame(sink, 0));
     h.feed(op::V2IP_TESTCARD, &testcard_frame(sink, 1));
     h.feed_as(sink, op::V2IP_TESTCARD, &testcard_frame(sink, 2)[..55]);
+    // A state is taken only from the unit it describes, and only with a
+    // pattern and tone mode a unit knows.
+    h.feed(op::V2IP_TESTCARD, &testcard_frame(sink, 2));
+    let mut odd = testcard_frame(sink, 2);
+    odd[18] = 7;
+    h.feed_as(sink, op::V2IP_TESTCARD, &odd);
+    let mut odd = testcard_frame(sink, 2);
+    odd[19] = 5;
+    h.feed_as(sink, op::V2IP_TESTCARD, &odd);
     assert_eq!(h.state.device(sink).and_then(|d| d.v2ip_testcard), None);
 }
 

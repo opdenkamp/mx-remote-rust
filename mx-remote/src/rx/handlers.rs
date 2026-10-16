@@ -1042,7 +1042,13 @@ pub(super) fn v2ip_testcard(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     let Some(p) = p.get(..TESTCARD_SIZE) else {
         return;
     };
-    if p[16] != TESTCARD_STATE {
+    // A unit takes a state only from the unit it describes, and only with a
+    // pattern and tone mode it knows.
+    if p[16] != TESTCARD_STATE
+        || uid_at(p, 0) != rx.sender()
+        || p[18] > V2ipTestPattern::CARD.to_wire()
+        || p[19] > V2ipToneMode::BEEP.to_wire()
+    {
         return;
     }
     let testcard = V2ipTestcard {
@@ -1153,10 +1159,14 @@ pub(super) fn firmware_version(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Even
     }
 }
 
+/// Applies a unit's system status, which a unit reports only about itself.
 pub(super) fn system_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(status) = rx.frame.u16(16) else {
         return;
     };
+    if rx.frame.uid(0) != Some(rx.sender()) {
+        return;
+    }
     let message = rx.frame.str_to_end(18).unwrap_or_default();
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_system_status(status, message, ev);

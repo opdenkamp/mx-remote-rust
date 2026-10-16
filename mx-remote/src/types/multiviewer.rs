@@ -49,6 +49,10 @@ pub struct MultiviewerStatus {
     pub output_itc: MultiviewerItcMode,
     /// The EDID template presented to the sources.
     pub edid_template: MultiviewerEdidTemplate,
+    /// How a two, three or four screen layout is arranged: 1 large, 2 small,
+    /// 0 in a single or picture-in-picture layout or while the hardware has
+    /// not said.
+    pub screen_mode: u8,
     /// The aspect ratio the windows are scaled to.
     pub aspect_ratio: MultiviewerAspectRatio,
     /// Whether the multiviewer switches windows on its own.

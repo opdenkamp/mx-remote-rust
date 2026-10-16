@@ -14,6 +14,7 @@ use crate::wire::{
 
 use crate::wire::mv_sub as sub;
 
+use super::handlers::manages;
 use super::Rx;
 
 /// Where the parameter block of a command starts, behind the envelope of
@@ -55,6 +56,7 @@ fn status(rx: &Rx<'_>) -> MultiviewerStatus {
         hdcp_mode: MultiviewerHdcpMode::from_wire(u8_at(173)),
         output_itc: MultiviewerItcMode::from_wire(u8_at(174)),
         edid_template: MultiviewerEdidTemplate::from_wire(u8_at(175)),
+        screen_mode: u8_at(176),
         aspect_ratio: MultiviewerAspectRatio::from_wire(u8_at(177)),
         auto_switch: MultiviewerBool::from_wire_tristate(u8_at(178)),
         audio_source: MultiviewerSource::from_zero_based(u8_at(179)),
@@ -67,18 +69,25 @@ fn status(rx: &Rx<'_>) -> MultiviewerStatus {
     }
 }
 
+/// Reads a multiviewer frame. A unit takes a status from any unit about
+/// itself, and a command only from management.
 pub(super) fn multiviewer(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(op) = rx.frame.u8(16) else {
         return;
     };
-    if state.device(rx.sender()).is_none() {
+    let sender = rx.sender();
+    if state.device(sender).is_none() {
         return;
     }
-    if op == sub::STATUS && rx.frame.payload().len() >= STATUS_SIZE {
-        let status = status(rx);
-        if let Some(device) = state.device_mut(rx.sender()) {
-            device.set_multiviewer_status(status, ev);
+    if op == sub::STATUS {
+        if rx.frame.payload().len() >= STATUS_SIZE && rx.frame.uid(PARAMS_OFFSET) == Some(sender) {
+            let status = status(rx);
+            if let Some(device) = state.device_mut(sender) {
+                device.set_multiviewer_status(status, ev);
+            }
         }
+    } else if !manages(state, sender, rx.uid_or_zero(0)) {
+        return;
     }
 
     // The parameters are passed through as raw bytes. The opcode is owned by

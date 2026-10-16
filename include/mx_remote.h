@@ -4901,6 +4901,12 @@ typedef struct {
    */
   uint8_t edid_template;
   /**
+   * How a two, three or four screen layout is arranged: 1 large, 2 small,
+   * 0 in a single or picture-in-picture layout or while the hardware has
+   * not said.
+   */
+  uint8_t screen_mode;
+  /**
    * How a source is fitted into its window.
    */
   uint8_t aspect_ratio;
