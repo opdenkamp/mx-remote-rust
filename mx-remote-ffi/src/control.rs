@@ -1215,8 +1215,9 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
 
 /// Sets the level a V2IP device powers down to in power save,
 /// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT` for a level with no
-/// name. `mxr_unit_power_save()` says which levels the unit offers. Otherwise
-/// as `mxr_set_v2ip_device_setting()`.
+/// name. `mxr_unit_power_save()` says which levels the unit offers. It also
+/// switches `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
+/// `mxr_set_v2ip_device_setting()`.
 ///
 /// # Safety
 ///
@@ -1239,7 +1240,9 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_level(
 
 /// Sets the power save level of every V2IP device of the mesh with one frame,
 /// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT`, sending nothing,
-/// for a level with no name. Otherwise as `mxr_set_all_v2ip_device_settings()`,
+/// for a level with no name. Each device that takes the level also switches
+/// `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
+/// `mxr_set_all_v2ip_device_settings()`,
 /// which carries the other settings.
 ///
 /// # Safety

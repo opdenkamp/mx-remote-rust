@@ -765,6 +765,10 @@ pub const MXR_V2IP_SETTING_SAP_ANNOUNCE: u32 = 1 << 26;
 /// The seconds between SAP announcements, in `sap_interval_s`.
 pub const MXR_V2IP_SETTING_SAP_INTERVAL: u32 = 1 << 27;
 
+/// Never powers down by itself; a power save request still powers it down.
+/// An on/off setting, which a power save level write switches off.
+pub const MXR_V2IP_SETTING_POWER_SAVE_DISABLED: u32 = 1 << 28;
+
 // ---- what a V2IP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
 
 /// The output plays a stream from a description.

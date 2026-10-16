@@ -301,6 +301,12 @@ bitmask! {
         SAP_ANNOUNCE = 1 << 26;
         /// The seconds between the device's SAP announcements.
         SAP_INTERVAL = 1 << 27;
+        /// Never powers down by itself: automatic power save and the power
+        /// save schedule leave the device running, and switching this on
+        /// wakes a device either has powered down. A power save request
+        /// still powers it down. Writing
+        /// [`POWER_SAVE_LEVEL`](Self::POWER_SAVE_LEVEL) switches it off.
+        POWER_SAVE_DISABLED = 1 << 28;
     }
 }
 
@@ -596,8 +602,12 @@ bitmask! {
 impl V2ipDeviceSetting {
     /// The settings that are on or off, as opposed to carrying a value, and
     /// that can be written.
-    pub const SWITCHES: Self =
-        Self(0xFF | Self::AES67.0 | Self::SAP_LISTEN.0 | Self::SAP_ANNOUNCE.0);
+    pub const SWITCHES: Self = Self(
+        0xFF | Self::AES67.0
+            | Self::SAP_LISTEN.0
+            | Self::SAP_ANNOUNCE.0
+            | Self::POWER_SAVE_DISABLED.0,
+    );
 
     /// The settings only a device reports about itself, which no write
     /// carries.

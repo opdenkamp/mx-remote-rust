@@ -3946,3 +3946,37 @@ fn an_overlay_sync_and_its_report_are_kept_per_device() {
     assert_eq!(f.remote.osd_sync(unit), None);
     assert_eq!(f.remote.osd_sync_report(manager), None);
 }
+
+/// Power save disabled is a switch, and a level write switches it off, as the
+/// device does on taking the level; a report that states both keeps its own.
+#[test]
+fn a_power_save_level_switches_power_save_disabled_off() {
+    let f = Fixture::new();
+    let uid = uid_n(237);
+    f.everything(uid, 0x2F, "PD0001");
+    let both = V2ipDeviceSetting::POWER_SAVE_LEVEL | V2ipDeviceSetting::POWER_SAVE_DISABLED;
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let mut p = cfg.bytes_with_power_save(
+        both.bits(),
+        V2ipDeviceSetting::POWER_SAVE_DISABLED.bits(),
+        0,
+        &V2ipPowerSaveSchedule::default(),
+    );
+    p.resize(224, 0);
+    f.feed(uid, op::V2IP_DEVICE_CFG, &p);
+    f.connect();
+    let disabled = || {
+        f.remote
+            .v2ip_device_settings(uid)
+            .and_then(|s| s.get(V2ipDeviceSetting::POWER_SAVE_DISABLED))
+    };
+    assert_eq!(disabled(), Some(true), "the report's own value");
+
+    f.remote
+        .set_v2ip_device_setting(uid, V2ipDeviceSetting::POWER_SAVE_DISABLED, true)
+        .expect("a switch the device has reported");
+    f.remote
+        .set_v2ip_power_save_level(uid, V2ipPowerSaveLevel::default())
+        .expect("a level the device has reported");
+    assert_eq!(disabled(), Some(false));
+}

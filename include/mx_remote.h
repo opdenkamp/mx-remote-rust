@@ -1196,6 +1196,12 @@
 #define MXR_V2IP_SETTING_SAP_INTERVAL (1 << 27)
 
 /**
+ * Never powers down by itself; a power save request still powers it down.
+ * An on/off setting, which a power save level write switches off.
+ */
+#define MXR_V2IP_SETTING_POWER_SAVE_DISABLED (1 << 28)
+
+/**
  * The output plays a stream from a description.
  */
 #define MXR_V2IP_SDP_FLAG_ACTIVE (1 << 0)
@@ -5887,8 +5893,9 @@ mxr_result_t mxr_set_all_v2ip_device_settings(const mxr_remote_t *remote,
 /**
  * Sets the level a V2IP device powers down to in power save,
  * `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT` for a level with no
- * name. `mxr_unit_power_save()` says which levels the unit offers. Otherwise
- * as `mxr_set_v2ip_device_setting()`.
+ * name. `mxr_unit_power_save()` says which levels the unit offers. It also
+ * switches `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
+ * `mxr_set_v2ip_device_setting()`.
  *
  * # Safety
  *
@@ -5901,7 +5908,9 @@ mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
 /**
  * Sets the power save level of every V2IP device of the mesh with one frame,
  * `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT`, sending nothing,
- * for a level with no name. Otherwise as `mxr_set_all_v2ip_device_settings()`,
+ * for a level with no name. Each device that takes the level also switches
+ * `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
+ * `mxr_set_all_v2ip_device_settings()`,
  * which carries the other settings.
  *
  * # Safety

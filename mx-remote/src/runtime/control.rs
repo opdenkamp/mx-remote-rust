@@ -1505,8 +1505,9 @@ impl Remote {
 
     /// Sets the level a V2IP device powers down to in power save. A level the
     /// unit does not offer is one its [`UnitStatus`](crate::UnitStatus)
-    /// reports without [`SUPPORTED`](crate::UnitPowerSave::SUPPORTED). The
-    /// terms of [`Remote::set_v2ip_device_setting`] apply.
+    /// reports without [`SUPPORTED`](crate::UnitPowerSave::SUPPORTED). It also
+    /// switches [`POWER_SAVE_DISABLED`](V2ipDeviceSetting::POWER_SAVE_DISABLED)
+    /// off. The terms of [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_power_save_level(
         &self,
         device: DeviceUid,

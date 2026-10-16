@@ -666,7 +666,9 @@ pub struct V2ipDeviceSettings {
     pub ptp_domain: u8,
     /// The priority1 the device announces as a PTP grandmaster, lower winning.
     pub ptp_priority1: u8,
-    /// The level the device powers down to in power save.
+    /// The level the device powers down to in power save. While
+    /// [`POWER_SAVE_DISABLED`](V2ipDeviceSetting::POWER_SAVE_DISABLED) is on,
+    /// the level a power save request powers it down to.
     pub power_save_level: V2ipPowerSaveLevel,
     /// The device's PTP message settings.
     pub ptp_messages: V2ipPtpMessages,
@@ -836,6 +838,12 @@ impl V2ipDeviceSettings {
         let mut out = previous;
         out.valid |= valid;
         out.flags = previous.flags.without(valid) | (self.flags & valid);
+        // A device takes a power save level as leaving power save enabled.
+        if valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL)
+            && !valid.has(V2ipDeviceSetting::POWER_SAVE_DISABLED)
+        {
+            out.flags = out.flags.without(V2ipDeviceSetting::POWER_SAVE_DISABLED);
+        }
         if valid.has(V2ipDeviceSetting::IR_PROFILE) {
             out.ir_profile = self.ir_profile;
         }
