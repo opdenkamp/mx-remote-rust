@@ -350,9 +350,6 @@ const GUARDED_SENDS: &[Guarded] = &[
     ("subscribe_v2ip_stats", |r, d| {
         r.subscribe_v2ip_stats(d, true)
     }),
-    ("set_audio_endpoint_volume", |r, d| {
-        r.set_audio_endpoint_volume(d, 1, 40)
-    }),
     ("select_audio_endpoint_input", |r, d| {
         r.select_audio_endpoint_input(d, 1, d, 2)
     }),
@@ -703,6 +700,68 @@ impl Walls {
             .last()
             .expect("no wall command")
     }
+}
+
+/// A unit on released firmware up to 4.4.2 is sent the 8-byte form naming
+/// two of its own endpoints, and anything newer the form naming both units;
+/// its own features report says which it runs, and its protocol until then.
+#[test]
+fn an_endpoint_selection_is_sent_in_the_units_own_layout() {
+    let f = Fixture::new();
+    f.connect();
+    let (old, new, other) = (uid_n(205), uid_n(206), uid_n(207));
+    f.everything(old, 0x1E, "AS0001");
+    f.everything(new, 0x2F, "AS0002");
+    f.everything(other, 0x2F, "AS0003");
+
+    f.tap.clear();
+    f.remote
+        .select_audio_endpoint_input(old, 4, old, 9)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 28);
+    assert_eq!(&p[20..28], &[4, 0, 0, 0, 9, 0, 0, 0]);
+    assert!(matches!(
+        f.remote.select_audio_endpoint_input(old, 4, other, 9),
+        Err(ControlError::Unsupported(_))
+    ));
+
+    f.tap.clear();
+    f.remote
+        .select_audio_endpoint_input(new, 4, other, 9)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(frame.len() - HEADER_LEN, 56);
+
+    // A report in the current layout from the older-numbered unit decides it.
+    let mut tree = vec![0u8; 36 + 16];
+    tree[4..20].copy_from_slice(old.as_bytes());
+    tree[28..30].copy_from_slice(&1u16.to_le_bytes());
+    tree[37] = 1;
+    f.feed(old, op::V2IP_AUDIO, &tree);
+    f.tap.clear();
+    f.remote
+        .select_audio_endpoint_input(old, 4, other, 9)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(frame.len() - HEADER_LEN, 56);
+}
+
+/// No unit acts on an endpoint volume, and a released one reads its
+/// sub-opcode as selecting an output, so it is never sent.
+#[test]
+fn an_endpoint_volume_is_never_sent() {
+    let f = Fixture::new();
+    let uid = uid_n(208);
+    f.everything(uid, 0x2F, "AV0001");
+    f.connect();
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.set_audio_endpoint_volume(uid, 1, 40),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty());
 }
 
 /// A unit without the video wall module drops the frame unanswered, so it is

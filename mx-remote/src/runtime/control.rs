@@ -272,6 +272,11 @@ fn stream_addr(target: V2ipRouteTarget, standard_port: u16) -> StreamAddr {
 /// switch naming no audio. Some units below it route no audio instead.
 const AUDIO_FOLLOWS_SINCE: u16 = 0x27;
 
+/// The protocol of the earliest firmware known to carry the current audio
+/// module layout; a unit below it that has not reported its endpoints is
+/// taken to carry the older one.
+const AUDIO_LAYOUT_SINCE: u16 = 0x27;
+
 /// The protocol from which a unit applies a scaling write from management.
 const SCALING_WRITE_PROTOCOL: u16 = 0x2F;
 
@@ -766,41 +771,26 @@ impl Remote {
         })
     }
 
-    /// Sets an audio endpoint's volume.
+    /// Sets an audio endpoint's volume. Always refused.
     ///
-    /// **No unit acts on this command.** The audio module defines it but
-    /// neither sends nor handles it. The send succeeds, because nothing on
-    /// these paths is acknowledged, so a caller sees success and no change;
-    /// read the endpoint back rather than assuming either way.
+    /// No unit acts on the command: the audio module defines it but neither
+    /// sends nor handles it, and a unit on released firmware reads the same
+    /// sub-opcode as a request to select an output.
     pub fn set_audio_endpoint_volume(
         &self,
-        device: DeviceUid,
-        endpoint: u16,
-        volume: u32,
+        _device: DeviceUid,
+        _endpoint: u16,
+        _volume: u32,
     ) -> Result<(), ControlError> {
-        self.audio_endpoint(device, audio_sub::VOLUME, endpoint, volume)
-    }
-
-    fn audio_endpoint(
-        &self,
-        device: DeviceUid,
-        sub: u16,
-        endpoint: u16,
-        value: u32,
-    ) -> Result<(), ControlError> {
-        self.shared.command(move |state| {
-            let device = device_of(state, device)?;
-            let mut payload = audio_cmd_header(sub, device.uid);
-            payload.extend_from_slice(&audio_param(endpoint, value));
-            Ok(Command::new(
-                Addressee::device(device),
-                op::V2IP_AUDIO,
-                payload,
-            ))
-        })
+        Err(ControlError::Unsupported(
+            "no unit acts on an endpoint volume",
+        ))
     }
 
     /// Routes a source endpoint on one device to a sink endpoint on another.
+    ///
+    /// A unit on released firmware up to 4.4.2 routes only between its own
+    /// endpoints, so a route from another unit to one is refused.
     pub fn select_audio_endpoint_input(
         &self,
         sink: DeviceUid,
@@ -810,10 +800,29 @@ impl Remote {
     ) -> Result<(), ControlError> {
         self.shared.command(move |state| {
             let device = device_of(state, sink)?;
+            // An audio module on released firmware up to 4.4.2 reads an
+            // 8-byte body naming two of its own endpoints, and the current
+            // one reads 36 bytes naming both units; neither checks the
+            // length, so each is sent only its own.
+            let payload = if device
+                .audio_legacy
+                .unwrap_or(device.hello.supported_protocol < AUDIO_LAYOUT_SINCE)
+            {
+                if source != sink {
+                    return Err(ControlError::Unsupported(
+                        "the unit routes only its own audio endpoints",
+                    ));
+                }
+                let mut payload = audio_cmd_header(audio_sub::SELECT_INPUT, sink);
+                payload.extend_from_slice(&audio_param(sink_endpoint, u32::from(source_endpoint)));
+                payload
+            } else {
+                build_audio_select_input(sink, sink_endpoint, source, source_endpoint)
+            };
             Ok(Command::new(
                 Addressee::device(device),
                 op::V2IP_AUDIO,
-                build_audio_select_input(sink, sink_endpoint, source, source_endpoint),
+                payload,
             ))
         })
     }

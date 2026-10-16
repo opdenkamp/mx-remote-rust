@@ -5609,10 +5609,11 @@ mxr_result_t mxr_set_audio_endpoint_trigger(const mxr_remote_t *remote,
                                             bool active);
 
 /**
- * Sets an audio endpoint's volume.
+ * Sets an audio endpoint's volume. Always `MXR_ERR_UNSUPPORTED`.
  *
  * No unit acts on this command: the audio module defines it but neither
- * sends nor handles it. `MXR_OK` means only that the frame was sent.
+ * sends nor handles it, and a unit on released firmware reads the same
+ * sub-opcode as a request to select an output.
  *
  * # Safety
  *
@@ -5632,6 +5633,9 @@ mxr_result_t mxr_set_audio_endpoint_volume(const mxr_remote_t *remote,
  * A loadable module serves this, not the device firmware, and a model may
  * not have it. Nothing answers either way, so `MXR_OK` means the frame was
  * sent and not that anything acted on it.
+ *
+ * A unit on released firmware up to 4.4.2 routes only between its own
+ * endpoints: `MXR_ERR_UNSUPPORTED` for a route from another unit to one.
  *
  * # Safety
  *

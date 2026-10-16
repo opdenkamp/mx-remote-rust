@@ -24,15 +24,38 @@ mod entry {
     pub(super) const PARENT: u8 = 5;
 }
 
-/// Where the entry list starts, and how wide each entry is.
 /// Where a links report's block starts, behind the command header.
 const LINKS_AT: usize = 20;
 
+/// Where the entry list starts, and how wide each entry is: 16 bytes, or 24
+/// from an audio module on released firmware up to 4.4.2, which sends no
+/// links.
 const ENTRY_BASE: usize = 36;
 const ENTRY_SIZE: usize = 16;
+const ENTRY_SIZE_LEGACY: usize = 24;
 
-fn entry_at(index: usize) -> usize {
-    ENTRY_BASE + index * ENTRY_SIZE
+fn entry_at(index: usize, stride: usize) -> usize {
+    ENTRY_BASE + index * stride
+}
+
+/// How wide a features report's entries are, and where a link block behind
+/// them starts, or `None` for a report no unit would take.
+///
+/// The length alone can read either way once links trail the entries, so the
+/// current layout is taken whenever its own link count accounts for the
+/// length, and the older one only when the length is exactly its entries.
+fn layout(rx: &Rx<'_>, count: usize) -> Option<(usize, Option<usize>)> {
+    let len = rx.frame.payload().len();
+    let end = entry_at(count, ENTRY_SIZE);
+    if len == end {
+        return Some((ENTRY_SIZE, None));
+    }
+    if let Some(links) = rx.frame.u16(end) {
+        if len == end + 4 + usize::from(links) * LINK_ENTRY {
+            return Some((ENTRY_SIZE, Some(end)));
+        }
+    }
+    (len == entry_at(count, ENTRY_SIZE_LEGACY)).then_some((ENTRY_SIZE_LEGACY, None))
 }
 
 /// Decodes a `SELECT_INPUT` body, which follows the 20-byte audio command
@@ -46,8 +69,21 @@ fn entry_at(index: usize) -> usize {
 /// the reverse of what they hold, and the module reads them accordingly. The
 /// field names are the trap here: nothing on the wire tells a swapped reading
 /// from a correct one.
+///
+/// An audio module on released firmware up to 4.4.2 sends an 8-byte body
+/// instead: the sink endpoint and the endpoint to feed it, both on the unit
+/// the header names.
 fn change_source(rx: &Rx<'_>) -> Option<AudioChangeSource> {
     let f = &rx.frame;
+    if f.payload().len() < SELECT_INPUT_SIZE {
+        let unit = f.uid(4)?;
+        return Some(AudioChangeSource {
+            source_uid: unit,
+            source_id: u16::try_from(f.u32(24)?).ok()?,
+            target_uid: unit,
+            target_id: f.u16(20)?,
+        });
+    }
     Some(AudioChangeSource {
         source_uid: f.uid(36)?,
         source_id: f.u16(54)?,
@@ -56,11 +92,14 @@ fn change_source(rx: &Rx<'_>) -> Option<AudioChangeSource> {
     })
 }
 
+/// The length of a current `SELECT_INPUT`: the header, two uids and two ids.
+const SELECT_INPUT_SIZE: usize = 56;
+
 /// Decodes the endpoint tree from a features report.
 ///
 /// Two passes: the first creates every endpoint so the second can attach
 /// addresses, parents and routes to endpoints declared after them.
-fn endpoints(rx: &Rx<'_>) -> AudioEndpoints {
+fn endpoints(rx: &Rx<'_>, stride: usize) -> AudioEndpoints {
     let f = &rx.frame;
     let mut eps = AudioEndpoints::default();
     let Some(count) = f.u16(28) else {
@@ -68,7 +107,7 @@ fn endpoints(rx: &Rx<'_>) -> AudioEndpoints {
     };
 
     for index in 0..usize::from(count) {
-        let base = entry_at(index);
+        let base = entry_at(index, stride);
         let Some(id) = f.u8(base) else {
             break;
         };
@@ -83,7 +122,7 @@ fn endpoints(rx: &Rx<'_>) -> AudioEndpoints {
     }
 
     for index in 0..usize::from(count) {
-        let base = entry_at(index);
+        let base = entry_at(index, stride);
         let Some(id) = f.u8(base) else {
             break;
         };
@@ -121,11 +160,6 @@ fn endpoints(rx: &Rx<'_>) -> AudioEndpoints {
         }
     }
     eps
-}
-
-/// Whether a features report carries a link block behind its entry list.
-fn has_links(rx: &Rx<'_>, count: u16) -> bool {
-    rx.frame.payload().len() > entry_at(usize::from(count))
 }
 
 /// Width of one entry in a link block.
@@ -174,20 +208,16 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     }
     match op {
         sub::FEATURES => {
-            let count = rx.frame.u16(28).unwrap_or(0);
-            if rx.frame.payload().len() < entry_at(usize::from(count)) {
+            let count = usize::from(rx.frame.u16(28).unwrap_or(0));
+            let Some((stride, links_at)) = layout(rx, count) else {
                 return;
-            }
-            let eps = endpoints(rx);
-            let links = if has_links(rx, count) {
-                match links(rx, entry_at(usize::from(count))) {
-                    Some(links) => Some(links),
-                    None => return,
-                }
-            } else {
-                None
             };
+            let eps = endpoints(rx, stride);
+            let links = links_at.and_then(|at| links(rx, at));
             if let Some(device) = state.device_mut(sender) {
+                if count > 0 {
+                    device.audio_legacy = Some(stride == ENTRY_SIZE_LEGACY);
+                }
                 device.set_audio_endpoints(eps, ev);
                 if let Some(links) = links {
                     device.apply_audio_links(&links);

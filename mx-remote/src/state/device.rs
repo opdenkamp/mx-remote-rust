@@ -156,6 +156,9 @@ pub(crate) struct Device {
     pub(crate) sys_status: Option<(u16, String)>,
     pub(crate) topology: Vec<TopologyEntry>,
     pub(crate) audio: Option<AudioEndpoints>,
+    /// Whether the device's audio module uses the layout of released firmware
+    /// up to 4.4.2, as its own features report showed; `None` before one.
+    pub(crate) audio_legacy: Option<bool>,
     pub(crate) multiviewer: Option<MultiviewerStatus>,
     pub(crate) dolby_settings: Option<AmpDolbySettings>,
     /// The EDID the device presents on its input, as it last reported it.
@@ -200,6 +203,7 @@ impl Device {
             installer_id: None,
             tiling: None,
             rc_settings: None,
+            audio_legacy: None,
             audio_select: None,
             firmware: BTreeMap::new(),
             mesh_master: DeviceUid::ZERO,

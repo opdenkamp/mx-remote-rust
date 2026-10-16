@@ -683,3 +683,56 @@ fn svd_lookup_and_signal_status() {
     let described = h.bay(2).signal_type.clone().expect("no description");
     assert_eq!(described, "1440x900 / RGB / 8bpp / 60Hz");
 }
+
+/// An audio module on released firmware up to 4.4.2 sends 24-byte entries
+/// and no links; the length tells it from the current layout, links and all.
+#[test]
+fn an_audio_report_is_read_at_either_entry_width() {
+    // Two endpoints at the older width: an output and an input.
+    let mut h = Harness::new(18);
+    h.hello(0x1E, "ONEIP", "AU0018", DeviceFeature::V2IP_SINK);
+    let mut p = poisoned(36 + 2 * 24);
+    p[0..2].copy_from_slice(&0u16.to_le_bytes());
+    p[28..30].copy_from_slice(&2u16.to_le_bytes());
+    for (i, (id, features)) in [(0u8, AudioFeatures::OUTPUT), (1, AudioFeatures::INPUT)]
+        .into_iter()
+        .enumerate()
+    {
+        let at = 36 + i * 24;
+        p[at] = id;
+        p[at + 1] = 1; // an endpoint
+        p[at + 8..at + 12].copy_from_slice(&features.bits().to_le_bytes());
+    }
+    h.feed_audio_report(&p);
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert!(eps
+        .get(0)
+        .is_some_and(|e| e.features.has(AudioFeatures::OUTPUT)));
+    assert!(eps
+        .get(1)
+        .is_some_and(|e| e.features.has(AudioFeatures::INPUT)));
+    assert_eq!(h.device().audio_legacy, Some(true));
+
+    // Three current entries and one link come to the length of three older
+    // entries; the link count says which it is.
+    let mut h = Harness::new(19);
+    h.hello(0x2F, "ONEIP", "AU0019", DeviceFeature::V2IP_SINK);
+    let mut p = poisoned(36 + 3 * 16);
+    p[0..2].copy_from_slice(&0u16.to_le_bytes());
+    p[28..30].copy_from_slice(&3u16.to_le_bytes());
+    for i in 0..3u8 {
+        let at = 36 + usize::from(i) * 16;
+        p[at] = i;
+        p[at + 1] = 1;
+        p[at + 8..at + 12].copy_from_slice(&AudioFeatures::OUTPUT.bits().to_le_bytes());
+    }
+    p.extend_from_slice(&[1, 0, 0, 0]);
+    p.extend_from_slice(&[2, 4, 0, 0]);
+    p.extend_from_slice(uid_n(20).as_bytes());
+    assert_eq!(p.len(), 36 + 3 * 24);
+    h.feed_audio_report(&p);
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert_eq!(eps.list().count(), 3);
+    assert_eq!(eps.get(2).map(|e| e.linked_device), Some(uid_n(20)));
+    assert_eq!(h.device().audio_legacy, Some(false));
+}

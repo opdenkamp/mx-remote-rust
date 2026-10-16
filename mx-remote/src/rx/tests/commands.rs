@@ -1072,6 +1072,25 @@ fn an_audio_select_input_names_its_sink_twice() {
     assert_eq!(h.device().audio_select, Some(want));
 }
 
+/// An audio module on released firmware up to 4.4.2 selects an input with
+/// an 8-byte body naming two endpoints of the unit the header names.
+#[test]
+fn an_older_audio_select_input_names_two_endpoints_of_one_unit() {
+    let mut h = command_device(62);
+    let unit = h.sender;
+    let controller = audio_controller(&mut h);
+    let mut p = audio_cmd(3, unit);
+    p.extend_from_slice(&audio_param(4, 9));
+    h.feed_as(controller, op::V2IP_AUDIO, &p);
+    let want = AudioChangeSource {
+        source_uid: unit,
+        source_id: 9,
+        target_uid: unit,
+        target_id: 4,
+    };
+    assert_eq!(h.device().audio_select, Some(want));
+}
+
 #[test]
 fn audio_endpoint_commands_carry_an_endpoint_and_a_value() {
     let mut h = command_device(64);
