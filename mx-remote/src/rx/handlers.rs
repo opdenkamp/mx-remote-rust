@@ -315,7 +315,7 @@ pub(super) fn v2ip_sources(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
 /// takes it only from management.
 pub(super) fn v2ip_source_switch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let target = rx.uid_or_zero(0);
-    if !manages(state, rx.sender(), target) {
+    if !takes_command(state, rx.sender(), target) {
         return;
     }
     let payload = rx.frame.payload();
@@ -358,7 +358,7 @@ const MANUAL_SWITCH_SIZE: usize = 40;
 pub(super) fn v2ip_manual_source_switch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let target = rx.uid_or_zero(0);
     let payload = rx.frame.payload();
-    if payload.len() < MANUAL_SWITCH_SIZE || !manages(state, rx.sender(), target) {
+    if payload.len() < MANUAL_SWITCH_SIZE || !takes_command(state, rx.sender(), target) {
         return;
     }
     let video = stream_source(StreamKind::Video, payload, 16);
@@ -429,6 +429,32 @@ pub(super) fn v2ip_config_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Optio
     // a device nothing has been heard from.
     state.device(subject)?;
     manages(state, rx.sender(), subject).then_some(subject)
+}
+
+/// The sink a mirror or filter frame is about, as [`v2ip_config_subject`]
+/// finds it, except that a unit on released firmware takes one from any
+/// sender, as [`takes_command`] says.
+pub(super) fn command_subject(state: &State, rx: &Rx<'_>, p: &[u8]) -> Option<DeviceUid> {
+    let subject = uid_at(p, 0);
+    if subject == rx.sender() {
+        return Some(subject);
+    }
+    state.device(subject)?;
+    takes_command(state, rx.sender(), subject).then_some(subject)
+}
+
+/// The protocol from which a unit takes a command for itself, or another
+/// unit's, only from management.
+const MANAGEMENT_ONLY_SINCE: u16 = 0x2F;
+
+/// Whether `subject` takes a command from `sender`: from management only
+/// since [`MANAGEMENT_ONLY_SINCE`], and from any sender on firmware before it,
+/// which every released unit runs.
+pub(super) fn takes_command(state: &State, sender: DeviceUid, subject: DeviceUid) -> bool {
+    manages(state, sender, subject)
+        || state
+            .device(subject)
+            .is_some_and(|d| d.hello.supported_protocol < MANAGEMENT_ONLY_SINCE)
 }
 
 /// Whether a device takes a write about `subject` from `sender`, as a unit
@@ -775,7 +801,7 @@ const BAY_HIDE_SIZE: usize = 24;
 pub(super) fn bay_hide(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     // A unit takes it only from management, and only with its padding.
     let target = rx.uid_or_zero(0);
-    if rx.frame.payload().len() < BAY_HIDE_SIZE || !manages(state, rx.sender(), target) {
+    if rx.frame.payload().len() < BAY_HIDE_SIZE || !takes_command(state, rx.sender(), target) {
         return;
     }
     let Some(port) = rx.frame.u16(16) else {
@@ -893,7 +919,7 @@ pub(super) fn mirror_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     if p.len() < MIRROR_SIZE {
         return;
     }
-    let Some(sink) = v2ip_config_subject(state, rx, p) else {
+    let Some(sink) = command_subject(state, rx, p) else {
         return;
     };
     let Some(port) = state.device(sink).and_then(|d| d.first_output_port()) else {

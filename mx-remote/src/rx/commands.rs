@@ -24,7 +24,7 @@ use crate::wire::{
     cstr, BayUid, DeviceUid, EdidProfile, RcAction, RcKey, DEVICE_NAME_LEN, UID_LEN,
 };
 
-use super::handlers::{byte, ipv4_at, manages, u16_at, u32_at, uid_at, v2ip_config_subject};
+use super::handlers::{byte, command_subject, ipv4_at, takes_command, u16_at, u32_at, uid_at};
 use super::Rx;
 
 /// Runs `body` only when the sender is a device we know.
@@ -466,7 +466,7 @@ pub(super) fn filter_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     if p.len() % 16 != 0 {
         return;
     }
-    let Some(sink) = v2ip_config_subject(state, rx, p) else {
+    let Some(sink) = command_subject(state, rx, p) else {
         return;
     };
     let filtered: Vec<DeviceUid> = p[16..].chunks_exact(16).map(|c| uid_at(c, 0)).collect();
@@ -515,7 +515,7 @@ pub(super) fn v2ip_tiling(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     };
     // A unit takes a window only from management.
     let p = rx.frame.payload();
-    if p.len() < 24 || !manages(state, device, uid_at(p, 0)) {
+    if p.len() < 24 || !takes_command(state, device, uid_at(p, 0)) {
         return;
     }
     let tiling = V2ipTilingConfig {

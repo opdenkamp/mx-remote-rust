@@ -565,3 +565,131 @@ fn management_is_the_controller_a_unit_follows() {
     h.feed_as(followed, op::BAY_HIDE, &hide(0));
     assert_eq!(h.bay(0).hidden, Some(false), "the controller it follows");
 }
+
+/// A unit on released firmware, below protocol 0x2F, takes a command for
+/// itself from any sender, so one from a peer that is not management is
+/// recorded as taken.
+#[test]
+fn a_released_unit_takes_commands_from_anyone() {
+    use crate::testing::hello_payload;
+
+    let mut h = Harness::new(6);
+    h.hello(0x27, "ONEIP", "RL0001", DeviceFeature::V2IP_SINK);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT,
+        ),
+    );
+    let peer = uid_n(42);
+    h.feed_as(
+        peer,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x27,
+            "ONEIP",
+            "RL0002",
+            "4.4.117",
+            DeviceFeature::V2IP_SOURCE,
+        ),
+    );
+    let mut hide = h.sender.as_bytes().to_vec();
+    hide.extend_from_slice(&[0, 0, 1, 0, 0, 0, 0, 0]);
+    h.feed_as(peer, op::BAY_HIDE, &hide);
+    assert_eq!(h.bay(0).hidden, Some(true));
+
+    let unit = h.sender;
+    let addressed = |len: usize| {
+        let mut p = vec![0u8; len];
+        p[0..16].copy_from_slice(unit.as_bytes());
+        p
+    };
+    let mut tiling = addressed(24);
+    tiling[20..22].copy_from_slice(&1920u16.to_le_bytes());
+    h.feed_as(peer, op::V2IP_TILING, &tiling);
+    assert!(h.device().tiling.is_some(), "a window");
+
+    let mut switch = addressed(48);
+    switch[16..20].copy_from_slice(&[239, 1, 1, 1]);
+    h.feed_as(peer, op::V2IP_MANUAL_SRC_SWITCH, &switch);
+    assert!(h.device().v2ip_sink.is_some(), "a manual switch");
+
+    let mut mirror = addressed(32);
+    mirror[16..32].copy_from_slice(uid_n(43).as_bytes());
+    h.feed_as(peer, op::BAY_MIRROR_STATUS, &mirror);
+    assert!(h.bay(0).mirror.is_mirroring(), "a mirror");
+
+    let mut filter = addressed(32);
+    filter[16..32].copy_from_slice(uid_n(44).as_bytes());
+    h.feed_as(peer, op::BAY_FILTER_STATUS, &filter);
+    assert_eq!(h.bay(0).filtered, [uid_n(44)], "a filter");
+
+    // A source the switch can name by its stream.
+    let source = uid_n(45);
+    h.feed_as(
+        source,
+        op::SYS_HELLO,
+        &hello_payload(
+            0x27,
+            "ONEIP",
+            "RL0003",
+            "4.4.117",
+            DeviceFeature::V2IP_SOURCE,
+        ),
+    );
+    h.feed_as(
+        source,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            0,
+            0,
+            "Input 1",
+            "Sky",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
+    );
+    h.feed_as(
+        source,
+        op::SYS_BAY_V2IP_SOURCES,
+        &stream_rec(
+            source,
+            "239.4.4.1",
+            "239.4.4.2",
+            "239.4.4.3",
+            V2IP_PORT_VIDEO,
+        ),
+    );
+    let mut route = addressed(24);
+    route[16..20].copy_from_slice(&[239, 4, 4, 1]);
+    h.feed_as(peer, op::V2IP_SOURCE_SWITCH, &route);
+    assert_eq!(
+        h.bay(0).video_source.map(|b| b.device),
+        Some(source),
+        "a source switch"
+    );
+
+    let mut view = addressed(25);
+    view[16] = 1; // a view mode command
+    h.feed_as(peer, op::V2IP_MULTIVIEWER, &view);
+    assert!(
+        h.saw(|e| matches!(e, Event::MultiviewerCommand { .. })),
+        "a multiviewer command"
+    );
+
+    let mut mute = vec![1u8, 0, 0, 0];
+    mute.extend_from_slice(unit.as_bytes());
+    mute.extend_from_slice(&[2, 0, 0, 0, 1, 0, 0, 0]);
+    h.feed_as(peer, op::V2IP_AUDIO, &mute);
+    assert!(
+        h.saw(|e| matches!(e, Event::AudioEndpointMute { .. })),
+        "an audio command"
+    );
+}

@@ -14,7 +14,7 @@ use crate::wire::{
 
 use crate::wire::mv_sub as sub;
 
-use super::handlers::manages;
+use super::handlers::takes_command;
 use super::Rx;
 
 /// Where the parameter block of a command starts, behind the envelope of
@@ -86,7 +86,7 @@ pub(super) fn multiviewer(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                 device.set_multiviewer_status(status, ev);
             }
         }
-    } else if !manages(state, sender, rx.uid_or_zero(0)) {
+    } else if !takes_command(state, sender, rx.uid_or_zero(0)) {
         return;
     }
 

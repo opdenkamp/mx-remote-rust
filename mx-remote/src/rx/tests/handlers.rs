@@ -23,7 +23,7 @@ use super::Harness;
 /// A matrix with two inputs and one amplified output.
 fn bay_state(n: u8) -> Harness {
     let mut h = Harness::new(n);
-    h.hello(0x28, "FF88", "HD0001", DeviceFeature::VIDEO_ROUTING);
+    h.hello(0x2F, "FF88", "HD0001", DeviceFeature::VIDEO_ROUTING);
     let mut cfg = bay_config_rec(
         1,
         0,
@@ -671,7 +671,7 @@ fn v2ip_source_switch_resolves_the_advertising_bay() {
     h.feed_as(
         sink,
         op::SYS_HELLO,
-        &hello_payload(0x28, "ONEIP-RX", "RX9", "4.8.0", DeviceFeature::V2IP_SINK),
+        &hello_payload(0x2F, "ONEIP-RX", "RX9", "4.8.0", DeviceFeature::V2IP_SINK),
     );
     h.feed_as(
         sink,

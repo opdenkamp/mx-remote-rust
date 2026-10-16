@@ -12,7 +12,7 @@ use crate::types::{
 
 use crate::wire::audio_sub as sub;
 
-use super::handlers::{manages, stream_source};
+use super::handlers::{stream_source, takes_command};
 use super::Rx;
 
 /// The entry kinds in a features report. One endpoint is described by several
@@ -169,7 +169,7 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let sender = rx.sender();
     let target = rx.uid_or_zero(4);
     let reports = matches!(op, sub::FEATURES | sub::LINKS);
-    if reports && target != sender || !reports && !manages(state, sender, target) {
+    if reports && target != sender || !reports && !takes_command(state, sender, target) {
         return;
     }
     match op {

@@ -34,7 +34,7 @@ use super::Harness;
 /// A registry whose single peer is a current OneIP unit.
 fn command_device(n: u8) -> Harness {
     let mut h = Harness::new(n);
-    h.hello(0x28, "ONEIP", "CM0001", DeviceFeature::VIDEO_ROUTING);
+    h.hello(0x2F, "ONEIP", "CM0001", DeviceFeature::VIDEO_ROUTING);
     h
 }
 
