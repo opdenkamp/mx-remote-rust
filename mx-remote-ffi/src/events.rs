@@ -276,13 +276,16 @@ pub struct mxr_ir_transmit_request_t {
     pub timings_len: usize,
 }
 
-/// Registers or unregisters a device on the source blacklist.
+/// Adds multicast groups to, or removes them from, the mesh-wide list that
+/// automatic address assignment avoids.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_blacklist_change_t {
-    /// The device being listed.
-    pub target: mxr_uid_t,
-    /// Whether it is being registered rather than removed.
+    /// The groups, four bytes each in network order, borrowed for the call.
+    pub groups: *const u8,
+    /// How many groups `groups` holds.
+    pub groups_len: usize,
+    /// Whether they are being added rather than removed.
     pub registered: bool,
 }
 
@@ -563,7 +566,8 @@ pub struct mxr_callbacks_t {
     pub on_action_transmit_requested: mxr_action_transmit_cb,
     /// A peer asked a device to blast raw infrared.
     pub on_ir_transmit_requested: mxr_ir_transmit_cb,
-    /// A device was added to or removed from the source blacklist.
+    /// Multicast groups were added to or removed from the list automatic
+    /// address assignment avoids.
     pub on_blacklist_changed: mxr_blacklist_cb,
     /// A video wall command arrived.
     pub on_video_wall_command: mxr_video_wall_cb,
@@ -963,8 +967,10 @@ impl EventHandler for Bridge {
     }
 
     fn on_blacklist_changed(&self, device: DeviceUid, change: V2ipBlacklistChange) {
+        let groups: Vec<u8> = change.groups.iter().flat_map(|g| g.octets()).collect();
         let payload = mxr_blacklist_change_t {
-            target: change.target.into(),
+            groups: groups.as_ptr(),
+            groups_len: change.groups.len(),
             registered: change.registered,
         };
         forward!(self.on_blacklist_changed(device.into(), &payload));

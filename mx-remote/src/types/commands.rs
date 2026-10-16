@@ -279,15 +279,15 @@ pub struct AudioClip {
     pub clip: u8,
 }
 
-/// Registers or unregisters a device on the source blacklist.
+/// Adds multicast groups to, or removes them from, the mesh-wide list that
+/// automatic address assignment avoids.
 ///
-/// The firmware guards this opcode behind `V2IP_SUPPORT_BLACKLIST`, which is 0
-/// in shipping builds, so nothing in current firmware emits it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Shipping firmware is built without this list, so nothing current sends it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct V2ipBlacklistChange {
-    /// The device being listed.
-    pub target: DeviceUid,
-    /// Whether it is being registered rather than removed.
+    /// The groups being added or removed.
+    pub groups: Vec<Ipv4Addr>,
+    /// Whether they are being added rather than removed.
     pub registered: bool,
 }
 

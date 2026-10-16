@@ -3579,15 +3579,20 @@ typedef void (*mxr_ir_transmit_cb)(void *userdata,
                                    const mxr_ir_transmit_request_t *request);
 
 /**
- * Registers or unregisters a device on the source blacklist.
+ * Adds multicast groups to, or removes them from, the mesh-wide list that
+ * automatic address assignment avoids.
  */
 typedef struct {
   /**
-   * The device being listed.
+   * The groups, four bytes each in network order, borrowed for the call.
    */
-  mxr_uid_t target;
+  const uint8_t *groups;
   /**
-   * Whether it is being registered rather than removed.
+   * How many groups `groups` holds.
+   */
+  size_t groups_len;
+  /**
+   * Whether they are being added rather than removed.
    */
   bool registered;
 } mxr_blacklist_change_t;
@@ -3942,7 +3947,8 @@ typedef struct {
    */
   mxr_ir_transmit_cb on_ir_transmit_requested;
   /**
-   * A device was added to or removed from the source blacklist.
+   * Multicast groups were added to or removed from the list automatic
+   * address assignment avoids.
    */
   mxr_blacklist_cb on_blacklist_changed;
   /**

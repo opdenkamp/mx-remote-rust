@@ -620,12 +620,17 @@ pub(super) fn blacklist(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>, reg
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
-    if let Some(target) = rx.frame.uid(0) {
-        ev.push(Event::BlacklistChanged {
-            device,
-            change: V2ipBlacklistChange { target, registered },
-        });
+    // A list of IPv4 groups; a unit takes none from a length that is not a
+    // whole number of them.
+    let p = rx.frame.payload();
+    if p.is_empty() || p.len() % 4 != 0 {
+        return;
     }
+    let groups = p.chunks_exact(4).map(|g| ipv4_at(g, 0)).collect();
+    ev.push(Event::BlacklistChanged {
+        device,
+        change: V2ipBlacklistChange { groups, registered },
+    });
 }
 
 /// Decodes `vw_mesh_frame`. The struct is not packed and aligns to 4, so three

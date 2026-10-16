@@ -12,9 +12,9 @@ use std::net::Ipv4Addr;
 
 use crate::event::Event;
 use crate::types::{
-    AudioChangeSource, MultiviewerCommand, RebootRequest, V2ipDecoderDetail, V2ipDecoderFormat,
-    V2ipDecoderReason, V2ipDecoderState, V2ipPowerSaveSchedule, V2ipTestSync, V2ipTestTone,
-    V2ipTestcard, V2ipVlan, VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING,
+    AudioChangeSource, MultiviewerCommand, RebootRequest, V2ipBlacklistChange, V2ipDecoderDetail,
+    V2ipDecoderFormat, V2ipDecoderReason, V2ipDecoderState, V2ipPowerSaveSchedule, V2ipTestSync,
+    V2ipTestTone, V2ipTestcard, V2ipVlan, VideoWallCommand, VideoWallOp, SCALING_FLAG_AUTO_SCALING,
     SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
     SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
 };
@@ -3594,4 +3594,39 @@ fn only_a_sink_sdp_status_is_a_report() {
     assert_eq!(s.port, 5004);
     assert_eq!(s.rate_hz, 0);
     assert_eq!(s.name, "");
+}
+
+/// The blacklist carries multicast groups, four bytes each.
+#[test]
+fn a_blacklist_change_names_its_groups() {
+    let mut h = command_device(59);
+    h.feed(op::V2IP_BLIST_REGISTER, &[239, 1, 1, 1, 239, 2, 2, 2]);
+    h.feed(op::V2IP_BLIST_UNREGISTER, &[239, 3, 3, 3]);
+    let changes: Vec<_> = h
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::BlacklistChanged { change, .. } => Some(change.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        changes,
+        [
+            V2ipBlacklistChange {
+                groups: vec![Ipv4Addr::new(239, 1, 1, 1), Ipv4Addr::new(239, 2, 2, 2)],
+                registered: true,
+            },
+            V2ipBlacklistChange {
+                groups: vec![Ipv4Addr::new(239, 3, 3, 3)],
+                registered: false,
+            },
+        ]
+    );
+
+    // A unit takes nothing from an empty list or a partial group.
+    h.events.clear();
+    h.feed(op::V2IP_BLIST_REGISTER, &[]);
+    h.feed(op::V2IP_BLIST_REGISTER, &[239, 1, 1, 1, 239]);
+    assert!(!h.saw(|e| matches!(e, Event::BlacklistChanged { .. })));
 }

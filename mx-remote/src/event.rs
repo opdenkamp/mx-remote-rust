@@ -249,7 +249,8 @@ events! {
         ActionTransmitRequested => on_action_transmit_requested(request: ActionTransmitRequest);
         /// A peer asked a device to blast raw infrared.
         IrTransmitRequested => on_ir_transmit_requested(request: IrTransmitRequest);
-        /// A device was added to or removed from the source blacklist.
+        /// Multicast groups were added to or removed from the list automatic
+        /// address assignment avoids.
         BlacklistChanged => on_blacklist_changed(change: V2ipBlacklistChange);
         /// A video wall command arrived.
         VideoWallCommand => on_video_wall_command(command: VideoWallCommand);
