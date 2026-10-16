@@ -4162,3 +4162,177 @@ fn another_senders_stream_ttl_of_0_changes_nothing() {
     f.feed(controller, op::V2IP_DEVICE_CFG, &frame(20));
     assert_eq!(cached(), Some(20), "a write in range");
 }
+
+/// A unit listing a mesh input on port 3 and a mesh output on port 128, the
+/// units they stand for, and those units' own bays.
+fn mesh_listing() -> (Fixture, BayUid, BayUid, BayUid, BayUid) {
+    let f = Fixture::new();
+    let (listing, tx, rx) = (uid_n(241), uid_n(242), uid_n(243));
+    f.everything(listing, 0x2F, "ML0001");
+    f.feed(
+        tx,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "ONEIP", "ML0002", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+    f.feed(
+        tx,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            0,
+            0,
+            "Input 1",
+            "Kodi",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN | BayFeatures::V2IP_SOURCE_LOCAL,
+        ),
+    );
+    f.feed(
+        rx,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "ONEIP", "ML0003", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    f.feed(
+        rx,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            127,
+            1,
+            0,
+            "Output 1",
+            "Den",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT | BayFeatures::AUDIO_DIG_OUT | BayFeatures::V2IP_SINK_LOCAL,
+        ),
+    );
+    f.feed(rx, op::AUDIO_VOLUME_MUTE, &[127, 30, 30, 0]);
+    for (is_input, first, owner) in [(true, 3u16, tx), (false, 128, rx)] {
+        let mut page = vec![0u8; 8];
+        page[0..2].copy_from_slice(&((1u16 << 1) | u16::from(is_input)).to_le_bytes());
+        page[2..4].copy_from_slice(&first.to_le_bytes());
+        page.extend_from_slice(owner.as_bytes());
+        f.feed(listing, op::V2IP_BAY_MAPPINGS, &page);
+    }
+    f.tap.clear();
+    (
+        f,
+        BayUid::new(listing, 3),
+        BayUid::new(listing, 128),
+        BayUid::new(tx, 0),
+        BayUid::new(rx, 127),
+    )
+}
+
+/// The target uid and the port of the frame a call built.
+fn sent_to(f: &Fixture, what: &str, call: Result<(), ControlError>) -> (DeviceUid, u16) {
+    assert!(
+        matches!(call, Err(ControlError::Send(SendError::NotConnected))),
+        "{what} was refused rather than sent: {call:?}"
+    );
+    let frame = f.tap.frames().pop().expect("no frame was built");
+    f.tap.clear();
+    let p = &frame[HEADER_LEN..];
+    let uid = DeviceUid::from_bytes(&p[..16]).expect("a uid");
+    (uid, u16::from_le_bytes([p[16], p[17]]))
+}
+
+/// A command about a mesh bay goes to the unit it stands for, about that
+/// unit's own bay: the unit listing it holds only a copy.
+#[test]
+fn a_mesh_bay_command_goes_to_the_unit_it_stands_for() {
+    let (f, input, output, tx_bay, rx_bay) = mesh_listing();
+    let r = &f.remote;
+    type Call<'a> = Box<dyn Fn() -> Result<(), ControlError> + 'a>;
+    let calls: [(&str, BayUid, Call<'_>); 7] = [
+        (
+            "rename",
+            tx_bay,
+            Box::new(|| r.set_bay_name(input, "Lounge")),
+        ),
+        ("hide", tx_bay, Box::new(|| r.set_bay_hidden(input, true))),
+        (
+            "action",
+            tx_bay,
+            Box::new(|| r.send_action(input, RcAction::POWER_ON)),
+        ),
+        ("key", tx_bay, Box::new(|| r.send_key(input, RcKey::PLAY))),
+        ("power", rx_bay, Box::new(|| r.power_on(output))),
+        (
+            "amp",
+            rx_bay,
+            Box::new(|| r.set_amp_zone_settings(output, AmpZoneSettings::default())),
+        ),
+        ("volume step", rx_bay, Box::new(|| r.volume_up(output))),
+    ];
+    for (what, owner, call) in calls {
+        assert_eq!(
+            sent_to(&f, what, call()),
+            (owner.device, owner.port),
+            "{what}"
+        );
+    }
+
+    // An EDID profile names only the unit.
+    let call = r.select_edid_profile(input, EdidProfile::UHD_4K);
+    assert_eq!(sent_to(&f, "edid", call).0, tx_bay.device);
+
+    // A change that is sent is kept on the bay it was sent about, and read
+    // through the mesh bay.
+    f.connect();
+    r.set_bay_name(input, "Lounge").expect("sent");
+    r.set_bay_hidden(input, true).expect("sent");
+    assert_eq!(
+        r.bay(input).map(|b| (b.user_name, b.hidden)),
+        Some(("Lounge".to_owned(), Some(true)))
+    );
+}
+
+/// A route for a mesh output names the unit playing it, and its source in
+/// the numbering of the unit listing it.
+#[test]
+fn a_mesh_output_is_routed_on_the_unit_it_stands_for() {
+    let (f, _, output, _, rx_bay) = mesh_listing();
+    let r = &f.remote;
+    let format = Some(V2ipAudioFormat::STANDARD);
+    type Call<'a> = Box<dyn Fn() -> Result<(), ControlError> + 'a>;
+    let calls: [(&str, Call<'_>); 5] = [
+        ("video", Box::new(|| r.select_video_source(output, 1))),
+        ("audio", Box::new(|| r.select_audio_source(output, 1))),
+        (
+            "by name",
+            Box::new(|| r.select_audio_source_by_name(output, "Apple TV", format)),
+        ),
+        (
+            "manual",
+            Box::new(|| r.select_source_addr(output, route(1), None)),
+        ),
+        (
+            "manual audio",
+            Box::new(|| {
+                r.select_audio_source_addr(output, Ipv4Addr::new(239, 1, 1, 1), None, None)
+            }),
+        ),
+    ];
+    for (what, call) in calls {
+        assert_eq!(sent_to(&f, what, call()).0, rx_bay.device, "{what}");
+    }
+}
+
+/// A mesh bay whose unit has not reported its own bay has nowhere to send a
+/// command to.
+#[test]
+fn a_mesh_bay_without_its_unit_refuses_commands() {
+    let (f, input, _, _, _) = mesh_listing();
+    let listing = input.device;
+    let mut page = vec![0u8; 8];
+    page[0..2].copy_from_slice(&((1u16 << 1) | 1).to_le_bytes());
+    page[2..4].copy_from_slice(&4u16.to_le_bytes());
+    page.extend_from_slice(uid_n(244).as_bytes());
+    f.feed(listing, op::V2IP_BAY_MAPPINGS, &page);
+    let call = f.remote.set_bay_name(BayUid::new(listing, 4), "Lounge");
+    assert!(
+        matches!(call, Err(ControlError::NotReported(_))),
+        "{call:?}"
+    );
+    assert!(f.tap.frames().is_empty(), "a frame was built");
+}

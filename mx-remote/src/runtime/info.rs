@@ -122,6 +122,10 @@ impl DeviceInfo {
 /// direction, `is_local` and `v2ip_uid`, which names that unit. Every change
 /// to that bay is reported for each mesh bay standing for it as well. Until
 /// the unit has reported the bay, the rest reads as never reported.
+///
+/// A command about a mesh bay goes to that unit about that bay, and is
+/// refused until the unit has reported it. A route keeps naming its source
+/// by a port of the device listing the mesh bay.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct BayInfo {

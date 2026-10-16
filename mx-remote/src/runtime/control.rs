@@ -234,6 +234,23 @@ fn bay_of(state: &State, uid: BayUid) -> Result<(&Device, &Bay), ControlError> {
     Ok((device, bay))
 }
 
+/// The bay a command about `uid` acts on, and its device.
+///
+/// A mesh bay stands for bay 0 of another unit, which holds everything the
+/// mesh bay reports, so a command goes to that unit about that bay. Until
+/// the unit has reported the bay there is nowhere to send it, and it is
+/// refused.
+fn acted_on(state: &State, uid: BayUid) -> Result<(&Device, &Bay), ControlError> {
+    let (device, bay) = bay_of(state, uid)?;
+    if !bay.is_v2ip_remote() {
+        return Ok((device, bay));
+    }
+    let owner = state
+        .mesh_owner(bay)
+        .ok_or(ControlError::NotReported("the bay the mesh bay stands for"))?;
+    Ok((device_of(state, owner.uid().device)?, owner))
+}
+
 /// The streams the source bay on `port` advertises.
 fn source_streams(device: &Device, port: u16) -> Result<&V2ipStreamSources, ControlError> {
     let source = device
@@ -245,12 +262,16 @@ fn source_streams(device: &Device, port: u16) -> Result<&V2ipStreamSources, Cont
 }
 
 /// A sink bay, or the reason it cannot be routed.
-fn v2ip_sink(state: &State, uid: BayUid) -> Result<(&Device, &Bay), ControlError> {
-    let (device, bay) = bay_of(state, uid)?;
+///
+/// Returns the device listing the sink, whose numbering the source ports of
+/// a route are in, then the unit and bay that play the route.
+fn v2ip_sink(state: &State, uid: BayUid) -> Result<(&Device, &Device, &Bay), ControlError> {
+    let (_, bay) = bay_of(state, uid)?;
     if !bay.is_v2ip_sink() {
         return Err(ControlError::Unsupported("routing needs a V2IP sink"));
     }
-    Ok((device, bay))
+    let (unit, sink) = acted_on(state, uid)?;
+    Ok((device_of(state, uid.device)?, unit, sink))
 }
 
 /// One route slot as the wire carries it, substituting the stream's standard
@@ -302,11 +323,11 @@ impl Remote {
     /// those route no audio for "follow the video".
     pub fn select_video_source(&self, sink: BayUid, source_port: u16) -> Result<(), ControlError> {
         self.shared.command(|state| {
-            let (device, bay) = v2ip_sink(state, sink)?;
+            let (listing, device, bay) = v2ip_sink(state, sink)?;
             if !bay.is_output() {
                 return Err(ControlError::Unsupported("not an output bay"));
             }
-            let streams = source_streams(device, source_port)?;
+            let streams = source_streams(listing, source_port)?;
             // Older firmware routes no audio for an empty audio address rather
             // than following the video, so it is told the source's audio
             // stream instead, which every version plays.
@@ -326,8 +347,8 @@ impl Remote {
     /// Routes this V2IP sink's audio to the stream a source port advertises.
     pub fn select_audio_source(&self, sink: BayUid, source_port: u16) -> Result<(), ControlError> {
         self.shared.command(|state| {
-            let (device, _) = v2ip_sink(state, sink)?;
-            let streams = source_streams(device, source_port)?;
+            let (listing, device, _) = v2ip_sink(state, sink)?;
+            let streams = source_streams(listing, source_port)?;
             Ok(Command::new(
                 Addressee::device(device),
                 op::V2IP_SOURCE_SWITCH,
@@ -359,7 +380,7 @@ impl Remote {
         format: Option<V2ipAudioFormat>,
     ) -> Result<(), ControlError> {
         self.shared.command(move |state| {
-            let (device, _) = v2ip_sink(state, sink)?;
+            let (_, device, _) = v2ip_sink(state, sink)?;
             let streams = V2ipStreams {
                 audio: StreamAddr {
                     ip: audio_ip,
@@ -405,7 +426,7 @@ impl Remote {
         };
         let format = format.unwrap_or(V2ipAudioFormat::STANDARD);
         self.shared.command(move |state| {
-            let (device, _) = v2ip_sink(state, sink)?;
+            let (_, device, _) = v2ip_sink(state, sink)?;
             Ok(Command::new(
                 Addressee::device(device),
                 op::V2IP_MANUAL_SRC_SWITCH,
@@ -430,8 +451,8 @@ impl Remote {
             return self.select_audio_source(sink, port);
         };
         self.shared.command(move |state| {
-            let (device, _) = v2ip_sink(state, sink)?;
-            let audio = source_streams(device, port)?.audio;
+            let (listing, device, _) = v2ip_sink(state, sink)?;
+            let audio = source_streams(listing, port)?.audio;
             let streams = V2ipStreams {
                 audio: StreamAddr {
                     ip: audio.ip,
@@ -464,7 +485,8 @@ impl Remote {
     pub fn set_bay_name(&self, bay: BayUid, name: &str) -> Result<(), ControlError> {
         let name = stored_name(name);
         self.shared.command(move |state| {
-            let (device, _) = bay_of(state, bay)?;
+            let (device, b) = acted_on(state, bay)?;
+            let bay = b.uid();
             let payload = build_set_bay_name(device.uid, bay.port, &name);
             Ok(
                 Command::new(Addressee::device(device), op::CHANGE_BAY_NAME, payload).then(
@@ -481,7 +503,8 @@ impl Remote {
     /// Hides a bay from the pickers that list it, or shows it again.
     pub fn set_bay_hidden(&self, bay: BayUid, hidden: bool) -> Result<(), ControlError> {
         self.shared.command(move |state| {
-            let (device, _) = bay_of(state, bay)?;
+            let (device, b) = acted_on(state, bay)?;
+            let bay = b.uid();
             Ok(Command::new(
                 Addressee::device(device),
                 op::BAY_HIDE,
@@ -507,7 +530,8 @@ impl Remote {
         profile: EdidProfile,
     ) -> Result<(), ControlError> {
         self.shared.command(move |state| {
-            let (device, _) = bay_of(state, bay)?;
+            let (device, b) = acted_on(state, bay)?;
+            let bay = b.uid();
             Ok(Command::new(
                 Addressee::device(device),
                 op::BAY_EDID_PROFILE,
@@ -524,11 +548,11 @@ impl Remote {
     /// Sends a remote-control action to whatever is attached to a bay.
     pub fn send_action(&self, bay: BayUid, action: RcAction) -> Result<(), ControlError> {
         self.shared.command(move |state| {
-            let (device, _) = bay_of(state, bay)?;
+            let (device, b) = acted_on(state, bay)?;
             Ok(Command::new(
                 Addressee::device(device),
                 op::RC_TX_ACTION,
-                build_rc_action(device.uid, bay.port, action),
+                build_rc_action(device.uid, b.port, action),
             ))
         })
     }
@@ -541,11 +565,11 @@ impl Remote {
     /// decides which keys reach it.
     pub fn send_key(&self, bay: BayUid, key: RcKey) -> Result<(), ControlError> {
         self.shared.command(move |state| {
-            let (device, _) = bay_of(state, bay)?;
+            let (device, b) = acted_on(state, bay)?;
             Ok(Command::new(
                 Addressee::device(device),
                 op::RC_TX_KEY,
-                build_rc_key(device.uid, bay.port, key),
+                build_rc_key(device.uid, b.port, key),
             ))
         })
     }
@@ -567,7 +591,8 @@ impl Remote {
         power: PowerStatus,
     ) -> Result<(), ControlError> {
         self.shared.command(move |state| {
-            let (device, _) = bay_of(state, bay)?;
+            let (device, b) = acted_on(state, bay)?;
+            let bay = b.uid();
             Ok(Command::new(
                 Addressee::device(device),
                 op::RC_TX_ACTION,
@@ -608,7 +633,7 @@ impl Remote {
             // The mesh may put this bay's volume control on another device, and
             // the command belongs where the volume lives, not where it was
             // addressed.
-            let target = state.volume_bay(bay);
+            let target = state.volume_bay(acted_on(state, bay)?.1.uid());
             let (device, b) = bay_of(state, target)?;
             if !b.has_volume_control() {
                 return Err(ControlError::Unsupported("the bay has no volume control"));
@@ -650,7 +675,7 @@ impl Remote {
     /// keeps.
     fn current_volume(&self, bay: BayUid) -> Result<(u8, Option<bool>), ControlError> {
         self.shared.read(|state| {
-            let (_, b) = bay_of(state, state.volume_bay(bay))?;
+            let (_, b) = bay_of(state, state.volume_bay(acted_on(state, bay)?.1.uid()))?;
             b.audio_volume
                 .map(|v| (v.volume(), v.muted()))
                 .ok_or(ControlError::NotReported("the bay's volume"))
@@ -664,7 +689,8 @@ impl Remote {
         settings: AmpZoneSettings,
     ) -> Result<(), ControlError> {
         self.shared.command(move |state| {
-            let (device, _) = bay_of(state, bay)?;
+            let (device, b) = acted_on(state, bay)?;
+            let bay = b.uid();
             Ok(Command::new(
                 Addressee::device(device),
                 op::AMP_ZONE_SETTINGS,
