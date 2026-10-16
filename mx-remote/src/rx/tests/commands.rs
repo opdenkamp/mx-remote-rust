@@ -982,20 +982,27 @@ fn a_filter_list_lands_on_the_sink_it_names() {
     assert_eq!(h.bay(2).filtered, [two], "management's list was lost");
 }
 
+/// A unit reads a rename only with its padding, and keeps 15 characters of a
+/// name that fills the field.
 #[test]
-fn a_bay_name_filling_its_field_keeps_every_character() {
+fn a_bay_name_is_read_as_a_unit_keeps_it() {
     let mut h = command_device(52);
     let target = uid_n(57);
 
-    let full = "0123456789ABCDEF"; // fills the field, so it carries no terminator
     let mut p = target.as_bytes().to_vec();
     p.extend_from_slice(&300u16.to_le_bytes());
-    p.extend_from_slice(full.as_bytes());
+    p.extend_from_slice(b"0123456789ABCDEF"); // fills the field
     h.feed(op::CHANGE_BAY_NAME, &p);
+    assert!(
+        !h.saw(|e| matches!(e, Event::BayNameChangeRequested { .. })),
+        "a rename without its padding was taken"
+    );
 
+    p.extend_from_slice(&[0; 6]);
+    h.feed(op::CHANGE_BAY_NAME, &p);
     assert!(
         h.saw(|e| matches!(e, Event::BayNameChangeRequested { change, .. }
-        if change.target == target && change.port == 300 && change.name == full))
+        if change.target == target && change.port == 300 && change.name == "0123456789ABCDE"))
     );
 }
 

@@ -350,12 +350,17 @@ pub(super) fn detect_bays(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
 
 /// Decodes `mxr_bay_name_data`: a uid, a `u16` port, then a fixed-width name
 /// that carries no terminator when it fills the field.
+/// The length of a rename: uid, port and name, padded to a multiple of eight.
+const BAY_NAME_SIZE: usize = 40;
+
 pub(super) fn change_bay_name(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
+    // A unit takes the frame with its padding, and keeps 15 bytes of the
+    // name; the 16th is where its terminator goes.
     let p = rx.frame.payload();
-    if p.len() < 18 + DEVICE_NAME_LEN {
+    if p.len() < BAY_NAME_SIZE {
         return;
     }
     ev.push(Event::BayNameChangeRequested {
@@ -363,7 +368,7 @@ pub(super) fn change_bay_name(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event
         change: BayNameChange {
             target: uid_at(p, 0),
             port: u16_at(p, 16),
-            name: cstr(&p[18..18 + DEVICE_NAME_LEN]),
+            name: cstr(&p[18..17 + DEVICE_NAME_LEN]),
         },
     });
 }

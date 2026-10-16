@@ -753,6 +753,31 @@ fn a_rename_carries_its_trailing_padding() {
     assert_eq!(&frame[HEADER_LEN + 18..HEADER_LEN + 25], b"Kitchen");
 }
 
+/// A unit keeps 15 bytes of a name, so that is what is sent and remembered,
+/// cut before a character that would not fit whole.
+#[test]
+fn a_rename_is_cut_to_what_a_unit_keeps() {
+    let f = Fixture::new();
+    let device = uid_n(212);
+    f.everything(device, 0x28, "BN0002");
+    f.connect();
+    let bay = BayUid::new(device, 2);
+    for (asked, kept) in [
+        ("Living Room Left", "Living Room Lef"),
+        ("Living Room Lé", "Living Room Lé"),
+        ("Living Room Lée", "Living Room Lé"),
+        ("Living Room Lfé", "Living Room Lf"),
+    ] {
+        f.tap.clear();
+        f.remote.set_bay_name(bay, asked).expect("sent");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        let field = &frame[HEADER_LEN + 18..HEADER_LEN + 34];
+        let sent = &field[..field.iter().position(|&b| b == 0).unwrap_or(16)];
+        assert_eq!(sent, kept.as_bytes(), "{asked}");
+        assert_eq!(f.remote.bay(bay).expect("bay").user_name, kept, "{asked}");
+    }
+}
+
 /// Each of the three operations decodes back to what it asked for.
 #[test]
 fn a_video_wall_command_decodes_back_to_what_was_asked() {

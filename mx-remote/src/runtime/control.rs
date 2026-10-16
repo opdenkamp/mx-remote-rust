@@ -272,11 +272,15 @@ fn stream_addr(target: V2ipRouteTarget, standard_port: u16) -> StreamAddr {
 /// switch naming no audio. Some units below it route no audio instead.
 const AUDIO_FOLLOWS_SINCE: u16 = 0x27;
 
-/// The name as the device will store it: the field is
-/// [`DEVICE_NAME_LEN`] bytes wide, so a longer one is cut there.
+/// The name as the device will store it. A unit keeps 15 bytes of the
+/// [`DEVICE_NAME_LEN`]-byte field, the last being its terminator, so a longer
+/// name is cut there, before any character that would not fit whole.
 fn stored_name(name: &str) -> String {
-    let bytes = name.as_bytes();
-    String::from_utf8_lossy(bytes.get(..DEVICE_NAME_LEN).unwrap_or(bytes)).into_owned()
+    let mut end = name.len().min(DEVICE_NAME_LEN - 1);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    name[..end].to_owned()
 }
 
 impl Remote {
