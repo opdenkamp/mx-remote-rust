@@ -6279,7 +6279,8 @@ mxr_result_t mxr_clear_v2ip_output_mode(const mxr_remote_t *remote, mxr_uid_t de
  * itself.
  *
  * A loadable module serves this, not the device firmware, and a model may
- * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * not have it: `MXR_ERR_UNSUPPORTED` for a unit that does not report
+ * `MXR_FEATURE_VIDEO_WALL`. Nothing answers, so `MXR_OK` means the frame was
  * sent and not that anything acted on it.
  *
  * # Safety
@@ -6305,7 +6306,8 @@ mxr_result_t mxr_preview_video_wall(const mxr_remote_t *remote,
  * A zero width or height stores "show the whole frame".
  *
  * A loadable module serves this, not the device firmware, and a model may
- * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * not have it: `MXR_ERR_UNSUPPORTED` for a unit that does not report
+ * `MXR_FEATURE_VIDEO_WALL`. Nothing answers, so `MXR_OK` means the frame was
  * sent and not that anything acted on it.
  *
  * # Safety
@@ -6323,7 +6325,8 @@ mxr_result_t mxr_store_video_wall(const mxr_remote_t *remote,
  * Carries no window: the sink already holds the one this puts back.
  *
  * A loadable module serves this, not the device firmware, and a model may
- * not have it. Nothing answers either way, so `MXR_OK` means the frame was
+ * not have it: `MXR_ERR_UNSUPPORTED` for a unit that does not report
+ * `MXR_FEATURE_VIDEO_WALL`. Nothing answers, so `MXR_OK` means the frame was
  * sent and not that anything acted on it.
  *
  * # Safety

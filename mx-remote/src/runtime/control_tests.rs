@@ -159,7 +159,8 @@ impl Fixture {
                     | DeviceFeature::AUDIO_AMPLIFIER
                     | DeviceFeature::VIDEO_ROUTING
                     | DeviceFeature::VOLUME_CONTROL
-                    | DeviceFeature::AUDIO_ROUTING,
+                    | DeviceFeature::AUDIO_ROUTING
+                    | DeviceFeature::VIDEO_WALL,
             ),
         );
         let mut bays = bay_config_rec(
@@ -702,6 +703,26 @@ impl Walls {
             .last()
             .expect("no wall command")
     }
+}
+
+/// A unit without the video wall module drops the frame unanswered, so it is
+/// refused for one that does not report the feature.
+#[test]
+fn a_video_wall_goes_only_to_a_unit_with_the_module() {
+    let f = Fixture::new();
+    let sink = uid_n(209);
+    f.feed(
+        sink,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "VW0000", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    f.connect();
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.revert_video_wall(sink),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty());
 }
 
 #[test]

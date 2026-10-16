@@ -1892,6 +1892,10 @@ impl Remote {
     /// because the sink ignores the window on that operation rather than
     /// checking it.
     ///
+    /// Refused for a unit that does not report
+    /// [`VIDEO_WALL`](DeviceFeature::VIDEO_WALL), which drops the frame
+    /// unanswered.
+    ///
     /// Passing it is not proof a wall appeared. Two things the sink refuses
     /// afterwards are equally silent: a window it will not draw, which it logs
     /// and drops, and a sink whose image has no tiling support at all, which
@@ -1909,6 +1913,10 @@ impl Remote {
         }
         self.shared.command(move |state| {
             let device = device_of(state, sink)?;
+            // A unit without the module drops the frame unanswered.
+            if !device.hello.features.has(DeviceFeature::VIDEO_WALL) {
+                return Err(ControlError::Unsupported("the unit has no video wall"));
+            }
             Ok(Command::new(
                 Addressee::device(device),
                 op::V2IP_VIDEO_WALL,

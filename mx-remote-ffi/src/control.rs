@@ -1991,7 +1991,8 @@ unsafe fn wall_window(
 /// itself.
 ///
 /// A loadable module serves this, not the device firmware, and a model may
-/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// not have it: `MXR_ERR_UNSUPPORTED` for a unit that does not report
+/// `MXR_FEATURE_VIDEO_WALL`. Nothing answers, so `MXR_OK` means the frame was
 /// sent and not that anything acted on it.
 ///
 /// # Safety
@@ -2028,7 +2029,8 @@ pub unsafe extern "C" fn mxr_preview_video_wall(
 /// A zero width or height stores "show the whole frame".
 ///
 /// A loadable module serves this, not the device firmware, and a model may
-/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// not have it: `MXR_ERR_UNSUPPORTED` for a unit that does not report
+/// `MXR_FEATURE_VIDEO_WALL`. Nothing answers, so `MXR_OK` means the frame was
 /// sent and not that anything acted on it.
 ///
 /// # Safety
@@ -2057,7 +2059,8 @@ pub unsafe extern "C" fn mxr_store_video_wall(
 /// Carries no window: the sink already holds the one this puts back.
 ///
 /// A loadable module serves this, not the device firmware, and a model may
-/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
+/// not have it: `MXR_ERR_UNSUPPORTED` for a unit that does not report
+/// `MXR_FEATURE_VIDEO_WALL`. Nothing answers, so `MXR_OK` means the frame was
 /// sent and not that anything acted on it.
 ///
 /// # Safety
