@@ -28,7 +28,7 @@ use std::time::Instant;
 
 use crate::event::Event;
 use crate::state::{Device, State};
-use crate::wire::{op, DeviceFeature, DeviceUid, Frame, Opcode};
+use crate::wire::{op, DeviceFeature, DeviceUid, Frame, Opcode, HEADER_LEN, PROTOCOL_VERSION};
 
 pub use svd::{lookup_svd, Svd};
 
@@ -55,6 +55,10 @@ impl Rx<'_> {
     }
 }
 
+/// The header protocol a broken revision of one layout was stamped with, which
+/// a unit drops.
+const BROKEN_PROTOCOL: u16 = 2;
+
 /// Decodes one datagram into events, updating the registry.
 ///
 /// `timestamp` is when the datagram arrived, which is what the sending device
@@ -69,6 +73,15 @@ pub(crate) fn process_frame(
     let Ok(frame) = Frame::parse(data) else {
         return Vec::new();
     };
+    // A unit drops a datagram whose length is not the header's exactly, and a
+    // frame stamped with a layout newer than the one it knows, or with the
+    // version a broken revision once stamped.
+    if data.len() != HEADER_LEN + usize::from(frame.payload_len())
+        || frame.protocol() > PROTOCOL_VERSION
+        || frame.protocol() == BROKEN_PROTOCOL
+    {
+        return Vec::new();
+    }
     let sender = frame.remote_id();
     if sender == state.uid {
         return Vec::new();

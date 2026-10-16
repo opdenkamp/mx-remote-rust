@@ -1645,7 +1645,7 @@ fn a_video_wall_command_is_read_at_any_stamp() {
 /// floored on a row that was later reverted, and no sender will carry it again.
 #[test]
 fn a_decoder_block_is_found_by_length_at_any_stamp() {
-    for stamp in [0x01, 0x13, 0x28, PROTOCOL_VERSION, PROTOCOL_VERSION + 1] {
+    for stamp in [0x01, 0x13, 0x28, PROTOCOL_VERSION] {
         let mut h = command_device(90);
         h.feed_proto(op::V2IP_STATS, stamp, &stats_with_decoder(1));
 
@@ -1657,27 +1657,21 @@ fn a_decoder_block_is_found_by_length_at_any_stamp() {
     }
 }
 
+/// A frame stamped above the version this client knows is dropped, as a unit
+/// drops it: a raised stamp marks a layout an older reader would misread.
 #[test]
-fn a_report_stamped_above_this_clients_own_version_is_still_read() {
+fn a_frame_stamped_above_this_clients_own_version_is_dropped() {
     let mut h = command_device(87);
     let p = stats_with_decoder(1);
     h.feed_proto(op::V2IP_STATS, PROTOCOL_VERSION + 1, &p);
-
-    // The receive path takes a frame's stamp and discards it. A ceiling here
-    // would drop a newer device's report whole - the counters that predate the
-    // block with it - and the symptom appears only once a device is upgraded,
-    // by which time nothing points at the client. The asymmetry with transmit
-    // is deliberate: a frame is stamped at its opcode's own version because the
-    // device has a ceiling, which is not a reason to grow one here.
-    let stats = h
-        .device()
-        .v2ip_stats
-        .expect("a stamp above this client's version cost it the whole report");
-    assert_eq!(stats.tx.video, u32::from_le_bytes([0xA5, 0xA4, 0xA7, 0xA6]));
+    assert!(h.device().v2ip_stats.is_none());
+    h.feed_proto(op::V2IP_STATS, 2, &p);
     assert!(
-        stats.decoder.reading().is_some(),
-        "the counters survived the stamp and the block did not"
+        h.device().v2ip_stats.is_none(),
+        "the broken stamp 2 was read"
     );
+    h.feed_proto(op::V2IP_STATS, PROTOCOL_VERSION, &p);
+    assert!(h.device().v2ip_stats.is_some());
 }
 
 /// The value this fixture writes at payload offset `off`.

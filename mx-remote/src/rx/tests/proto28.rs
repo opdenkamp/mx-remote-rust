@@ -919,9 +919,9 @@ fn every_amp_opcode_stamps_under_the_amp_cap() {
 }
 
 #[test]
-fn a_per_record_loop_is_bounded_by_the_declared_length() {
-    // A datagram carrying more than its header declares must not yield phantom
-    // records to a per-record loop.
+fn a_datagram_longer_or_shorter_than_its_header_says_is_dropped() {
+    // A unit takes a datagram only when it is exactly as long as its header
+    // says, so one carrying more yields nothing, not even its declared part.
     let mut h = Harness::new(27);
     h.hello(0x28, "FF88", "PB0001", DeviceFeature::VIDEO_ROUTING);
 
@@ -952,14 +952,35 @@ fn a_per_record_loop_is_bounded_by_the_declared_length() {
     let events = crate::rx::process_frame(&mut h.state, &data, None, std::time::Instant::now());
     h.events.extend(events);
 
-    assert!(
-        h.device().bay(1).is_some(),
-        "the declared record should have registered"
+    assert!(h.device().bay(1).is_none(), "a padded datagram was read");
+    assert!(h.device().bay(2).is_none());
+
+    // Nor one cut short of what it declares.
+    let whole = super::datagram(
+        h.sender,
+        op::SYS_BAY_CONFIG,
+        0x01,
+        &bay_config_rec(
+            1,
+            0,
+            0,
+            "Input 1",
+            "Apple TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
     );
-    assert!(
-        h.device().bay(2).is_none(),
-        "a record beyond the declared length became a bay"
+    let events = crate::rx::process_frame(
+        &mut h.state,
+        &whole[..whole.len() - 1],
+        None,
+        std::time::Instant::now(),
     );
+    h.events.extend(events);
+    assert!(h.device().bay(1).is_none(), "a truncated datagram was read");
+    let events = crate::rx::process_frame(&mut h.state, &whole, None, std::time::Instant::now());
+    h.events.extend(events);
+    assert!(h.device().bay(1).is_some());
     assert_eq!(BAY_CONFIG_SIZE, 61);
 }
 

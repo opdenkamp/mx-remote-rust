@@ -48,6 +48,7 @@ pub use uid::{BayUid, DeviceUid, UidParseError};
 
 pub(crate) use bayconfig::{parse_bay_config, BayConfig, BAY_CONFIG_SIZE};
 pub(crate) use conn::Conn;
+pub(crate) use frame::HEADER_LEN;
 pub(crate) use frame::{cstr, Frame, DEVICE_NAME_LEN, FW_VERSION_LEN};
 pub(crate) use netif::broadcast_address;
 pub(crate) use opcode::{audio_sub, mv_sub, op, Opcode};
@@ -58,8 +59,6 @@ pub(crate) use uid::UID_LEN;
 
 // Reached only from the test modules elsewhere in the crate, so they are cut
 // from a release build rather than carried there behind an allow.
-#[cfg(test)]
-pub(crate) use frame::HEADER_LEN;
 // Read only by the socket tests, which are Linux-only.
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) use netif::default_local_ip;
