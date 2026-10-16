@@ -752,6 +752,19 @@ pub const MXR_V2IP_SETTING_PTP_ANNOUNCE_TIMEOUT: u32 = 1 << 22;
 /// The DSCP of the PTP messages, in `dscp`.
 pub const MXR_V2IP_SETTING_PTP_DSCP: u32 = 1 << 23;
 
+/// The minutes after which a heard SAP announcement is forgotten, in
+/// `mxr_v2ip_ptp_messages_t`'s `sap_expire_min`.
+pub const MXR_V2IP_SETTING_SAP_EXPIRE: u32 = 1 << 24;
+
+/// Listens for SAP announcements. An on/off setting.
+pub const MXR_V2IP_SETTING_SAP_LISTEN: u32 = 1 << 25;
+
+/// Sends SAP announcements. An on/off setting.
+pub const MXR_V2IP_SETTING_SAP_ANNOUNCE: u32 = 1 << 26;
+
+/// The seconds between SAP announcements, in `sap_interval_s`.
+pub const MXR_V2IP_SETTING_SAP_INTERVAL: u32 = 1 << 27;
+
 // ---- what a V2IP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
 
 /// The output plays a stream from a description.

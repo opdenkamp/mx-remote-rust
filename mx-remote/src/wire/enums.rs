@@ -292,6 +292,15 @@ bitmask! {
         PTP_ANNOUNCE_TIMEOUT = 1 << 22;
         /// The DSCP of the device's PTP messages.
         PTP_DSCP = 1 << 23;
+        /// The minutes after which the device forgets a SAP announcement it
+        /// heard.
+        SAP_EXPIRE = 1 << 24;
+        /// Listens for SAP announcements.
+        SAP_LISTEN = 1 << 25;
+        /// Sends SAP announcements.
+        SAP_ANNOUNCE = 1 << 26;
+        /// The seconds between the device's SAP announcements.
+        SAP_INTERVAL = 1 << 27;
     }
 }
 
@@ -587,7 +596,8 @@ bitmask! {
 impl V2ipDeviceSetting {
     /// The settings that are on or off, as opposed to carrying a value, and
     /// that can be written.
-    pub const SWITCHES: Self = Self(0xFF | Self::AES67.0);
+    pub const SWITCHES: Self =
+        Self(0xFF | Self::AES67.0 | Self::SAP_LISTEN.0 | Self::SAP_ANNOUNCE.0);
 
     /// The settings only a device reports about itself, which no write
     /// carries.
@@ -597,8 +607,7 @@ impl V2ipDeviceSetting {
     pub const PTP_SETTINGS: Self =
         Self(Self::PTP_MODE.0 | Self::PTP_DOMAIN.0 | Self::PTP_PRIORITY1.0);
 
-    /// The PTP message settings, whose values a frame carries in a block of
-    /// their own behind the rest.
+    /// The PTP message settings.
     pub const PTP_MESSAGES: Self = Self(
         Self::PTP_ANNOUNCE.0
             | Self::PTP_SYNC.0
@@ -606,6 +615,12 @@ impl V2ipDeviceSetting {
             | Self::PTP_ANNOUNCE_TIMEOUT.0
             | Self::PTP_DSCP.0,
     );
+
+    /// The settings whose values a frame carries in a block of their own
+    /// behind the rest, [`V2ipPtpMessages`](crate::V2ipPtpMessages): the PTP
+    /// message settings and the two SAP values.
+    pub const SETTINGS_BLOCK: Self =
+        Self(Self::PTP_MESSAGES.0 | Self::SAP_EXPIRE.0 | Self::SAP_INTERVAL.0);
 
     /// These bits with every bit of `other` cleared.
     pub(crate) const fn without(self, other: Self) -> Self {

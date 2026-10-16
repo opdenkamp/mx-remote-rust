@@ -1175,6 +1175,27 @@
 #define MXR_V2IP_SETTING_PTP_DSCP (1 << 23)
 
 /**
+ * The minutes after which a heard SAP announcement is forgotten, in
+ * `mxr_v2ip_ptp_messages_t`'s `sap_expire_min`.
+ */
+#define MXR_V2IP_SETTING_SAP_EXPIRE (1 << 24)
+
+/**
+ * Listens for SAP announcements. An on/off setting.
+ */
+#define MXR_V2IP_SETTING_SAP_LISTEN (1 << 25)
+
+/**
+ * Sends SAP announcements. An on/off setting.
+ */
+#define MXR_V2IP_SETTING_SAP_ANNOUNCE (1 << 26)
+
+/**
+ * The seconds between SAP announcements, in `sap_interval_s`.
+ */
+#define MXR_V2IP_SETTING_SAP_INTERVAL (1 << 27)
+
+/**
  * The output plays a stream from a description.
  */
 #define MXR_V2IP_SDP_FLAG_ACTIVE (1 << 0)
@@ -2457,10 +2478,11 @@ typedef struct {
 } mxr_v2ip_device_settings_t;
 
 /**
- * How a V2IP device paces its PTP messages. Intervals are base-2 logarithms
- * of seconds, so -3 is 125 ms and 1 is 2 s. Each value is meaningful only
- * behind its `MXR_V2IP_SETTING_PTP_*` bit in `mxr_v2ip_device_settings_t`'s
- * `valid`.
+ * How a V2IP device paces its PTP messages, and its SAP timings, which a
+ * frame carries in the same block. Intervals are base-2 logarithms of
+ * seconds, so -3 is 125 ms and 1 is 2 s. Each value is meaningful only behind
+ * its `MXR_V2IP_SETTING_PTP_*` or `MXR_V2IP_SETTING_SAP_*` bit in
+ * `mxr_v2ip_device_settings_t`'s `valid`.
  */
 typedef struct {
   /**
@@ -2483,6 +2505,14 @@ typedef struct {
    * The DSCP of the messages, at most 63.
    */
   uint8_t dscp;
+  /**
+   * The minutes after which a heard SAP announcement is forgotten.
+   */
+  uint8_t sap_expire_min;
+  /**
+   * The seconds between the device's SAP announcements.
+   */
+  uint16_t sap_interval_s;
 } mxr_v2ip_ptp_messages_t;
 
 /**
@@ -5823,8 +5853,8 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, when no setting is carried,
  * when one only a device reports is, for a PTP setting, which
  * `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
- * `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message setting,
- * which `mxr_set_all_v2ip_ptp_messages()` carries, for a profile out of range or a
+ * `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message or SAP
+ * timing setting, which `mxr_set_all_v2ip_ptp_messages()` carries, for a profile out of range or a
  * schedule time not below `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a
  * device that applies a change reports it.
  *
@@ -5865,8 +5895,9 @@ mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
 mxr_result_t mxr_set_all_v2ip_power_save_level(const mxr_remote_t *remote, uint8_t level);
 
 /**
- * Sets how a V2IP device paces its PTP messages: the values of `messages`
- * behind the `MXR_V2IP_SETTING_PTP_*` message bits in `valid`.
+ * Sets how a V2IP device paces its PTP messages, and its SAP timings: the
+ * values of `messages` behind the `MXR_V2IP_SETTING_PTP_*` message bits and
+ * `MXR_V2IP_SETTING_SAP_EXPIRE` and `_SAP_INTERVAL` in `valid`.
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `messages`, for no
  * such bit or any other bit in `valid`, or for a DSCP above 63. Otherwise as
  * `mxr_set_v2ip_device_setting()`.

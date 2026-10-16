@@ -3095,13 +3095,47 @@ fn a_controller_frame_does_not_change_a_device_ptp_state() {
 
 /// A 0x3C carrying PTP message settings: the PTP state frame with a settings
 /// block carrying `valid`, then the message block at 216 with negative
-/// intervals, so a read that loses the sign shows, and poisoned reserved bytes.
+/// intervals, so a read that loses the sign shows, a SAP expiry of 60 minutes
+/// and a SAP interval of 3600 seconds, so a read of one byte of it shows.
 fn ptp_messages_frame(cfg: &Cfg, valid: V2ipDeviceSetting, dscp: u8) -> Vec<u8> {
     let mut p = ptp_state_frame(cfg, V2ipPtpFlag::VALID.bits());
     p[128..132].copy_from_slice(&valid.bits().to_le_bytes());
-    p.extend_from_slice(&[(-3i8) as u8, (-2i8) as u8, 1, 4, dscp]);
-    p.extend_from_slice(&poisoned(3));
+    p.extend_from_slice(&[(-3i8) as u8, (-2i8) as u8, 1, 4, dscp, 60]);
+    p.extend_from_slice(&3600u16.to_le_bytes());
     p
+}
+
+/// The SAP timings travel in the PTP message block and mean nothing in a
+/// frame too short for it; the two SAP switches do not.
+#[test]
+fn sap_settings_are_read_from_the_message_block() {
+    let mut h = command_device(131);
+    let cfg = Cfg::addresses(h.sender, "239.1.2.3");
+    let sap = V2ipDeviceSetting::SAP_EXPIRE
+        | V2ipDeviceSetting::SAP_LISTEN
+        | V2ipDeviceSetting::SAP_ANNOUNCE
+        | V2ipDeviceSetting::SAP_INTERVAL;
+    let mut frame = ptp_messages_frame(&cfg, sap, 46);
+    let on = V2ipDeviceSetting::SAP_LISTEN.bits();
+    frame[132..136].copy_from_slice(&on.to_le_bytes());
+
+    h.feed(op::V2IP_DEVICE_CFG, &frame[..223]);
+    let s = h.device().v2ip_settings.expect("no settings were read");
+    assert_eq!(
+        s.valid,
+        V2ipDeviceSetting::SAP_LISTEN | V2ipDeviceSetting::SAP_ANNOUNCE,
+        "a SAP timing without its block, or a switch lost with it"
+    );
+    assert_eq!(s.get(V2ipDeviceSetting::SAP_LISTEN), Some(true));
+    assert_eq!(s.get(V2ipDeviceSetting::SAP_ANNOUNCE), Some(false));
+
+    h.feed(op::V2IP_DEVICE_CFG, &frame);
+    let m = h
+        .device()
+        .v2ip_settings
+        .and_then(|s| s.ptp_messages())
+        .expect("no SAP settings were read");
+    assert_eq!((m.sap_expire_min, m.sap_interval_s), (60, 3600));
 }
 
 /// The PTP message settings are read from the block behind the PTP state,

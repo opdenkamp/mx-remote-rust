@@ -528,22 +528,23 @@ pub(crate) fn build_v2ip_device_settings(
 
 /// Whether settings carry a value only the PTP message block can hold.
 fn carries_ptp_messages(settings: &V2ipDeviceSettings) -> bool {
-    !(settings.valid & V2ipDeviceSetting::PTP_MESSAGES).is_empty()
+    !(settings.valid & V2ipDeviceSetting::SETTINGS_BLOCK).is_empty()
 }
 
 /// The 8-byte PTP message block: the announce, sync and delay request
 /// intervals as signed bytes at 0, 1 and 2, the announce timeout at 3, the
-/// DSCP at 4 and three reserved bytes.
+/// DSCP at 4, the SAP expiry at 5 and the SAP interval as a u16 at 6.
 fn build_ptp_messages_block(m: &V2ipPtpMessages) -> [u8; 8] {
+    let [i0, i1] = m.sap_interval_s.to_le_bytes();
     [
         m.log_announce_interval as u8,
         m.log_sync_interval as u8,
         m.log_delay_req_interval as u8,
         m.announce_timeout,
         m.dscp,
-        0,
-        0,
-        0,
+        m.sap_expire_min,
+        i0,
+        i1,
     ]
 }
 

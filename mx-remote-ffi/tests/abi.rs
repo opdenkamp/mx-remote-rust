@@ -967,6 +967,8 @@ fn the_ptp_message_calls_check_their_arguments_first() {
         log_delay_req_interval: 0,
         announce_timeout: 3,
         dscp: 46,
+        sap_expire_min: 60,
+        sap_interval_s: 30,
     };
     let dscp = MXR_V2IP_SETTING_PTP_DSCP;
     // SAFETY: a live handle; a null struct is what is under test.
@@ -1009,6 +1011,31 @@ fn the_ptp_message_calls_check_their_arguments_first() {
         rc,
         mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
         "a PTP message bit with no values"
+    );
+
+    // The SAP timings travel the same way, and the SAP switches do not.
+    let sap = MXR_V2IP_SETTING_SAP_INTERVAL;
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, sap, &messages) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
+    let rc = unsafe {
+        // SAFETY: a live handle and an initialised struct.
+        mxr_set_all_v2ip_ptp_messages(remote, MXR_V2IP_SETTING_SAP_LISTEN, &messages)
+    };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "a switch");
+    let all = mxr_v2ip_device_settings_t {
+        valid: sap,
+        flags: 0,
+        ir_profiles: 0,
+        ir_profile: 0,
+        ir_profile_sink: 0,
+    };
+    // SAFETY: a live handle and an initialised settings struct.
+    let rc = unsafe { mxr_set_all_v2ip_device_settings(remote, &all, ptr::null()) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a SAP timing with no values"
     );
 
     // SAFETY: created above and not yet freed.

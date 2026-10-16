@@ -1459,9 +1459,9 @@ impl Remote {
         )
     }
 
-    /// Sets how a V2IP device paces its PTP messages: the values of `messages`
-    /// behind the bits of `which`, each one of
-    /// [`PTP_MESSAGES`](V2ipDeviceSetting::PTP_MESSAGES). A DSCP above
+    /// Sets how a V2IP device paces its PTP messages, and its SAP timings: the
+    /// values of `messages` behind the bits of `which`, each one of
+    /// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK). A DSCP above
     /// [`V2IP_DSCP_MAX`](crate::V2IP_DSCP_MAX) is refused. The terms of
     /// [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_messages(
@@ -1470,9 +1470,9 @@ impl Remote {
         which: V2ipDeviceSetting,
         messages: V2ipPtpMessages,
     ) -> Result<(), ControlError> {
-        if which.is_empty() || !V2ipDeviceSetting::PTP_MESSAGES.has(which) {
+        if which.is_empty() || !V2ipDeviceSetting::SETTINGS_BLOCK.has(which) {
             return Err(ControlError::InvalidRequest(
-                "only PTP message settings are carried here",
+                "only PTP message and SAP timing settings are carried here",
             ));
         }
         if which.has(V2ipDeviceSetting::PTP_DSCP) && messages.dscp > V2IP_DSCP_MAX {

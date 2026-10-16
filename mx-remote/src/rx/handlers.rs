@@ -505,7 +505,8 @@ const V2IP_PTP_MESSAGES_AT: usize = V2IP_PTP_AT + V2IP_PTP_SIZE;
 const V2IP_PTP_MESSAGES_SIZE: usize = 8;
 
 /// Reads a PTP message settings block: the three intervals as signed bytes,
-/// the announce timeout and the DSCP, then three reserved bytes.
+/// the announce timeout and the DSCP, then the SAP expiry in minutes and the
+/// SAP interval in seconds.
 pub(super) fn ptp_messages(m: &[u8]) -> V2ipPtpMessages {
     V2ipPtpMessages {
         log_announce_interval: m[0] as i8,
@@ -513,6 +514,8 @@ pub(super) fn ptp_messages(m: &[u8]) -> V2ipPtpMessages {
         log_delay_req_interval: m[2] as i8,
         announce_timeout: m[3],
         dscp: m[4],
+        sap_expire_min: m[5],
+        sap_interval_s: u16_at(m, 6),
     }
 }
 
@@ -710,7 +713,7 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
         match p.get(V2IP_PTP_MESSAGES_AT..V2IP_PTP_MESSAGES_AT + V2IP_PTP_MESSAGES_SIZE) {
             Some(m) => frame.ptp_messages = ptp_messages(m),
             None => {
-                frame.valid = frame.valid.without(V2ipDeviceSetting::PTP_MESSAGES);
+                frame.valid = frame.valid.without(V2ipDeviceSetting::SETTINGS_BLOCK);
             }
         }
         if let Some(device) = state.device_mut(subject) {

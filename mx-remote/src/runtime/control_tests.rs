@@ -2779,6 +2779,51 @@ fn a_power_save_level_and_aes67_write_carry_their_bits() {
     ));
 }
 
+/// The SAP switches are written as any switch is, and a SAP timing alone
+/// still runs the frame on to the block that carries it.
+#[test]
+fn a_sap_write_carries_what_it_sets() {
+    let f = Fixture::new();
+    let uid = uid_n(235);
+    f.everything(uid, 0x2F, "SP0001");
+    report_settings(
+        &f,
+        uid,
+        V2ipDeviceSetting::SAP_LISTEN
+            | V2ipDeviceSetting::SAP_ANNOUNCE
+            | V2ipDeviceSetting::SAP_EXPIRE,
+    );
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_device_setting(uid, V2ipDeviceSetting::SAP_LISTEN, true)
+        .expect("a switch the device has reported");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    let listen = V2ipDeviceSetting::SAP_LISTEN.bits().to_le_bytes();
+    assert_eq!((&p[128..132], &p[132..136]), (&listen[..], &listen[..]));
+    f.remote
+        .set_v2ip_device_setting(uid, V2ipDeviceSetting::SAP_ANNOUNCE, false)
+        .expect("a switch the device has reported");
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_ptp_messages(
+            uid,
+            V2ipDeviceSetting::SAP_EXPIRE,
+            V2ipPtpMessages {
+                sap_expire_min: 15,
+                ..V2ipPtpMessages::default()
+            },
+        )
+        .expect("a value the device has reported");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 224, "the frame stopped short of its block");
+    assert_eq!(p[221], 15);
+}
+
 /// A PTP message write runs the frame on to its block at 216, past a VLAN
 /// block and a PTP state that carry nothing; the same write for every device
 /// puts the block behind the settings.
@@ -2787,7 +2832,7 @@ fn a_ptp_message_write_carries_its_block() {
     let f = Fixture::new();
     let uid = uid_n(236);
     f.everything(uid, 0x2E, "PM0001");
-    report_settings(&f, uid, V2ipDeviceSetting::PTP_MESSAGES);
+    report_settings(&f, uid, V2ipDeviceSetting::SETTINGS_BLOCK);
     f.connect();
 
     let messages = V2ipPtpMessages {
@@ -2796,8 +2841,11 @@ fn a_ptp_message_write_carries_its_block() {
         log_delay_req_interval: 1,
         announce_timeout: 4,
         dscp: 46,
+        sap_expire_min: 60,
+        sap_interval_s: 0x0102,
     };
-    let which = V2ipDeviceSetting::PTP_SYNC | V2ipDeviceSetting::PTP_DSCP;
+    let which =
+        V2ipDeviceSetting::PTP_SYNC | V2ipDeviceSetting::PTP_DSCP | V2ipDeviceSetting::SAP_INTERVAL;
     f.tap.clear();
     f.remote
         .set_v2ip_ptp_messages(uid, which, messages)
@@ -2810,7 +2858,7 @@ fn a_ptp_message_write_carries_its_block() {
         p[176..216].iter().all(|b| *b == 0),
         "a VLAN block or PTP state is set"
     );
-    assert_eq!(&p[216..224], &[0xFD, 0xFE, 1, 4, 46, 0, 0, 0]);
+    assert_eq!(&p[216..224], &[0xFD, 0xFE, 1, 4, 46, 60, 2, 1]);
 
     f.remote
         .set_v2ip_ptp_messages(
@@ -2822,6 +2870,8 @@ fn a_ptp_message_write_carries_its_block() {
                 log_delay_req_interval: 3,
                 announce_timeout: 9,
                 dscp: 7,
+                sap_expire_min: 5,
+                sap_interval_s: 9,
             },
         )
         .expect("the device has reported the settings");
@@ -2832,7 +2882,8 @@ fn a_ptp_message_write_carries_its_block() {
         .expect("no settings");
     assert_eq!(cached.log_sync_interval, -5, "the one value carried");
     assert_eq!(
-        cached.dscp, 46,
+        (cached.dscp, cached.sap_interval_s),
+        (46, 0x0102),
         "a value the write did not carry was replaced"
     );
     assert_eq!(
@@ -2854,7 +2905,7 @@ fn a_ptp_message_write_carries_its_block() {
     let frame = f.tap.frames().pop().expect("nothing reached the gate");
     let p = &frame[HEADER_LEN..];
     assert_eq!(p.len(), 56);
-    assert_eq!(&p[48..56], &[0xFD, 0xFE, 1, 4, 46, 0, 0, 0]);
+    assert_eq!(&p[48..56], &[0xFD, 0xFE, 1, 4, 46, 60, 2, 1]);
 
     f.tap.clear();
     let refused = [

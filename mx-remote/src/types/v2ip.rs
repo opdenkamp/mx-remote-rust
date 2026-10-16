@@ -673,8 +673,10 @@ pub struct V2ipDeviceSettings {
     pub ptp_messages: V2ipPtpMessages,
 }
 
-/// How a V2IP device paces its PTP messages, each value behind its own bit
-/// of [`V2ipDeviceSettings::valid`].
+/// How a V2IP device paces its PTP messages, and its SAP timings, which a
+/// frame carries in the same block. Each value is behind its own bit of
+/// [`V2ipDeviceSettings::valid`], one of
+/// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK).
 ///
 /// Intervals are base-2 logarithms of seconds, so -3 is 125 ms and 1 is 2 s.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -693,6 +695,12 @@ pub struct V2ipPtpMessages {
     /// The DSCP of the messages, at most [`V2IP_DSCP_MAX`], behind
     /// [`PTP_DSCP`](V2ipDeviceSetting::PTP_DSCP).
     pub dscp: u8,
+    /// The minutes after which a SAP announcement the device heard is
+    /// forgotten, behind [`SAP_EXPIRE`](V2ipDeviceSetting::SAP_EXPIRE).
+    pub sap_expire_min: u8,
+    /// The seconds between the device's SAP announcements, behind
+    /// [`SAP_INTERVAL`](V2ipDeviceSetting::SAP_INTERVAL).
+    pub sap_interval_s: u16,
 }
 
 impl V2ipPtpMessages {
@@ -715,6 +723,12 @@ impl V2ipPtpMessages {
         }
         if which.has(V2ipDeviceSetting::PTP_DSCP) {
             out.dscp = from.dscp;
+        }
+        if which.has(V2ipDeviceSetting::SAP_EXPIRE) {
+            out.sap_expire_min = from.sap_expire_min;
+        }
+        if which.has(V2ipDeviceSetting::SAP_INTERVAL) {
+            out.sap_interval_s = from.sap_interval_s;
         }
         out
     }
@@ -805,11 +819,11 @@ impl V2ipDeviceSettings {
         Some(self.power_save_level)
     }
 
-    /// The PTP message settings the device has reported, `None` while it has
-    /// reported none of them; each value is meaningful only behind its own bit
-    /// of [`valid`](Self::valid).
+    /// The PTP message and SAP settings the device has reported, `None` while
+    /// it has reported none of them; each value is meaningful only behind its
+    /// own bit of [`valid`](Self::valid).
     pub fn ptp_messages(&self) -> Option<V2ipPtpMessages> {
-        (!(self.valid & V2ipDeviceSetting::PTP_MESSAGES).is_empty()).then_some(self.ptp_messages)
+        (!(self.valid & V2ipDeviceSetting::SETTINGS_BLOCK).is_empty()).then_some(self.ptp_messages)
     }
 
     /// Folds a received settings block onto the cached one.
