@@ -179,6 +179,47 @@ fn an_ir_capture_aligns_its_timestamp() {
     assert_eq!(capture.timings, [1, 2, 3, 4, 5, 6, 7, 8]);
 }
 
+#[test]
+fn an_ir_capture_naming_no_port_belongs_to_the_senders_output() {
+    let mut h = command_device(42);
+    let mut bays = bay_config_rec(
+        0,
+        0,
+        0,
+        "Input 1",
+        "",
+        BayStatus::NONE,
+        BayFeatures::HDMI_IN,
+    );
+    bays.extend(bay_config_rec(
+        16,
+        1,
+        0,
+        "Output 1",
+        "Lounge",
+        BayStatus::NONE,
+        BayFeatures::HDMI_OUT,
+    ));
+    h.feed(op::SYS_BAY_CONFIG, &bays);
+
+    let mut p = poisoned(24 + 4);
+    p[0..2].copy_from_slice(&0xFFFFu16.to_le_bytes());
+    p[16..18].copy_from_slice(&2u16.to_le_bytes()); // timing count
+    p[24..].copy_from_slice(&[1, 2, 3, 4]);
+    h.feed(op::RC_IR, &p);
+
+    let (bay, capture) = h
+        .events
+        .iter()
+        .find_map(|e| match e {
+            Event::IrCaptured { bay, capture } => Some((*bay, capture.clone())),
+            _ => None,
+        })
+        .expect("no capture");
+    assert_eq!(bay.port, 16);
+    assert_eq!(capture.port, 0xFFFF);
+}
+
 /// Both timing widths are read, and both reach a caller as the wider one.
 ///
 /// The header counts timings rather than bytes, so what follows it is what says

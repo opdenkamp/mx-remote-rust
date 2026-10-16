@@ -146,6 +146,9 @@ fn route_request(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>, audio_only
 /// Size of `mxr_ir_data` up to the timings it is followed by.
 const IR_DATA_SIZE: usize = 24;
 
+/// The port a unit writes when it names none.
+const PORT_NONE: u16 = 0xFFFF;
+
 /// Width of one timing, which is also the shortest tail either infrared frame
 /// can carry.
 ///
@@ -191,7 +194,17 @@ pub(super) fn ir_capture(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         meta,
         timings,
     };
-    let bay = BayUid::new(rx.sender(), capture.port);
+    // A unit names no port: it forwards what its own receiver caught while
+    // its output shows a source on another unit, so the capture belongs to
+    // that output, which on a OneIP is its only one.
+    let port = if capture.port == PORT_NONE {
+        state.device(rx.sender()).and_then(|d| d.first_output_port())
+    } else {
+        Some(capture.port)
+    };
+    let Some(bay) = port.map(|port| BayUid::new(rx.sender(), port)) else {
+        return;
+    };
     if state.bay(bay).is_some() {
         ev.push(Event::IrCaptured { bay, capture });
     }

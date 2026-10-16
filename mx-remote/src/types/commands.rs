@@ -197,7 +197,8 @@ pub struct IrMeta {
 /// Raw IR captured on a bay of the sending device.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IrCapture {
-    /// The bay that captured it.
+    /// The port the sender named, or `0xFFFF` when it named none. A unit names
+    /// none; the event's bay then is the sender's output.
     pub port: u16,
     /// Sender clock at capture time.
     pub timestamp: u32,
