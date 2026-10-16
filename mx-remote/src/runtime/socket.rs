@@ -173,6 +173,7 @@ fn two_clients_on_one_host_each_get_every_frame() {
     let b = conn(FANOUT).expect("a second client could not bind alongside the first");
 
     for (which, c) in [("first", &a), ("second", &b)] {
+        assert_eq!(c.multicast_ttl().ok(), Some(64), "units use 64 hops");
         assert_eq!(
             c.reuse_port().ok(),
             Some(false),

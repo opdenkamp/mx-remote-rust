@@ -24,11 +24,9 @@ use super::netif;
 /// thread returning, and the read would then land on whatever took it.
 const READ_TIMEOUT: Duration = Duration::from_millis(500);
 
-/// Multicast hop limit.
-///
-/// Discovery is meant to reach an AV installation, which can span a couple of
-/// switches, and to stop there.
-const MULTICAST_TTL: u32 = 3;
+/// Multicast hop limit, the one units use, so this client reaches every unit
+/// that can reach it.
+const MULTICAST_TTL: u32 = 64;
 
 /// Which interface carries the traffic.
 ///
@@ -157,6 +155,12 @@ impl Conn {
     #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn reuse_port(&self) -> io::Result<bool> {
         socket2::SockRef::from(&self.socket).reuse_port()
+    }
+
+    /// The multicast hop limit the socket sends with.
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn multicast_ttl(&self) -> io::Result<u32> {
+        socket2::SockRef::from(&self.socket).multicast_ttl_v4()
     }
 
     /// Waits for a datagram for up to `timeout`, restoring the socket's own
