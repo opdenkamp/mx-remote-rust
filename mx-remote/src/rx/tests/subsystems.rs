@@ -304,7 +304,7 @@ fn a_repeated_tree_reattaches_a_bay_that_was_reconfigured_under_it() {
         op::SYS_BAY_CONFIG,
         &bay_config_rec(
             3,
-            1,
+            0,
             0,
             "Output 1",
             "Zone 1",

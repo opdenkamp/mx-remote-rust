@@ -63,8 +63,9 @@ pub(crate) fn parse_bay_config(p: &[u8]) -> Option<BayConfig> {
             (u16::from(audio_source & 0x0F) << 8) | u16::from(video_source),
         ),
         rc_type: RcType::from_wire((audio_source >> 4) & 0x0F),
-        bay_name: str_at(5, 21),
-        user_name: str_at(21, 37),
+        // A unit keeps 15 bytes of each name; the 16th is its terminator.
+        bay_name: str_at(5, 20),
+        user_name: str_at(21, 36),
         // mxr_cfg_signal is a 14-byte description followed by a 2-byte
         // mxr_signal_type, not a 16-byte string: a description filling its
         // field would otherwise run into the type bytes.

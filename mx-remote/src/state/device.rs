@@ -585,8 +585,14 @@ impl Device {
 
     /// Merges one bay descriptor, resolving its routed source ports against
     /// the bays this device already has.
+    ///
+    /// A record with an empty name describes no bay, as a unit sends for an
+    /// input it cannot number, and is dropped.
     pub(crate) fn apply_bay_config(&mut self, cfg: &BayConfig, now: Instant, ev: &mut Vec<Event>) {
         self.last_ping = now;
+        if cfg.bay_name.is_empty() {
+            return;
+        }
         let is_v2ip = self.is_v2ip();
         let video = self.routed_source(cfg.video_source);
         let audio = self.routed_source(cfg.audio_source);
@@ -598,6 +604,7 @@ impl Device {
             .or_insert_with(|| Bay::new(self.uid, cfg));
 
         bay.features = cfg.features;
+        bay.mode = cfg.modenum;
         bay.status_mask = cfg.status;
         bay.set_user_name(cfg.user_name.clone(), ev);
         if bay.mbay_id.is_none() {

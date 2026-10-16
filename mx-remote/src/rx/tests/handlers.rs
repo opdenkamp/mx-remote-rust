@@ -936,6 +936,55 @@ fn an_internal_remote_control_target_is_named() {
     assert_eq!(c.rc_type.to_string(), "Internal");
 }
 
+/// A record with an empty name describes no bay: a unit sends one, all zero,
+/// for an input it cannot number, and it does not land on port 0.
+#[test]
+fn a_record_without_a_name_is_dropped() {
+    let mut h = Harness::new(142);
+    h.hello(0x2F, "FF88", "HD0002", DeviceFeature::VIDEO_ROUTING);
+    let mut cfg = bay_config_rec(
+        0,
+        0,
+        0,
+        "Input 1",
+        "Apple TV",
+        BayStatus::NONE,
+        BayFeatures::HDMI_IN,
+    );
+    cfg.extend([0u8; crate::wire::BAY_CONFIG_SIZE]);
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+    assert_eq!(h.bay(0).user_name(), "Apple TV");
+    assert!(h.bay(0).is_input());
+}
+
+/// The record's mode says which way a bay faces, whatever its features say.
+#[test]
+fn a_bay_faces_the_way_its_record_says() {
+    let mut h = Harness::new(143);
+    h.hello(0x2F, "FF88", "HD0003", DeviceFeature::VIDEO_ROUTING);
+    let mut cfg = bay_config_rec(
+        4,
+        1,
+        0,
+        "Output 1",
+        "IR only",
+        BayStatus::NONE,
+        BayFeatures::IR_IN,
+    );
+    cfg.extend(bay_config_rec(
+        5,
+        0,
+        0,
+        "Input 1",
+        "",
+        BayStatus::NONE,
+        BayFeatures::IR_OUT,
+    ));
+    h.feed(op::SYS_BAY_CONFIG, &cfg);
+    assert!(h.bay(4).is_output() && !h.bay(4).is_input());
+    assert!(h.bay(5).is_input() && !h.bay(5).is_output());
+}
+
 /// The bay descriptor underpins most of the read API - names, ports, sources,
 /// EDID profile, remote-control target, status and features all come from this
 /// one record. Every field gets a distinct value, so reading any of them at a
@@ -951,8 +1000,8 @@ fn bay_config_decodes_every_field() {
     rec[2] = 3; // bay number
     rec[3] = 11; // video source, or the low byte of the EDID/RC union
     rec[4] = 22; // audio source, or its high byte
-    rec[5..21].copy_from_slice(b"0123456789ABCDEF"); // fills the field: no terminator
-    field(&mut rec, 21, 16, "Living Room TV");
+    rec[5..21].copy_from_slice(b"0123456789ABCDEF"); // fills the field, of which a unit keeps 15
+    rec[21..37].copy_from_slice(b"LivingRoomTV1234"); // and so does this
     rec[37..51].copy_from_slice(b"1080p60 444 8b"); // exactly 14: no terminator either
     rec[51..53].copy_from_slice(&0x2013u16.to_le_bytes());
     rec[53..57].copy_from_slice(&BayStatus::HIDDEN.bits().to_le_bytes());
@@ -968,8 +1017,8 @@ fn bay_config_decodes_every_field() {
         EdidProfile::from_wire((22 & 0x0F) << 8 | 11)
     );
     assert_eq!(c.rc_type, RcType::from_wire(1));
-    assert_eq!(c.bay_name, "0123456789ABCDEF");
-    assert_eq!(c.user_name, "Living Room TV");
+    assert_eq!(c.bay_name, "0123456789ABCDE");
+    assert_eq!(c.user_name, "LivingRoomTV123");
     // The description stops at 14; the two bytes after it are the signal type.
     assert_eq!(c.signal_type, "1080p60 444 8b");
     assert_eq!(c.signal_mode.svd(), 0x13);

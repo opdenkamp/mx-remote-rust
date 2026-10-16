@@ -24,6 +24,8 @@ pub(crate) struct Bay {
     pub(crate) port_name: String,
     pub(crate) user_name: Option<String>,
     pub(crate) features: BayFeatures,
+    /// The direction the bay's record gives: 0 an input, 1 an output.
+    pub(crate) mode: u8,
     pub(crate) status_mask: BayStatus,
     /// The bay number the device's own API and topology use, once a bay config
     /// has reported it. Until then [`Bay::bay_num`] reads it off the port name.
@@ -58,6 +60,10 @@ pub(crate) struct Bay {
     pub(crate) content: Vec<BayContentField>,
 }
 
+/// A bay record's `local_mode` for an input and for an output.
+const MODE_INPUT: u8 = 0;
+const MODE_OUTPUT: u8 = 1;
+
 impl Bay {
     pub(crate) fn new(device: DeviceUid, cfg: &BayConfig) -> Self {
         Self {
@@ -66,6 +72,7 @@ impl Bay {
             port_name: cfg.bay_name.clone(),
             user_name: None,
             features: cfg.features,
+            mode: cfg.modenum,
             status_mask: cfg.status,
             mbay_id: None,
             video_source: None,
@@ -106,19 +113,34 @@ impl Bay {
 
     // ---- static properties ----
 
+    /// Whether the bay is an input, as its record's mode says. The feature
+    /// bits decide only for a mode that is neither.
     pub(crate) fn is_input(&self) -> bool {
-        self.features.has(BayFeatures::HDMI_IN)
-            || self.features.has(BayFeatures::AUDIO_DIG_IN)
-            || self.features.has(BayFeatures::AUDIO_ANA_IN)
-            || self.is_v2ip_source()
+        match self.mode {
+            MODE_INPUT => true,
+            MODE_OUTPUT => false,
+            _ => {
+                self.features.has(BayFeatures::HDMI_IN)
+                    || self.features.has(BayFeatures::AUDIO_DIG_IN)
+                    || self.features.has(BayFeatures::AUDIO_ANA_IN)
+                    || self.is_v2ip_source()
+            }
+        }
     }
 
+    /// Whether the bay is an output, as [`Bay::is_input`] decides.
     pub(crate) fn is_output(&self) -> bool {
-        self.features.has(BayFeatures::HDMI_OUT)
-            || self.features.has(BayFeatures::AUDIO_AMP_OUT)
-            || self.features.has(BayFeatures::AUDIO_DIG_OUT)
-            || self.features.has(BayFeatures::AUDIO_ANA_OUT)
-            || self.is_v2ip_sink()
+        match self.mode {
+            MODE_INPUT => false,
+            MODE_OUTPUT => true,
+            _ => {
+                self.features.has(BayFeatures::HDMI_OUT)
+                    || self.features.has(BayFeatures::AUDIO_AMP_OUT)
+                    || self.features.has(BayFeatures::AUDIO_DIG_OUT)
+                    || self.features.has(BayFeatures::AUDIO_ANA_OUT)
+                    || self.is_v2ip_sink()
+            }
+        }
     }
 
     pub(crate) fn is_hdmi(&self) -> bool {
