@@ -1208,6 +1208,12 @@
 #define MXR_V2IP_SETTING_STREAM_TTL (1 << 29)
 
 /**
+ * Connects to the cloud service. An on/off setting; a device that does not
+ * report it connects regardless.
+ */
+#define MXR_V2IP_SETTING_CLOUD (1 << 30)
+
+/**
  * The TTL a V2IP device's streams carry until it is set.
  */
 #define MXR_V2IP_STREAM_TTL_DEFAULT 64

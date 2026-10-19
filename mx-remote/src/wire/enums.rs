@@ -310,6 +310,9 @@ bitmask! {
         /// The TTL of the device's streams, video, audio and ancillary
         /// alike. Reported only by a device with an encoder.
         STREAM_TTL = 1 << 29;
+        /// Connects to the cloud service. A device that does not report it
+        /// connects regardless.
+        CLOUD = 1 << 30;
     }
 }
 
@@ -609,7 +612,8 @@ impl V2ipDeviceSetting {
         0xFF | Self::AES67.0
             | Self::SAP_LISTEN.0
             | Self::SAP_ANNOUNCE.0
-            | Self::POWER_SAVE_DISABLED.0,
+            | Self::POWER_SAVE_DISABLED.0
+            | Self::CLOUD.0,
     );
 
     /// The settings only a device reports about itself, which no write

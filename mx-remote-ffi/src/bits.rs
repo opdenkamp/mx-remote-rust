@@ -773,6 +773,10 @@ pub const MXR_V2IP_SETTING_POWER_SAVE_DISABLED: u32 = 1 << 28;
 /// `stream_ttl`. Reported only by a device with an encoder.
 pub const MXR_V2IP_SETTING_STREAM_TTL: u32 = 1 << 29;
 
+/// Connects to the cloud service. An on/off setting; a device that does not
+/// report it connects regardless.
+pub const MXR_V2IP_SETTING_CLOUD: u32 = 1 << 30;
+
 /// The TTL a V2IP device's streams carry until it is set.
 pub const MXR_V2IP_STREAM_TTL_DEFAULT: u8 = 64;
 

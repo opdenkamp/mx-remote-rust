@@ -3983,6 +3983,25 @@ fn a_power_save_level_switches_power_save_disabled_off() {
     assert_eq!(disabled(), Some(false));
 }
 
+/// The cloud connection is a switch, written to a device that reports it.
+#[test]
+fn the_cloud_connection_is_a_switch() {
+    let f = Fixture::new();
+    let uid = uid_n(238);
+    f.everything(uid, 0x2F, "CL0001");
+    report_settings(&f, uid, V2ipDeviceSetting::CLOUD);
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_device_setting(uid, V2ipDeviceSetting::CLOUD, true)
+        .expect("a switch the device has reported");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    let cloud = V2ipDeviceSetting::CLOUD.bits().to_le_bytes();
+    assert_eq!((&p[128..132], &p[132..136]), (&cloud[..], &cloud[..]));
+}
+
 /// The bay names a handler was told of.
 #[derive(Default)]
 struct Names(Mutex<Vec<(BayUid, String)>>);
