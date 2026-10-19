@@ -377,10 +377,14 @@ impl From<BayAudioDetails> for mxr_audio_details_t {
 /// **On a decoder's output bay the signal description is a snapshot of the
 /// routed source, taken when that stream last started.** Nothing refreshes it
 /// while the route holds, so a source that changes format in place leaves
-/// `frame_rate`, `tmds_clock`, the audio block and the bay's signal description
-/// all reading the format from before the change. Re-routing the bay does
-/// resample them, unless the newly selected source's record has not arrived yet
-/// - which leaves the previous values standing rather than clearing them.
+/// `frame_rate`, `tmds_clock` and the bay's signal description all reading the
+/// format from before the change. Re-routing the bay does resample them, unless
+/// the newly selected source's record has not arrived yet - which leaves the
+/// previous values standing rather than clearing them.
+///
+/// The audio block is the exception: it describes the audio the output
+/// receives, from the stream's own description while its sender gives one, and
+/// the output reports a change in it with the picture unchanged.
 ///
 /// `status` and `scaling` are re-stamped on every scaling change too, so they
 /// can be newer than the description beside them. `clock_rate` is computed from

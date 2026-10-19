@@ -271,7 +271,10 @@ impl Remote {
     /// mesh's overlay sync manager, so a unit waking from power save takes
     /// this content too, rather than the controller's. The controller can
     /// still send its own over it; the last sync a unit took is what it
-    /// shows. Each unit's [`Remote::osd_sync_report`] says how it went.
+    /// shows. It does so whenever a unit asks for settings without naming
+    /// whose sync they are from, as an older overlay module does, and nothing
+    /// this client sends prevents that. Each unit's
+    /// [`Remote::osd_sync_report`] says how it went.
     ///
     /// Refused for content copying nothing, with more than
     /// [`OSD_SYNC_RECORDS_MAX`] settings, a caption font over

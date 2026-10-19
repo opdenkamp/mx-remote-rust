@@ -3104,10 +3104,14 @@ typedef struct {
  * **On a decoder's output bay the signal description is a snapshot of the
  * routed source, taken when that stream last started.** Nothing refreshes it
  * while the route holds, so a source that changes format in place leaves
- * `frame_rate`, `tmds_clock`, the audio block and the bay's signal description
- * all reading the format from before the change. Re-routing the bay does
- * resample them, unless the newly selected source's record has not arrived yet
- * - which leaves the previous values standing rather than clearing them.
+ * `frame_rate`, `tmds_clock` and the bay's signal description all reading the
+ * format from before the change. Re-routing the bay does resample them, unless
+ * the newly selected source's record has not arrived yet - which leaves the
+ * previous values standing rather than clearing them.
+ *
+ * The audio block is the exception: it describes the audio the output
+ * receives, from the stream's own description while its sender gives one, and
+ * the output reports a change in it with the picture unchanged.
  *
  * `status` and `scaling` are re-stamped on every scaling change too, so they
  * can be newer than the description beside them. `clock_rate` is computed from
@@ -6722,7 +6726,10 @@ mxr_result_t mxr_multiviewer_auto_route(const mxr_remote_t *remote, mxr_uid_t de
  * `mxr_clear_osd_sync()`. Meanwhile it announces itself as the mesh's
  * overlay sync manager, so a unit waking from power save takes this sync
  * too, rather than the controller's. The controller can still send its own
- * over it. `mxr_osd_sync_report()` on each unit says how it went.
+ * over it. It does so whenever a unit asks for settings without naming whose
+ * sync they are from, as an older overlay module does, and nothing this
+ * client sends prevents that. `mxr_osd_sync_report()` on each unit says how
+ * it went.
  *
  * `MXR_ERR_INVALID_ARGUMENT` for a sync copying nothing, more than 128
  * settings, a caption font over 31 or text over 360 bytes, a logo other than
