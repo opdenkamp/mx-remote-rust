@@ -4002,6 +4002,59 @@ fn the_cloud_connection_is_a_switch() {
     assert_eq!((&p[128..132], &p[132..136]), (&cloud[..], &cloud[..]));
 }
 
+/// A request for a source unit's encryption names it, or the zero uid for
+/// every unit, as type 1 with a count of 0, stamped 0x30.
+#[test]
+fn a_privacy_request_names_the_unit_asked() {
+    let f = Fixture::new();
+    let uid = uid_n(245);
+    f.everything(uid, 0x30, "PV0001");
+    f.connect();
+
+    let sent = |f: &Fixture| {
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[20..22], &op::V2IP_PRIVACY.0.to_le_bytes());
+        assert_eq!(&frame[2..4], &0x30u16.to_le_bytes(), "the stamp");
+        frame[HEADER_LEN..].to_vec()
+    };
+    f.tap.clear();
+    f.remote
+        .request_v2ip_privacy(uid)
+        .expect("a source on 0x30");
+    let p = sent(&f);
+    assert_eq!(
+        (&p[..16], &p[16..]),
+        (&uid.as_bytes()[..], &[1, 0, 0, 0][..])
+    );
+
+    f.remote.request_all_v2ip_privacy().expect("sent");
+    let p = sent(&f);
+    assert_eq!((&p[..16], &p[16..]), (&[0; 16][..], &[1, 0, 0, 0][..]));
+}
+
+/// A unit that is not a source, or that predates the report, is not asked.
+#[test]
+fn a_privacy_request_is_refused_where_it_would_be_ignored() {
+    let f = Fixture::new();
+    let old = uid_n(246);
+    f.everything(old, 0x2F, "PV0002");
+    let sink_only = uid_n(247);
+    f.feed(
+        sink_only,
+        op::SYS_HELLO,
+        &hello_payload(0x30, "OneIP", "PV0003", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    f.connect();
+    f.tap.clear();
+
+    assert!(refused(&f.remote.request_v2ip_privacy(old)));
+    assert!(matches!(
+        f.remote.request_v2ip_privacy(sink_only),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused request was sent");
+}
+
 /// The bay names a handler was told of.
 #[derive(Default)]
 struct Names(Mutex<Vec<(BayUid, String)>>);

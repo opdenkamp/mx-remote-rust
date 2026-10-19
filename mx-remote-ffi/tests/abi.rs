@@ -1056,6 +1056,27 @@ fn the_ptp_message_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// The stream encryption calls answer a caller's mistake as an argument error
+/// and a device never heard from as not found, before anything is sent.
+#[test]
+fn the_privacy_calls_check_their_arguments_first() {
+    let remote = client(c"abi-privacy", c"00000022.00000000.00000000.000000ad");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_privacy(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_privacy_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_privacy(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_request_v2ip_privacy(remote, uid_n(9)) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// The session description calls answer a caller's mistake as an argument
 /// error and a device never heard from as not found, before anything is sent.
 #[test]

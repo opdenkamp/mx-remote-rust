@@ -15,6 +15,7 @@ mod handlers;
 mod multiviewer;
 mod network;
 mod osd;
+mod privacy;
 mod sdp;
 mod stats;
 mod svd;
@@ -217,6 +218,7 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::SYS_UNIT_COMMAND => unit::unit_command(state, rx, ev),
         op::BAY_CONTENT => content::bay_content(state, rx, ev),
         op::V2IP_SINK_SDP => sdp::sink_sdp(state, rx, ev),
+        op::V2IP_PRIVACY => privacy::privacy(state, rx, ev),
         op::V2IP_OSD_SYNC => osd::osd_sync(state, rx, ev),
         op::SYS_FACTORY_RESET => commands::factory_reset(state, rx, ev),
         op::MESH_OPERATION => handlers::mesh_operation(state, rx, ev),

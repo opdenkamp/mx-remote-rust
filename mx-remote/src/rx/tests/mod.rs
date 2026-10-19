@@ -7,6 +7,7 @@ mod commands;
 mod handlers;
 mod mesh_bays;
 mod osd;
+mod privacy;
 mod proto28;
 mod state;
 mod subsystems;

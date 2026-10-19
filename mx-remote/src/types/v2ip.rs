@@ -966,6 +966,52 @@ impl V2ipSinkSdp {
     }
 }
 
+/// How one of a V2IP source unit's streams is encrypted, as the unit reports
+/// it: the values of the stream's `a=privacy` and `a=extmap` session
+/// description attributes.
+///
+/// A receiver needs these to decrypt the stream. The key itself never
+/// travels: every unit of a mesh holds the same one. This library holds no
+/// key and decrypts nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V2ipPrivacyStream {
+    /// The stream's destination address.
+    pub group: Ipv4Addr,
+    /// The stream's UDP port.
+    pub port: u16,
+    /// Steps whenever the parameters change.
+    pub version: u8,
+    /// Whether the stream is encrypted. Without it the stream goes out in the
+    /// clear, and the fields below mean nothing.
+    pub on: bool,
+    /// The RTP header extension id of the full IV counter.
+    pub full_id: u8,
+    /// The RTP header extension id of the short IV counter.
+    pub short_id: u8,
+    /// The initialisation vector.
+    pub iv: [u8; 8],
+    /// The key generator.
+    pub key_generator: [u8; 16],
+    /// Names the mesh's key. A receiver holding another drops the stream.
+    pub key_id: [u8; 8],
+    /// The key version.
+    pub key_version: u32,
+}
+
+/// How a V2IP source unit's streams are encrypted, as it last reported it.
+///
+/// A unit reports this whenever it changes, at least once a minute, and when
+/// asked. A unit that is in no mesh sends in the clear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct V2ipPrivacy {
+    /// The video stream.
+    pub video: V2ipPrivacyStream,
+    /// The audio stream.
+    pub audio: V2ipPrivacyStream,
+    /// The ancillary data stream.
+    pub anc: V2ipPrivacyStream,
+}
+
 /// A V2IP device's PTP state, as it reports it about itself.
 ///
 /// Only the device can read its own video processor, so this is never written

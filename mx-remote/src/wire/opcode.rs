@@ -97,6 +97,7 @@ pub(crate) mod op {
     pub(crate) const BAY_CONTENT: Opcode = Opcode(0x51);
     pub(crate) const V2IP_SINK_SDP: Opcode = Opcode(0x52);
     pub(crate) const V2IP_OSD_SYNC: Opcode = Opcode(0x53);
+    pub(crate) const V2IP_PRIVACY: Opcode = Opcode(0x54);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -196,6 +197,7 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::BAY_CONTENT => 0x2D,
         op::V2IP_SINK_SDP => 0x2E,
         op::V2IP_OSD_SYNC => 0x2F,
+        op::V2IP_PRIVACY => 0x30,
         Opcode(_) => return None,
     })
 }

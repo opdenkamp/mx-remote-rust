@@ -1535,6 +1535,42 @@ pub unsafe extern "C" fn mxr_request_v2ip_sink_sdp(
     })
 }
 
+/// Asks a V2IP source unit how its streams are encrypted now, rather than at
+/// its next report; `mxr_v2ip_privacy()` reads the answer.
+/// `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+/// `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x30.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_v2ip_privacy(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_v2ip_privacy(device.into()))
+    })
+}
+
+/// Asks every V2IP source unit of the mesh how its streams are encrypted, as
+/// `mxr_request_v2ip_privacy()` asks one. A unit below protocol 0x30 ignores
+/// it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_all_v2ip_privacy(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_all_v2ip_privacy())
+    })
+}
+
 /// Clears a unit's current system status. As `mxr_upgrade_unit_fpga()`.
 ///
 /// # Safety

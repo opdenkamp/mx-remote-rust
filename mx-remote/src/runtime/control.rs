@@ -40,20 +40,20 @@ use crate::types::{
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
-    build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation, build_rc_action,
-    build_rc_key, build_set_bay_name, build_set_volume, build_sink_sdp_command,
-    build_sink_sdp_pages, build_stats_request, build_target_only, build_time_zone,
-    build_unit_command, build_v2ip_device_settings, build_v2ip_manual_source_switch,
-    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard,
-    build_v2ip_vlan, build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, sdp_type,
-    testcard_part, testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
-    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
-    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, MxrSignalType, Opcode, RcAction, RcKey, SendError, StreamAddr,
-    UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel,
-    V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN,
-    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation,
+    build_privacy_request, build_rc_action, build_rc_key, build_set_bay_name, build_set_volume,
+    build_sink_sdp_command, build_sink_sdp_pages, build_stats_request, build_target_only,
+    build_time_zone, build_unit_command, build_v2ip_device_settings,
+    build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_settings_all,
+    build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan, build_video_wall, mesh_op,
+    mv_cmd_payload, mv_sub, op, sdp_type, testcard_part, testcard_type, Addressee, BayUid,
+    DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction,
+    RcKey, SendError, StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting,
+    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
+    V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1046,6 +1046,38 @@ impl Remote {
     /// As [`Remote::play_v2ip_sdp`].
     pub fn request_v2ip_sink_sdp(&self, device: DeviceUid) -> Result<(), ControlError> {
         self.sink_sdp_command(device, sdp_type::REQUEST, 0)
+    }
+
+    /// Asks a V2IP source unit how its streams are encrypted now, rather than
+    /// at its next report, which comes at least once a minute and whenever
+    /// they change. [`Remote::v2ip_privacy`] reads the answer.
+    ///
+    /// Refused for a device that is not a V2IP source, and for one below
+    /// protocol 0x30, which predates the report.
+    pub fn request_v2ip_privacy(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.hello.features.has(DeviceFeature::V2IP_SOURCE) {
+                return Err(ControlError::Unsupported("the device is not a V2IP source"));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_PRIVACY,
+                build_privacy_request(d.uid),
+            ))
+        })
+    }
+
+    /// Asks every V2IP source unit of the mesh how its streams are encrypted,
+    /// as [`Remote::request_v2ip_privacy`] asks one. A unit below protocol
+    /// 0x30 ignores it.
+    pub fn request_all_v2ip_privacy(&self) -> Result<(), ControlError> {
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::V2IP_PRIVACY,
+            &build_privacy_request(DeviceUid::ZERO),
+        )?;
+        Ok(())
     }
 
     /// The one send behind the session description commands.

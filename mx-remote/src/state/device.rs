@@ -12,8 +12,9 @@ use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
     OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry, UnitStatus, V2ipDeviceSettings,
-    V2ipDeviceStats, V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources,
-    V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
+    V2ipDeviceStats, V2ipPrivacy, V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp,
+    V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
+    SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{
     BayConfig, BayFeatures, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature,
@@ -127,6 +128,7 @@ pub(crate) struct Device {
     pub(crate) unit_status: Option<UnitStatus>,
     /// What the output last reported playing from a session description.
     pub(crate) v2ip_sink_sdp: Option<V2ipSinkSdp>,
+    pub(crate) v2ip_privacy: Option<V2ipPrivacy>,
     pub(crate) osd_sync: Option<OsdSync>,
     pub(crate) osd_sync_report: Option<OsdSyncReport>,
     /// The PTP state the device last reported about itself, `None` while it
@@ -183,6 +185,7 @@ impl Device {
             v2ip_ptp: None,
             unit_status: None,
             v2ip_sink_sdp: None,
+            v2ip_privacy: None,
             osd_sync: None,
             osd_sync_report: None,
             v2ip_testcard: None,
@@ -1150,6 +1153,17 @@ impl Device {
         ev.push(Event::V2ipSinkSdpChanged {
             device: self.uid,
             sdp,
+        });
+    }
+
+    pub(crate) fn set_v2ip_privacy(&mut self, privacy: V2ipPrivacy, ev: &mut Vec<Event>) {
+        if self.v2ip_privacy == Some(privacy) {
+            return;
+        }
+        self.v2ip_privacy = Some(privacy);
+        ev.push(Event::V2ipPrivacyChanged {
+            device: self.uid,
+            privacy,
         });
     }
 

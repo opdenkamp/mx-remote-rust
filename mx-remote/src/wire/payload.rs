@@ -252,6 +252,16 @@ pub(crate) fn build_sink_sdp_command(target: DeviceUid, kind: u8, value: u8) -> 
     p
 }
 
+/// Builds a `V2IP_PRIVACY` (0x54) request: the source unit asked, or the zero
+/// uid for every one, then type 1 (REQUEST), a count of 0 and two reserved
+/// bytes.
+pub(crate) fn build_privacy_request(target: DeviceUid) -> Vec<u8> {
+    let mut p = Vec::with_capacity(20);
+    p.extend_from_slice(target.as_bytes());
+    p.extend_from_slice(&[1, 0, 0, 0]);
+    p
+}
+
 /// Builds the `V2IP_SINK_SDP` (0x52) pages that hand an output a session
 /// description, in order: each the page header of
 /// [`build_sink_sdp_command`], then the description's length, the page's

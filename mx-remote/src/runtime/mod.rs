@@ -395,6 +395,12 @@ impl Remote {
             .read(|state| state.device(uid)?.v2ip_sink_sdp.clone())
     }
 
+    /// How a V2IP source unit's streams are encrypted, as it last reported
+    /// it, `None` until it has reported.
+    pub fn v2ip_privacy(&self, uid: DeviceUid) -> Option<V2ipPrivacy> {
+        self.shared.read(|state| state.device(uid)?.v2ip_privacy)
+    }
+
     /// The overlay sync a management unit last sent, `None` until it has
     /// sent one.
     pub fn osd_sync(&self, uid: DeviceUid) -> Option<OsdSync> {

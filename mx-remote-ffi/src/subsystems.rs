@@ -21,10 +21,10 @@ use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, OsdSync, OsdSyncReport, RcSettings, StreamKind,
     TopologyEntry, UnitStatus, UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings,
-    V2ipDeviceStats, V2ipFpgaFeature, V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipSinkSdp,
-    V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
-    V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
-    OSD_SYNC_SLOTS,
+    V2ipDeviceStats, V2ipFpgaFeature, V2ipPrivacy, V2ipPrivacyStream, V2ipPtpMessages,
+    V2ipPtpState, V2ipRxStats, V2ipSinkSdp, V2ipStreamSource, V2ipStreamSources, V2ipTestSync,
+    V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus,
+    MULTIVIEWER_INPUTS, OSD_SYNC_SLOTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -1565,6 +1565,99 @@ pub unsafe extern "C" fn mxr_v2ip_sink_sdp(
     })
 }
 
+/// How one of a V2IP source unit's streams is encrypted: the values of its
+/// session description's `a=privacy` and `a=extmap` attributes. The key
+/// itself never travels: every unit of a mesh holds the same one. This
+/// library holds no key and decrypts nothing.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_privacy_stream_t {
+    /// The stream's destination address, as a dotted quad.
+    pub group: [c_char; MXR_IP_STRING_LEN],
+    /// The stream's UDP port.
+    pub port: u16,
+    /// Steps whenever the parameters change.
+    pub version: u8,
+    /// Whether the stream is encrypted. Without it the stream goes out in the
+    /// clear, and the fields below mean nothing.
+    pub on: bool,
+    /// The RTP header extension id of the full IV counter.
+    pub full_id: u8,
+    /// The RTP header extension id of the short IV counter.
+    pub short_id: u8,
+    /// The initialisation vector.
+    pub iv: [u8; 8],
+    /// The key generator.
+    pub key_generator: [u8; 16],
+    /// Names the mesh's key. A receiver holding another drops the stream.
+    pub key_id: [u8; 8],
+    /// The key version.
+    pub key_version: u32,
+}
+
+/// How a V2IP source unit's streams are encrypted, as it last reported it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_privacy_t {
+    /// The video stream.
+    pub video: mxr_v2ip_privacy_stream_t,
+    /// The audio stream.
+    pub audio: mxr_v2ip_privacy_stream_t,
+    /// The ancillary data stream.
+    pub anc: mxr_v2ip_privacy_stream_t,
+}
+
+fn privacy_stream(s: &V2ipPrivacyStream) -> mxr_v2ip_privacy_stream_t {
+    let mut out = mxr_v2ip_privacy_stream_t {
+        group: [0; MXR_IP_STRING_LEN],
+        port: s.port,
+        version: s.version,
+        on: s.on,
+        full_id: s.full_id,
+        short_id: s.short_id,
+        iv: s.iv,
+        key_generator: s.key_generator,
+        key_id: s.key_id,
+        key_version: s.key_version,
+    };
+    put_ip(&mut out.group, Some(s.group));
+    out
+}
+
+/// Fills `out` with how a V2IP source unit's streams are encrypted, as it
+/// last reported it.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until the unit has reported; it does when
+/// that changes, at least once a minute, and when asked with
+/// `mxr_request_v2ip_privacy()`. A change is announced through
+/// `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_privacy_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_privacy(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_privacy_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .v2ip_privacy(uid.into())
+            .map(|p: V2ipPrivacy| mxr_v2ip_privacy_t {
+                video: privacy_stream(&p.video),
+                audio: privacy_stream(&p.audio),
+                anc: privacy_stream(&p.anc),
+            });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "stream encryption", value) }
+    })
+}
+
 /// The logo slots an overlay sync can copy.
 pub const MXR_OSD_SYNC_SLOTS: usize = 4;
 /// Bytes in `mxr_osd_sync_report_t.reason`, its NUL included.
@@ -2409,4 +2502,42 @@ fn no_handle() -> usize {
         "the client handle is null",
     );
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::CStr;
+    use std::net::Ipv4Addr;
+
+    use mx_remote::V2ipPrivacyStream;
+
+    use super::privacy_stream;
+
+    /// Each field lands in its own C field, every one of them distinct.
+    #[test]
+    fn a_privacy_stream_keeps_every_field() {
+        let s = V2ipPrivacyStream {
+            group: Ipv4Addr::new(239, 1, 2, 3),
+            port: 0x1388,
+            version: 7,
+            on: true,
+            full_id: 3,
+            short_id: 4,
+            iv: [0x10; 8],
+            key_generator: [0x20; 16],
+            key_id: [0x30; 8],
+            key_version: 0x0102_0304,
+        };
+        let c = privacy_stream(&s);
+        // SAFETY: put_ip writes a NUL-terminated string into the array.
+        let group = unsafe { CStr::from_ptr(c.group.as_ptr()) };
+        assert_eq!(group.to_str(), Ok("239.1.2.3"));
+        assert_eq!((c.port, c.version, c.on), (0x1388, 7, true));
+        assert_eq!((c.full_id, c.short_id), (3, 4));
+        assert_eq!(
+            (c.iv, c.key_generator, c.key_id),
+            (s.iv, s.key_generator, s.key_id)
+        );
+        assert_eq!(c.key_version, 0x0102_0304);
+    }
 }

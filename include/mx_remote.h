@@ -4687,6 +4687,74 @@ typedef struct {
 } mxr_v2ip_sink_sdp_t;
 
 /**
+ * How one of a V2IP source unit's streams is encrypted: the values of its
+ * session description's `a=privacy` and `a=extmap` attributes. The key
+ * itself never travels: every unit of a mesh holds the same one. This
+ * library holds no key and decrypts nothing.
+ */
+typedef struct {
+  /**
+   * The stream's destination address, as a dotted quad.
+   */
+  char group[MXR_IP_STRING_LEN];
+  /**
+   * The stream's UDP port.
+   */
+  uint16_t port;
+  /**
+   * Steps whenever the parameters change.
+   */
+  uint8_t version;
+  /**
+   * Whether the stream is encrypted. Without it the stream goes out in the
+   * clear, and the fields below mean nothing.
+   */
+  bool on;
+  /**
+   * The RTP header extension id of the full IV counter.
+   */
+  uint8_t full_id;
+  /**
+   * The RTP header extension id of the short IV counter.
+   */
+  uint8_t short_id;
+  /**
+   * The initialisation vector.
+   */
+  uint8_t iv[8];
+  /**
+   * The key generator.
+   */
+  uint8_t key_generator[16];
+  /**
+   * Names the mesh's key. A receiver holding another drops the stream.
+   */
+  uint8_t key_id[8];
+  /**
+   * The key version.
+   */
+  uint32_t key_version;
+} mxr_v2ip_privacy_stream_t;
+
+/**
+ * How a V2IP source unit's streams are encrypted, as it last reported it.
+ */
+typedef struct {
+  /**
+   * The video stream.
+   */
+  mxr_v2ip_privacy_stream_t video;
+  /**
+   * The audio stream.
+   */
+  mxr_v2ip_privacy_stream_t audio;
+  /**
+   * The ancillary data stream.
+   */
+  mxr_v2ip_privacy_stream_t anc;
+} mxr_v2ip_privacy_t;
+
+/**
  * One logo slot, as an overlay sync describes it.
  */
 typedef struct {
@@ -6085,6 +6153,29 @@ mxr_result_t mxr_set_v2ip_sdp_screen(const mxr_remote_t *remote, mxr_uid_t devic
 mxr_result_t mxr_request_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
+ * Asks a V2IP source unit how its streams are encrypted now, rather than at
+ * its next report; `mxr_v2ip_privacy()` reads the answer.
+ * `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+ * `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x30.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_v2ip_privacy(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Asks every V2IP source unit of the mesh how its streams are encrypted, as
+ * `mxr_request_v2ip_privacy()` asks one. A unit below protocol 0x30 ignores
+ * it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_all_v2ip_privacy(const mxr_remote_t *remote);
+
+/**
  * Clears a unit's current system status. As `mxr_upgrade_unit_fpga()`.
  *
  * # Safety
@@ -7200,6 +7291,22 @@ mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
  * `mxr_v2ip_sink_sdp_t`.
  */
 mxr_result_t mxr_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_sink_sdp_t *out);
+
+/**
+ * Fills `out` with how a V2IP source unit's streams are encrypted, as it
+ * last reported it.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until the unit has reported; it does when
+ * that changes, at least once a minute, and when asked with
+ * `mxr_request_v2ip_privacy()`. A change is announced through
+ * `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_privacy_t`.
+ */
+mxr_result_t mxr_v2ip_privacy(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_privacy_t *out);
 
 /**
  * Fills `out` with the overlay sync a management unit last sent.
