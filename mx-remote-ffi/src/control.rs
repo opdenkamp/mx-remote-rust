@@ -2781,10 +2781,7 @@ unsafe fn sent_seq(result: Result<u16, ControlError>, out: *mut u16) -> mxr_resu
 /// `mxr_clear_osd_sync()`. Meanwhile it announces itself as the mesh's
 /// overlay sync manager, so a unit waking from power save takes this sync
 /// too, rather than the controller's. The controller can still send its own
-/// over it. It does so whenever a unit asks for settings without naming whose
-/// sync they are from, as an older overlay module does, and nothing this
-/// client sends prevents that. `mxr_osd_sync_report()` on each unit says how
-/// it went.
+/// over it. `mxr_osd_sync_report()` on each unit says how it went.
 ///
 /// `MXR_ERR_INVALID_ARGUMENT` for a sync copying nothing, more than 128
 /// settings, a caption font over 31 or text over 360 bytes, a logo other than

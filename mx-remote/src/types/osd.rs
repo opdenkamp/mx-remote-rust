@@ -68,7 +68,7 @@ pub struct OsdSyncRequest {
     /// The settings it lacks, bit `i` standing for setting `i`.
     pub missing: [u8; 16],
     /// Who sent the sync it asks about. [`DeviceUid::ZERO`] when it asks for
-    /// a new sync, and from a unit whose module does not name the source.
+    /// a new sync.
     pub source: DeviceUid,
 }
 

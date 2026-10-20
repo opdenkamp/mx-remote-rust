@@ -105,9 +105,7 @@ fn message(p: &[u8]) -> Option<OsdMessage> {
 /// Reads a request. A unit asks about itself; management may also ask for a
 /// new sync for another unit. One this client answers is queued for the
 /// runtime: one asking for a new sync, and one asking for settings of a sync
-/// that names this client as its source or, from an older overlay module,
-/// names none. The runtime leaves one naming none to the controller unless
-/// this client sent that sync.
+/// that names this client as its source.
 fn request(
     state: &mut State,
     sender: DeviceUid,
@@ -131,7 +129,7 @@ fn request(
         missing: core::array::from_fn(|i| p[22 + i]),
         source: uid_at(p, OSD_REQUEST_SOURCE_AT),
     };
-    if seq == 0 || request.source == state.uid || request.source.is_zero() {
+    if seq == 0 || request.source == state.uid {
         state.osd_requests.push(request.clone());
     }
     ev.push(Event::OsdSyncRequested {

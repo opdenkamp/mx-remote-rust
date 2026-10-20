@@ -49,8 +49,6 @@ const PNG_IHDR_AT: usize = 12;
 pub(super) struct OsdSender {
     held: Option<Held>,
     next_seq: u16,
-    /// The syncs this client sent, of whatever it held, oldest first.
-    issued: VecDeque<u16>,
     queue: VecDeque<Pending>,
     server: Option<LogoServer>,
 }
@@ -85,7 +83,6 @@ impl OsdSender {
         Self {
             held: None,
             next_seq: (ms as u16).max(1),
-            issued: VecDeque::new(),
             queue: VecDeque::new(),
             server: None,
         }
@@ -102,10 +99,6 @@ impl OsdSender {
     fn sync_frame(&mut self, target: DeviceUid, what: OsdSyncWhat) -> Option<(u16, Vec<u8>)> {
         let seq = self.next_seq;
         self.next_seq = seq.wrapping_add(1).max(1);
-        if self.issued.len() == SEQS_KEPT {
-            self.issued.pop_front();
-        }
-        self.issued.push_back(seq);
         let held = self.held.as_mut()?;
         if held.seqs.len() == SEQS_KEPT {
             held.seqs.pop_front();
@@ -194,13 +187,6 @@ impl Shared {
                     return;
                 };
                 let (held_what, current) = (held.what, held.seqs.contains(&request.seq));
-                // A request naming no source, as an older overlay module
-                // sends, is this client's to answer only for a sync it sent;
-                // any other is the controller's.
-                let ours = current || osd.issued.contains(&request.seq);
-                if request.seq != 0 && request.source.is_zero() && !ours {
-                    continue;
-                }
                 if request.seq != 0 && current {
                     osd.queue_missing(unit, &request);
                     self.osd_queued.notify_one();
@@ -271,9 +257,7 @@ impl Remote {
     /// mesh's overlay sync manager, so a unit waking from power save takes
     /// this content too, rather than the controller's. The controller can
     /// still send its own over it; the last sync a unit took is what it
-    /// shows. It does so whenever a unit asks for settings without naming
-    /// whose sync they are from, as an older overlay module does, and nothing
-    /// this client sends prevents that. Each unit's
+    /// shows. Each unit's
     /// [`Remote::osd_sync_report`] says how it went.
     ///
     /// Refused for content copying nothing, with more than

@@ -36,9 +36,9 @@ pub(crate) const OSD_SYNC_SIZE: usize = 80;
 pub(crate) const OSD_SYNC_SLOTS_AT: usize = 32;
 pub(crate) const OSD_SYNC_SLOT_SIZE: usize = 12;
 
-/// Width of a request without the source behind it, which units on an older
-/// module send.
-pub(crate) const OSD_REQUEST_SIZE: usize = 38;
+/// Width of a request: the header, what, the settings it lacks from 22, and
+/// the source of the sync it asks about from 38.
+pub(crate) const OSD_REQUEST_SIZE: usize = 54;
 pub(crate) const OSD_REQUEST_SOURCE_AT: usize = 38;
 
 /// Width of a setting's own fields, where its body starts.

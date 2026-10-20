@@ -160,21 +160,22 @@ fn requests(h: &Harness) -> Vec<(DeviceUid, crate::types::OsdSyncRequest)> {
         .collect()
 }
 
+/// A request is read with the source of the sync it asks about, and only
+/// whole.
 #[test]
-fn a_request_is_read_with_its_source_when_it_carries_one() {
+fn a_request_is_read_with_its_source() {
     let (mut h, source, unit) = mesh();
     let mut p = frame(1, 0x0102, unit, 54);
     p[20] = 0x05;
     p[22..38].copy_from_slice(&[0x81; 16]);
     p[38..54].copy_from_slice(source.as_bytes());
     h.feed_as(unit, op::V2IP_OSD_SYNC, &p);
-    h.feed_as(unit, op::V2IP_OSD_SYNC, &p[..38]);
-    h.feed_as(unit, op::V2IP_OSD_SYNC, &p[..37]);
+    h.feed_as(unit, op::V2IP_OSD_SYNC, &p[..53]);
     // A request names the unit asking; one naming another is not its own.
     h.feed_as(source, op::V2IP_OSD_SYNC, &p);
 
     let seen = requests(&h);
-    assert_eq!(seen.len(), 2);
+    assert_eq!(seen.len(), 1);
     let (device, long) = &seen[0];
     assert_eq!(*device, unit);
     assert_eq!(long.seq, 0x0102);
@@ -183,7 +184,6 @@ fn a_request_is_read_with_its_source_when_it_carries_one() {
     assert_eq!(long.source, source);
     assert!(long.is_missing(0) && long.is_missing(7) && long.is_missing(127));
     assert!(!long.is_missing(1) && !long.is_missing(128));
-    assert_eq!(seen[1].1.source, DeviceUid::ZERO);
 }
 
 fn settings(h: &Harness) -> Vec<crate::types::OsdSyncSetting> {
