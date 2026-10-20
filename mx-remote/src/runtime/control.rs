@@ -1073,8 +1073,7 @@ impl Remote {
     /// Asks a unit for the message on its output, which
     /// [`Remote::osd_message`] reads once the unit answers.
     ///
-    /// Refused for a device that is not a V2IP output. A unit whose overlay
-    /// module predates messages does not answer.
+    /// Refused for a device that is not a V2IP output.
     pub fn request_osd_message(&self, device: DeviceUid) -> Result<(), ControlError> {
         let none = OsdMessagePriority::LOW;
         self.send_osd_message(
@@ -1099,8 +1098,7 @@ impl Remote {
     /// then has, which [`Remote::osd_message`] reads, flagged
     /// [`REFUSED`](OsdMessageFlag::REFUSED) when its video processor has no
     /// message layer. Refused here for a device that is not a V2IP output,
-    /// and for a logo, priority or text the unit would refuse. A unit whose
-    /// overlay module predates messages ignores it and does not answer.
+    /// and for a logo, priority or text the unit would refuse.
     pub fn show_osd_message(
         &self,
         device: DeviceUid,

@@ -6278,8 +6278,7 @@ mxr_result_t mxr_request_all_v2ip_privacy(const mxr_remote_t *remote);
 
 /**
  * Asks a unit for the message on its output; `mxr_osd_message()` reads the
- * answer. `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP output. A
- * unit whose overlay module predates messages does not answer.
+ * answer. `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP output.
  *
  * # Safety
  *
@@ -6300,8 +6299,7 @@ mxr_result_t mxr_request_osd_message(const mxr_remote_t *remote, mxr_uid_t devic
  *
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `text` and for a
  * logo, priority or text the unit would refuse, and `MXR_ERR_UNSUPPORTED`
- * for a device that is not a V2IP output. A unit whose overlay module
- * predates messages ignores it.
+ * for a device that is not a V2IP output.
  *
  * # Safety
  *
