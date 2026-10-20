@@ -52,7 +52,7 @@ pub(crate) struct Bay {
     pub(crate) audio_volume: Option<VolumeMuteStatus>,
     pub(crate) rc_type: Option<RcType>,
     pub(crate) edid_profile: Option<EdidProfile>,
-    /// The source device this V2IP bay maps to, from the bay-mapping report.
+    /// The source device this OneIP bay maps to, from the bay-mapping report.
     pub(crate) v2ip_uid: DeviceUid,
     pub(crate) mirror: BayMirrorStatus,
     pub(crate) audio_endpoint: Option<u8>,
@@ -78,7 +78,7 @@ impl Bay {
         }
     }
 
-    /// A V2IP bay standing for bay 0 of the same direction on `owner`, as a
+    /// A OneIP bay standing for bay 0 of the same direction on `owner`, as a
     /// bay mapping names it: input `number` or output `number`, on `port`.
     ///
     /// It carries only its identity. What it describes is read from the
@@ -151,7 +151,7 @@ impl Bay {
     /// How this bay is addressed: its device and its port number.
     ///
     /// This is the identity every command and event uses. [`Bay::link_key`] is
-    /// the other one, and the two differ for a V2IP source.
+    /// the other one, and the two differ for a OneIP source.
     pub(crate) fn uid(&self) -> BayUid {
         BayUid::new(self.device, self.port)
     }

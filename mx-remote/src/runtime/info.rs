@@ -51,7 +51,7 @@ pub struct DeviceInfo {
     /// A device that withholds its link configuration is reported complete
     /// fifteen seconds after it was discovered, and keeps being asked for the
     /// rest: an unreported link reads as no link, which is what a link coming
-    /// up later looks like anyway. Its bays, and a V2IP device's source list,
+    /// up later looks like anyway. Its bays, and a OneIP device's source list,
     /// are waited for without limit - a caller names things after a bay, and a
     /// name assigned to a placeholder outlives the frame that would have
     /// corrected it. A management client has none of these to send and is
@@ -63,7 +63,7 @@ pub struct DeviceInfo {
     /// Firmware without it builds some frames over uninitialised stack, so
     /// those fields carry noise rather than values: the scaling flags and,
     /// behind a spuriously set valid bit, the scaling mode and refresh; bay 0's
-    /// addresses in the V2IP sources frame; and the padding beside the
+    /// addresses in the OneIP sources frame; and the padding beside the
     /// remote-control target.
     pub config_initialised: bool,
     /// Temperatures the device reports, in degrees Celsius, in its own order.
@@ -116,7 +116,7 @@ impl DeviceInfo {
 /// A status this bay has never reported is `None`, which is not the same as
 /// the status being off: a device reports only what it has.
 ///
-/// A mesh bay, a V2IP bay on one unit standing for another unit's input or
+/// A mesh bay, a OneIP bay on one unit standing for another unit's input or
 /// output, reports that unit's own bay 0 in the same direction. Only its
 /// identity is its own: `uid`, `port_name`, `bay_num`, `features`, its
 /// direction, `is_local` and `v2ip_uid`, which names that unit. Every change
@@ -207,7 +207,7 @@ pub struct BayInfo {
     /// elsewhere that belongs to this one, such as the amplifier zone carrying
     /// a OneIP output's volume. [`BayInfo::volume`] is already read through it.
     pub linked_bay: Option<BayUid>,
-    /// The unit a V2IP bay stands for, or the zero uid.
+    /// The unit a OneIP bay stands for, or the zero uid.
     pub v2ip_uid: DeviceUid,
     /// What the source on an input is showing, as its unit last reported.
     ///

@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! The audio endpoint tree a V2IP device or amplifier reports.
+//! The audio endpoint tree a OneIP device or amplifier reports.
 
 use std::collections::BTreeMap;
 
@@ -18,9 +18,9 @@ impl AudioFeatures {
     pub const INPUT: Self = Self(1 << 0);
     /// Produces audio.
     pub const OUTPUT: Self = Self(1 << 1);
-    /// Sends a V2IP audio stream.
+    /// Sends a OneIP audio stream.
     pub const V2IP_TX: Self = Self(1 << 2);
-    /// Receives a V2IP audio stream.
+    /// Receives a OneIP audio stream.
     pub const V2IP_RX: Self = Self(1 << 3);
     /// Carries HDMI audio.
     pub const HDMI: Self = Self(1 << 4);
@@ -62,7 +62,7 @@ impl AudioFeatures {
         self.0 & other.0 == other.0
     }
 
-    /// Reports whether this endpoint is either end of a V2IP audio stream.
+    /// Reports whether this endpoint is either end of a OneIP audio stream.
     pub const fn is_v2ip(self) -> bool {
         self.has(Self::V2IP_TX) || self.has(Self::V2IP_RX)
     }

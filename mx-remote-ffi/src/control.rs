@@ -66,7 +66,7 @@ impl From<mxr_audio_format_t> for V2ipAudioFormat {
 
 // ---- routing ----
 
-/// Routes a V2IP sink's video to the stream a source port advertises.
+/// Routes a OneIP sink's video to the stream a source port advertises.
 ///
 /// The sink's audio then follows the video: a separate audio route is
 /// dropped, so route audio after video to keep them apart. A unit below
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn mxr_select_video_source(
     })
 }
 
-/// Routes a V2IP sink's audio to the stream a source port advertises,
+/// Routes a OneIP sink's audio to the stream a source port advertises,
 /// leaving its video where it is.
 ///
 /// # Safety
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn mxr_select_audio_source(
     })
 }
 
-/// Routes a V2IP sink's video to the source bay with this user-assigned name.
+/// Routes a OneIP sink's video to the source bay with this user-assigned name.
 ///
 /// # Safety
 ///
@@ -130,7 +130,7 @@ pub unsafe extern "C" fn mxr_select_video_source_by_name(
     })
 }
 
-/// Routes a V2IP sink's audio to the source bay with this user-assigned name.
+/// Routes a OneIP sink's audio to the source bay with this user-assigned name.
 ///
 /// `format` may be null to leave the sink's audio format alone.
 ///
@@ -162,7 +162,7 @@ pub unsafe extern "C" fn mxr_select_audio_source_by_name(
     })
 }
 
-/// Routes a V2IP sink's audio to a multicast group directly, for a source this
+/// Routes a OneIP sink's audio to a multicast group directly, for a source this
 /// client has not heard advertise it.
 ///
 /// `audio_port` may be zero for the default, and `format` may be null to leave
@@ -226,7 +226,7 @@ pub struct mxr_stream_addr_t {
     pub port: u16,
 }
 
-/// The three streams a manual route points a V2IP sink at.
+/// The three streams a manual route points a OneIP sink at.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_route_t {
@@ -262,7 +262,7 @@ unsafe fn to_target(slot: mxr_stream_addr_t, what: &str) -> Result<V2ipRouteTarg
     }
 }
 
-/// Routes a V2IP sink's video, audio and ancillary streams to multicast groups
+/// Routes a OneIP sink's video, audio and ancillary streams to multicast groups
 /// the caller names.
 ///
 /// This is the only way to reach a stream no device on the mesh advertises,
@@ -725,7 +725,7 @@ pub unsafe extern "C" fn mxr_select_audio_endpoint_input(
 /// The device answers a moment later. The bytes reach `on_edid_received` and
 /// stay readable through `mxr_device_edid()`.
 ///
-/// Only V2IP hardware handles this opcode. A matrix or an amplifier accepts
+/// Only OneIP hardware handles this opcode. A matrix or an amplifier accepts
 /// the frame and answers nothing, at any protocol version, so the silence that
 /// follows is permanent rather than a reply still to come. `MXR_OK` here means
 /// the frame was sent, and nothing more; a caller polling for an EDID should
@@ -771,7 +771,7 @@ pub unsafe extern "C" fn mxr_request_signal_status(
     })
 }
 
-/// Subscribes to, or unsubscribes from, a device's V2IP statistics.
+/// Subscribes to, or unsubscribes from, a device's OneIP statistics.
 ///
 /// # Safety
 ///
@@ -820,11 +820,11 @@ pub unsafe extern "C" fn mxr_ping(remote: *const mxr_remote_t, device: mxr_uid_t
     with(handle, |r| from_control(r.remote.ping(device.into())))
 }
 
-/// Hands a V2IP source's stream addresses back to automatic assignment,
+/// Hands a OneIP source's stream addresses back to automatic assignment,
 /// undoing addresses that were set on it by hand. The device's next
 /// configuration report carries the addresses it ends up with.
 ///
-/// `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+/// `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP source, and
 /// `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2B, which ignores it,
 /// sending nothing in either case.
 ///
@@ -921,9 +921,9 @@ pub unsafe extern "C" fn mxr_send_monitoring_pulse(remote: *const mxr_remote_t) 
     with(handle, |r| from_control(r.remote.send_monitoring_pulse()))
 }
 
-// ---- V2IP scaling ----
+// ---- OneIP scaling ----
 
-/// The colour space a V2IP sink scales its output to.
+/// The colour space a OneIP sink scales its output to.
 pub const MXR_V2IP_COLOUR_RGB: u8 = 0;
 /// YCbCr 4:4:4. See `MXR_V2IP_COLOUR_RGB`.
 pub const MXR_V2IP_COLOUR_YCBCR444: u8 = 1;
@@ -932,13 +932,13 @@ pub const MXR_V2IP_COLOUR_YCBCR422: u8 = 2;
 /// YCbCr 4:2:0. See `MXR_V2IP_COLOUR_RGB`.
 pub const MXR_V2IP_COLOUR_YCBCR420: u8 = 3;
 
-/// Lowest refresh rate a V2IP output stage accepts, in Hz.
+/// Lowest refresh rate a OneIP output stage accepts, in Hz.
 pub const MXR_V2IP_SCALING_REFRESH_MIN: u16 = 24;
 
-/// Highest refresh rate a V2IP output stage accepts, in Hz.
+/// Highest refresh rate a OneIP output stage accepts, in Hz.
 pub const MXR_V2IP_SCALING_REFRESH_MAX: u16 = 120;
 
-/// The output format to scale a V2IP sink to.
+/// The output format to scale a OneIP sink to.
 ///
 /// Given as a depth and a colour space rather than as a packed signal-type
 /// word, so a caller cannot send the "no depth" index a sink reports while it
@@ -984,7 +984,7 @@ unsafe fn output_mode(mode: *const mxr_v2ip_output_mode_t) -> Result<V2ipOutputM
     }
 }
 
-/// Turns a V2IP sink's automatic scaling on or off.
+/// Turns a OneIP sink's automatic scaling on or off.
 ///
 /// Automatic scaling and a configured output mode are separate reasons for a
 /// sink to scale, and this moves only the first: a sink with a mode configured
@@ -1018,7 +1018,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_auto_scaling(
     })
 }
 
-/// Switches on/off settings of a V2IP device, all to the same value.
+/// Switches on/off settings of a OneIP device, all to the same value.
 ///
 /// `setting` is one or more `MXR_V2IP_SETTING_*` on/off bits, each one the
 /// device has reported. Returns `MXR_ERR_NOT_REPORTED` before the device has
@@ -1048,7 +1048,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_device_setting(
     })
 }
 
-/// Sets the infrared profile of a V2IP device's global infrared port.
+/// Sets the infrared profile of a OneIP device's global infrared port.
 ///
 /// `profile` is from 0 up to, not including, `MXR_V2IP_IR_PROFILE_MAX`.
 /// Otherwise as `mxr_set_v2ip_device_setting()`.
@@ -1069,7 +1069,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_ir_profile(
     })
 }
 
-/// Sets how many idle minutes a V2IP device waits before it powers down by
+/// Sets how many idle minutes a OneIP device waits before it powers down by
 /// itself, 0 for never. Otherwise as `mxr_set_v2ip_device_setting()`.
 ///
 /// # Safety
@@ -1088,7 +1088,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_auto_power_save(
     })
 }
 
-/// Sets a V2IP device's daily power save windows from `schedule`'s `start`
+/// Sets a OneIP device's daily power save windows from `schedule`'s `start`
 /// and `end`; its `auto_minutes` is not sent.
 ///
 /// `MXR_ERR_INVALID_ARGUMENT` for a time not below
@@ -1124,7 +1124,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_schedule(
     })
 }
 
-/// Changes settings on every V2IP device of the mesh with one frame.
+/// Changes settings on every OneIP device of the mesh with one frame.
 ///
 /// `settings` carries the settings behind their `MXR_V2IP_SETTING_*` bits in
 /// `valid`, as `mxr_v2ip_device_settings()` reports them; its `ir_profiles`
@@ -1214,7 +1214,7 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
     })
 }
 
-/// Sets the level a V2IP device powers down to in power save,
+/// Sets the level a OneIP device powers down to in power save,
 /// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT` for a level with no
 /// name. `mxr_unit_power_save()` says which levels the unit offers. It also
 /// switches `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
@@ -1239,7 +1239,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_level(
     })
 }
 
-/// Sets the power save level of every V2IP device of the mesh with one frame,
+/// Sets the power save level of every OneIP device of the mesh with one frame,
 /// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT`, sending nothing,
 /// for a level with no name. Each device that takes the level also switches
 /// `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
@@ -1265,7 +1265,7 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_power_save_level(
     })
 }
 
-/// Sets how a V2IP device paces its PTP messages, its SAP timings, its
+/// Sets how a OneIP device paces its PTP messages, its SAP timings, its
 /// streams' TTL and its output's rotation: the values of `messages` behind
 /// the `MXR_V2IP_SETTING_PTP_*` message bits, `MXR_V2IP_SETTING_SAP_EXPIRE`
 /// and `_SAP_INTERVAL`, `MXR_V2IP_SETTING_STREAM_TTL` and
@@ -1304,7 +1304,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_ptp_messages(
     })
 }
 
-/// Changes how every V2IP device of the mesh paces its PTP messages, with one
+/// Changes how every OneIP device of the mesh paces its PTP messages, with one
 /// frame. As `mxr_set_v2ip_ptp_messages()` for its arguments, except that a
 /// rotation is refused only above `MXR_V2IP_SINK_ROTATION_MAX`, and each
 /// device takes it only by its own step. Otherwise as
@@ -1345,7 +1345,7 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_messages(
     })
 }
 
-/// Sets the PTP mode a V2IP device runs, `MXR_V2IP_PTP_MODE_*`.
+/// Sets the PTP mode a OneIP device runs, `MXR_V2IP_PTP_MODE_*`.
 /// `MXR_ERR_INVALID_ARGUMENT` for a mode with no name. Otherwise as
 /// `mxr_set_v2ip_device_setting()`.
 ///
@@ -1368,7 +1368,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_ptp_mode(
     })
 }
 
-/// Sets the PTP domain a V2IP device runs in. `MXR_ERR_INVALID_ARGUMENT` above
+/// Sets the PTP domain a OneIP device runs in. `MXR_ERR_INVALID_ARGUMENT` above
 /// `MXR_V2IP_PTP_DOMAIN_MAX`. Otherwise as `mxr_set_v2ip_device_setting()`.
 ///
 /// # Safety
@@ -1387,7 +1387,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_ptp_domain(
     })
 }
 
-/// Sets the priority1 a V2IP device announces as a PTP grandmaster, lower
+/// Sets the priority1 a OneIP device announces as a PTP grandmaster, lower
 /// winning. Otherwise as `mxr_set_v2ip_device_setting()`.
 ///
 /// # Safety
@@ -1406,7 +1406,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_ptp_priority1(
     })
 }
 
-/// Changes PTP settings on every V2IP device of the mesh with one frame.
+/// Changes PTP settings on every OneIP device of the mesh with one frame.
 ///
 /// `valid` names the `MXR_V2IP_SETTING_PTP_*` bits to send, and `ptp` carries
 /// their values. `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `ptp`,
@@ -1451,7 +1451,7 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_settings(
     })
 }
 
-/// Has a V2IP output play the stream a session description describes.
+/// Has a OneIP output play the stream a session description describes.
 ///
 /// The description goes out in pages of up to 1 KB, and the output plays it
 /// once the last page is in. It takes them only from its mesh controller or a
@@ -1459,7 +1459,7 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_ptp_settings(
 /// acknowledges the pages: `mxr_v2ip_sink_sdp()` reads what the output
 /// reports next. `MXR_ERR_INVALID_ARGUMENT` for a null or empty description or
 /// one longer than `MXR_V2IP_SDP_MAX` bytes, `MXR_ERR_UNSUPPORTED` for a device
-/// that is not a V2IP output and `MXR_ERR_PROTOCOL_TOO_OLD` for one below
+/// that is not a OneIP output and `MXR_ERR_PROTOCOL_TOO_OLD` for one below
 /// protocol 0x2E, sending nothing in each case.
 ///
 /// # Safety
@@ -1484,7 +1484,7 @@ pub unsafe extern "C" fn mxr_play_v2ip_sdp(
     })
 }
 
-/// Stops the stream a V2IP output plays from a session description. As
+/// Stops the stream a OneIP output plays from a session description. As
 /// `mxr_play_v2ip_sdp()`.
 ///
 /// # Safety
@@ -1502,7 +1502,7 @@ pub unsafe extern "C" fn mxr_stop_v2ip_sdp(
     })
 }
 
-/// Sets what a V2IP output shows while it plays audio alone. As
+/// Sets what a OneIP output shows while it plays audio alone. As
 /// `mxr_play_v2ip_sdp()`.
 ///
 /// # Safety
@@ -1521,7 +1521,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_sdp_screen(
     })
 }
 
-/// Asks a V2IP output what it plays from a session description now. As
+/// Asks a OneIP output what it plays from a session description now. As
 /// `mxr_play_v2ip_sdp()`.
 ///
 /// # Safety
@@ -1539,9 +1539,9 @@ pub unsafe extern "C" fn mxr_request_v2ip_sink_sdp(
     })
 }
 
-/// Asks a V2IP source unit how its streams are encrypted now, rather than at
+/// Asks a OneIP source unit how its streams are encrypted now, rather than at
 /// its next report; `mxr_v2ip_privacy()` reads the answer.
-/// `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+/// `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP source, and
 /// `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x30.
 ///
 /// # Safety
@@ -1559,7 +1559,7 @@ pub unsafe extern "C" fn mxr_request_v2ip_privacy(
     })
 }
 
-/// Asks every V2IP source unit of the mesh how its streams are encrypted, as
+/// Asks every OneIP source unit of the mesh how its streams are encrypted, as
 /// `mxr_request_v2ip_privacy()` asks one. A unit below protocol 0x30 ignores
 /// it.
 ///
@@ -1576,7 +1576,7 @@ pub unsafe extern "C" fn mxr_request_all_v2ip_privacy(remote: *const mxr_remote_
 }
 
 /// Asks a unit for the message on its output; `mxr_osd_message()` reads the
-/// answer. `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP output.
+/// answer. `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP output.
 ///
 /// # Safety
 ///
@@ -1605,7 +1605,7 @@ pub unsafe extern "C" fn mxr_request_osd_message(
 ///
 /// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `text` and for a
 /// logo, priority or text the unit would refuse, and `MXR_ERR_UNSUPPORTED`
-/// for a device that is not a V2IP output.
+/// for a device that is not a OneIP output.
 ///
 /// # Safety
 ///
@@ -1676,7 +1676,7 @@ pub unsafe extern "C" fn mxr_clear_unit_status(
 /// The unit takes a command only from its mesh controller or a management
 /// application, which this client announces itself as. Nothing acknowledges
 /// it: `mxr_unit_status()` reads what the unit reports next.
-/// `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP unit, and
+/// `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP unit, and
 /// `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2C.
 ///
 /// # Safety
@@ -1789,7 +1789,7 @@ pub unsafe extern "C" fn mxr_confirm_unit_network(
     })
 }
 
-/// Changes a V2IP device's VLAN configuration.
+/// Changes a OneIP device's VLAN configuration.
 ///
 /// Sends `vlan`'s ids, its `uplink` and its `MXR_V2IP_VLAN_TRUNK` bit; its
 /// other flags, `active_uplink` and `revert_s` are the device's to report and
@@ -1837,7 +1837,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_vlan(
     })
 }
 
-/// Asks a V2IP sink for its test card, which it reports straight back;
+/// Asks a OneIP sink for its test card, which it reports straight back;
 /// `mxr_v2ip_testcard()` reads it.
 ///
 /// `MXR_ERR_NOT_REPORTED` before the sink has reported its video processor
@@ -1862,7 +1862,7 @@ pub unsafe extern "C" fn mxr_request_v2ip_testcard(
     })
 }
 
-/// Shows `MXR_V2IP_TEST_PATTERN_*` on a V2IP sink's output; `colour` is
+/// Shows `MXR_V2IP_TEST_PATTERN_*` on a OneIP sink's output; `colour` is
 /// `0xRRGGBB`, used by a flat pattern. The pattern runs until it is turned
 /// off, and holds the output on while it does.
 ///
@@ -1891,7 +1891,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_test_pattern(
     })
 }
 
-/// Plays a test tone on a V2IP sink's output.
+/// Plays a test tone on a OneIP sink's output.
 ///
 /// `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
 /// `mxr_v2ip_test_tone_t` gives, unless its mode is `MXR_V2IP_TONE_MODE_OFF`,
@@ -1922,7 +1922,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_test_tone(
     })
 }
 
-/// Sets a V2IP sink's lip-sync flash.
+/// Sets a OneIP sink's lip-sync flash.
 ///
 /// `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
 /// `mxr_v2ip_test_sync_t` gives. Otherwise as `mxr_request_v2ip_testcard()`.
@@ -1951,7 +1951,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_test_sync(
     })
 }
 
-/// Sets the infrared profile of a V2IP device's output infrared port.
+/// Sets the infrared profile of a OneIP device's output infrared port.
 ///
 /// `MXR_V2IP_IR_PROFILE_NOT_SET` makes the port follow the global one.
 /// Otherwise as `mxr_set_v2ip_ir_profile()`.
@@ -1972,7 +1972,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_sink_ir_profile(
     })
 }
 
-/// Sets the output format a V2IP sink scales to.
+/// Sets the output format a OneIP sink scales to.
 ///
 /// The mode is checked here and `MXR_ERR_INVALID_ARGUMENT` returned without
 /// sending anything, because a sink refuses a bad one in silence. Passing is
@@ -2024,7 +2024,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_output_mode(
     })
 }
 
-/// Clears the output format a V2IP sink is configured to scale to.
+/// Clears the output format a OneIP sink is configured to scale to.
 ///
 /// The sink stops scaling for that reason and keeps its automatic scaling
 /// setting. This is the only way to express "no mode configured", and it is

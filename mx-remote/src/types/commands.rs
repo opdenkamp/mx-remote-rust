@@ -448,7 +448,7 @@ impl fmt::Display for VideoWallWindow {
 
 /// Asks one sink to crop its source to a wall window.
 ///
-/// This replaces the sink's window outright: unlike a V2IP device config, no
+/// This replaces the sink's window outright: unlike a OneIP device config, no
 /// field carries a validity marker, and a zero width or height is the wire
 /// spelling of "clear the wall and show the full frame" rather than "unset".
 ///

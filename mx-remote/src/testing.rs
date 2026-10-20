@@ -97,7 +97,7 @@ pub(crate) fn bay_config_rec(
     p
 }
 
-/// Builds one record of a V2IP sources frame.
+/// Builds one record of a OneIP sources frame.
 pub(crate) fn stream_rec(
     uid: DeviceUid,
     video: &str,

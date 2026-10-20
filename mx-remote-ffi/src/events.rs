@@ -478,13 +478,13 @@ pub struct mxr_callbacks_t {
     /// A network port reported its link state; read it with
     /// `mxr_network_status()`.
     pub on_network_status_changed: mxr_device_cb,
-    /// The device reported V2IP statistics; read them with
+    /// The device reported OneIP statistics; read them with
     /// `mxr_v2ip_stats()`.
     pub on_v2ip_stats_changed: mxr_device_cb,
     /// The streams the device's source bays advertise changed; read them with
     /// `mxr_v2ip_sources()`.
     pub on_v2ip_sources_changed: mxr_device_cb,
-    /// The device's V2IP encoder configuration changed; read it with
+    /// The device's OneIP encoder configuration changed; read it with
     /// `mxr_v2ip_details()`.
     pub on_v2ip_details_changed: mxr_device_cb,
     /// The streams the device's sink is subscribed to changed; read them with
@@ -522,7 +522,7 @@ pub struct mxr_callbacks_t {
     /// A source bay's remote-control configuration changed; read it with
     /// `mxr_rc_settings()`.
     pub on_rc_settings_changed: mxr_device_cb,
-    /// A V2IP device was linked to a remote peer.
+    /// A OneIP device was linked to a remote peer.
     pub on_v2ip_link_changed: mxr_device_uid_cb,
     /// A multiviewer command arrived.
     pub on_multiviewer_command: mxr_multiviewer_command_cb,
@@ -629,9 +629,9 @@ pub struct mxr_callbacks_t {
     pub on_filtered_devices_changed: mxr_bay_cb,
     /// The audio endpoint the bay carries changed.
     pub on_audio_endpoint_changed: mxr_bay_u8_cb,
-    /// The bay's V2IP encoder was enabled or disabled.
+    /// The bay's OneIP encoder was enabled or disabled.
     pub on_encoder_disabled_changed: mxr_bay_bool_cb,
-    /// The bay's V2IP decoder was enabled or disabled.
+    /// The bay's OneIP decoder was enabled or disabled.
     pub on_decoder_disabled_changed: mxr_bay_bool_cb,
 
     /// The bay was linked to a bay on another device. Both ends are told, so

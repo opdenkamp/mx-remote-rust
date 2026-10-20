@@ -4,7 +4,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Client library for Pulse-Eight MatrixOS devices (neo matrices, OneIP/V2IP
+//! Client library for Pulse-Eight MatrixOS devices (neo matrices, OneIP
 //! units, ProAmp8 amplifiers) over UDP multicast/broadcast.
 //!
 //! Devices announce themselves and their bays, report signal, audio, streaming

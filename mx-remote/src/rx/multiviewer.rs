@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! The V2IP multiviewer sub-protocol.
+//! The OneIP multiviewer sub-protocol.
 
 use crate::event::Event;
 use crate::state::State;

@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! How a V2IP source unit's streams are encrypted.
+//! How a OneIP source unit's streams are encrypted.
 
 use std::net::Ipv4Addr;
 

@@ -139,7 +139,7 @@ impl State {
 
     /// The source bay advertising the given multicast group.
     ///
-    /// A V2IP sink names its route by group address, so this is what turns a
+    /// A OneIP sink names its route by group address, so this is what turns a
     /// stream subscription back into the bay producing it.
     pub(crate) fn bay_by_stream_ip(&self, ip: Ipv4Addr, audio: bool) -> Option<BayUid> {
         self.devices.values().find_map(|device| {

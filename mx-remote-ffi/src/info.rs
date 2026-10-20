@@ -203,7 +203,7 @@ pub struct mxr_device_info_t {
     /// A device that withholds its link configuration is reported complete
     /// fifteen seconds after it was discovered, and keeps being asked for the
     /// rest: an unreported link reads as no link, which is what a link coming
-    /// up later looks like anyway. Its bays, and a V2IP device's source list,
+    /// up later looks like anyway. Its bays, and a OneIP device's source list,
     /// are waited for without limit - a caller names things after a bay, and a
     /// name assigned to a placeholder outlives the frame that would have
     /// corrected it. A management client has none of these to send and is
@@ -215,7 +215,7 @@ pub struct mxr_device_info_t {
     /// Firmware without it builds some frames over uninitialised stack, so
     /// those fields carry noise rather than values: the scaling flags and,
     /// behind a spuriously set valid bit, the scaling mode and refresh; bay
-    /// zero's addresses in the V2IP sources frame; and the padding beside the
+    /// zero's addresses in the OneIP sources frame; and the padding beside the
     /// remote-control target.
     pub config_initialised: bool,
     /// The mesh master this device follows, zero when it is in no mesh.
@@ -240,7 +240,7 @@ pub struct mxr_device_info_t {
 
 /// What a bay is, and what is connected to it.
 ///
-/// A mesh bay, a V2IP bay on one unit standing for another unit's input or
+/// A mesh bay, a OneIP bay on one unit standing for another unit's input or
 /// output (`is_local` false), reports that unit's own bay 0 in the same
 /// direction. Only its identity is its own: `uid`, `port_name`, `bay_num`,
 /// `features`, its direction, `is_local` and `v2ip_uid`, which names that
@@ -328,7 +328,7 @@ pub struct mxr_bay_info_t {
     /// output's volume. `volume` is already read through it, and
     /// `mxr_set_volume()` already writes through it.
     pub linked_bay: mxr_bay_uid_t,
-    /// The unit a V2IP bay stands for, zero when it maps to none.
+    /// The unit a OneIP bay stands for, zero when it maps to none.
     pub v2ip_uid: mxr_uid_t,
     /// How many devices `mxr_bay_filtered()` would return.
     pub filtered_count: usize,

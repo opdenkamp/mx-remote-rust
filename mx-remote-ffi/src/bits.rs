@@ -40,10 +40,10 @@ pub const MXR_FEATURE_IR_TX: u32 = 1 << 1;
 /// Speaks CEC.
 pub const MXR_FEATURE_CEC: u32 = 1 << 2;
 
-/// Acts as a V2IP stream source.
+/// Acts as a OneIP stream source.
 pub const MXR_FEATURE_V2IP_SOURCE: u32 = 1 << 3;
 
-/// Acts as a V2IP stream sink.
+/// Acts as a OneIP stream sink.
 pub const MXR_FEATURE_V2IP_SINK: u32 = 1 << 4;
 
 /// Routes video.
@@ -175,16 +175,16 @@ pub const MXR_BAY_DOLBY: u32 = 1 << 11;
 /// Switches itself off when idle.
 pub const MXR_BAY_AUTO_OFF: u32 = 1 << 12;
 
-/// Is a remote V2IP source.
+/// Is a remote OneIP source.
 pub const MXR_BAY_V2IP_SOURCE_REMOTE: u32 = 1 << 13;
 
-/// Is a remote V2IP sink.
+/// Is a remote OneIP sink.
 pub const MXR_BAY_V2IP_SINK_REMOTE: u32 = 1 << 14;
 
-/// Is a local V2IP source.
+/// Is a local OneIP source.
 pub const MXR_BAY_V2IP_SOURCE_LOCAL: u32 = 1 << 15;
 
-/// Is a local V2IP sink.
+/// Is a local OneIP sink.
 pub const MXR_BAY_V2IP_SINK_LOCAL: u32 = 1 << 16;
 
 // ---- the live status of a bay, in `mxr_signal_details_t::status` ----
@@ -234,16 +234,16 @@ pub const MXR_BAY_STATUS_AUDIO_ARC_ANALOG: u32 = 1 << 12;
 /// The bay is offline.
 pub const MXR_BAY_STATUS_OFFLINE: u32 = 1 << 13;
 
-/// The V2IP decoder is disabled.
+/// The OneIP decoder is disabled.
 pub const MXR_BAY_STATUS_DECODER_DISABLE: u32 = 1 << 14;
 
-/// The V2IP encoder is disabled.
+/// The OneIP encoder is disabled.
 pub const MXR_BAY_STATUS_ENCODER_DISABLE: u32 = 1 << 15;
 
 /// CEC is switched off for this bay.
 pub const MXR_BAY_STATUS_CEC_DISABLED: u32 = 1 << 20;
 
-/// The V2IP encoder reports an error.
+/// The OneIP encoder reports an error.
 pub const MXR_BAY_STATUS_ENCODER_ERROR: u32 = 1 << 21;
 
 /// The bay's name was generated - a default, or taken from CEC or the EDID -
@@ -259,10 +259,10 @@ pub const MXR_AUDIO_INPUT: u32 = 1 << 0;
 /// Produces audio.
 pub const MXR_AUDIO_OUTPUT: u32 = 1 << 1;
 
-/// Sends a V2IP audio stream.
+/// Sends a OneIP audio stream.
 pub const MXR_AUDIO_V2IP_TX: u32 = 1 << 2;
 
-/// Receives a V2IP audio stream.
+/// Receives a OneIP audio stream.
 pub const MXR_AUDIO_V2IP_RX: u32 = 1 << 3;
 
 /// Carries HDMI audio.
@@ -672,7 +672,7 @@ pub const MXR_MV_SOURCE_INPUT_3: u8 = 3;
 /// Input 4.
 pub const MXR_MV_SOURCE_INPUT_4: u8 = 4;
 
-// ---- V2IP device settings, in `mxr_v2ip_device_settings_t` ----
+// ---- OneIP device settings, in `mxr_v2ip_device_settings_t` ----
 
 /// Disables the decoder while the display is off.
 pub const MXR_V2IP_SETTING_SINK_CHECK_POWER: u32 = 1 << 0;
@@ -782,13 +782,13 @@ pub const MXR_V2IP_SETTING_CLOUD: u32 = 1 << 30;
 /// with an HDMI output.
 pub const MXR_V2IP_SETTING_SINK_ROTATION: u32 = 1 << 31;
 
-/// The TTL a V2IP device's streams carry until it is set.
+/// The TTL a OneIP device's streams carry until it is set.
 pub const MXR_V2IP_STREAM_TTL_DEFAULT: u8 = 64;
 
-/// The largest angle a V2IP device's HDMI output is turned by, in degrees.
+/// The largest angle a OneIP device's HDMI output is turned by, in degrees.
 pub const MXR_V2IP_SINK_ROTATION_MAX: u16 = 359;
 
-// ---- what a V2IP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
+// ---- what a OneIP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
 
 /// The output plays a stream from a description.
 pub const MXR_V2IP_SDP_FLAG_ACTIVE: u8 = 1 << 0;
@@ -844,7 +844,7 @@ pub const MXR_V2IP_SDP_CLOCK_STATE_UNTIMED: u8 = 5;
 /// The timing is not supported.
 pub const MXR_V2IP_SDP_CLOCK_STATE_UNSUPPORTED: u8 = 6;
 
-// ---- V2IP power save levels ----
+// ---- OneIP power save levels ----
 
 /// No level.
 pub const MXR_V2IP_POWER_SAVE_LEVEL_NONE: u8 = 0;
@@ -864,7 +864,7 @@ pub const MXR_UNIT_POWER_SAVE_INPUT_WAKE: u8 = 1 << 1;
 /// The display powering on wakes the unit, and the unit can power it on.
 pub const MXR_UNIT_POWER_SAVE_OUTPUT_WAKE: u8 = 1 << 2;
 
-// ---- V2IP PTP modes, in `mxr_v2ip_ptp_settings_t::mode` ----
+// ---- OneIP PTP modes, in `mxr_v2ip_ptp_settings_t::mode` ----
 
 /// No PTP.
 pub const MXR_V2IP_PTP_MODE_OFF: u8 = 0;
@@ -910,7 +910,7 @@ pub const MXR_UNIT_BOOT_COUNT: u32 = 1 << 14;
 /// `fan_rpm` is reported.
 pub const MXR_UNIT_FAN_SPEED: u32 = 1 << 15;
 
-// ---- V2IP PTP state, in `mxr_v2ip_ptp_t` ----
+// ---- OneIP PTP state, in `mxr_v2ip_ptp_t` ----
 
 /// The device runs PTP and the block holds its state.
 pub const MXR_V2IP_PTP_VALID: u8 = 1 << 0;
@@ -925,7 +925,7 @@ pub const MXR_V2IP_PTP_LOCK_LOCKING: u8 = 1;
 /// Locked.
 pub const MXR_V2IP_PTP_LOCK_LOCKED: u8 = 2;
 
-// ---- V2IP VLAN flags, in `mxr_v2ip_vlan_t::flags` ----
+// ---- OneIP VLAN flags, in `mxr_v2ip_vlan_t::flags` ----
 
 /// The block carries a configuration. A block without it carries nothing.
 pub const MXR_V2IP_VLAN_VALID: u16 = 1 << 0;
@@ -945,7 +945,7 @@ pub const MXR_V2IP_VLAN_CONFIRM: u16 = 1 << 3;
 /// Reported by the device: it has an SFP port. Never written.
 pub const MXR_V2IP_VLAN_HAS_SFP: u16 = 1 << 4;
 
-// ---- V2IP test card, in `mxr_v2ip_testcard_t` ----
+// ---- OneIP test card, in `mxr_v2ip_testcard_t` ----
 
 /// No pattern.
 pub const MXR_V2IP_TEST_PATTERN_OFF: u8 = 0;

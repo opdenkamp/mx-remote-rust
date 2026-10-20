@@ -1914,7 +1914,7 @@ fn the_primary_cause_is_not_derivable_from_the_flags_word() {
     }
 }
 
-// ---- V2IP stream configuration ----
+// ---- OneIP stream configuration ----
 
 #[test]
 fn a_manual_source_switch_and_a_config_sink_block_decode_alike() {
@@ -3645,7 +3645,7 @@ fn a_unit_reports_what_it_offers_at_each_power_save_level() {
     );
 }
 
-/// A V2IP output's session description status: the header naming the output
+/// A OneIP output's session description status: the header naming the output
 /// with type 0, then every field distinct - a port with a high byte, a rate
 /// above 0xFFFF, a group whose four bytes differ - and a name and layout that
 /// fill their fields with no terminator.

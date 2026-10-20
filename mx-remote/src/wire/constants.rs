@@ -26,30 +26,30 @@ pub const MULTICAST_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(224, 8, 8, 
 /// UDP port used in multicast mode.
 pub const MULTICAST_PORT: u16 = 8812;
 
-/// Default destination UDP port of a V2IP video stream.
+/// Default destination UDP port of a OneIP video stream.
 pub const V2IP_PORT_VIDEO: u16 = 50020;
 
-/// Default destination UDP port of a V2IP ancillary-data stream.
+/// Default destination UDP port of a OneIP ancillary-data stream.
 pub const V2IP_PORT_ANC: u16 = 50021;
 
-/// Default destination UDP port of a V2IP audio stream.
+/// Default destination UDP port of a OneIP audio stream.
 pub const V2IP_PORT_AUDIO: u16 = 50022;
 
-/// Sample rate a V2IP audio stream uses when none is given.
+/// Sample rate a OneIP audio stream uses when none is given.
 pub const V2IP_AUDIO_DEFAULT_SAMPLE_RATE: u32 = 48000;
 
-/// Channel count a V2IP audio stream uses when none is given.
+/// Channel count a OneIP audio stream uses when none is given.
 pub const V2IP_AUDIO_DEFAULT_CHANNELS: u8 = 2;
 
-/// Lowest channel count a V2IP audio stream accepts.
+/// Lowest channel count a OneIP audio stream accepts.
 pub const V2IP_AUDIO_MIN_CHANNELS: u8 = 1;
 
-/// Highest channel count a V2IP audio stream accepts.
+/// Highest channel count a OneIP audio stream accepts.
 pub const V2IP_AUDIO_MAX_CHANNELS: u8 = 8;
 
 /// Lowest valid encoder TX rate, in units of 10Mb/s.
 ///
-/// A V2IP device-config sender with no rate to offer puts a value outside
+/// A OneIP device-config sender with no rate to offer puts a value outside
 /// [`V2IP_SOURCE_RATE_MIN`]..=[`V2IP_SOURCE_RATE_MAX`] in `tx_rate`; the
 /// firmware drops that as invalid and keeps the rate it already had, which is
 /// what stops an address-only or scaling-only write from resetting a peer.

@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! Mesh bays: the V2IP bays a unit lists for other units' inputs and
+//! Mesh bays: the OneIP bays a unit lists for other units' inputs and
 //! outputs, built from its bay mappings and described by the bays they stand
 //! for.
 

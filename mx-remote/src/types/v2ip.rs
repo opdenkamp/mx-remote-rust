@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! V2IP stream configuration, statistics and the sink-side route.
+//! OneIP stream configuration, statistics and the sink-side route.
 
 use core::fmt;
 use std::net::Ipv4Addr;
@@ -14,7 +14,7 @@ use crate::wire::{
     V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
 };
 
-/// Which of a V2IP device's streams an address describes.
+/// Which of a OneIP device's streams an address describes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StreamKind {
     /// The video stream.
@@ -74,7 +74,7 @@ impl fmt::Display for V2ipStreamSource {
     }
 }
 
-/// The streams advertised by a single V2IP source.
+/// The streams advertised by a single OneIP source.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct V2ipStreamSources {
     /// The originating device, or the zero UID when it is not known.
@@ -147,7 +147,7 @@ impl fmt::Display for V2ipRouteTarget {
     }
 }
 
-/// The three streams a manual route points a V2IP sink at.
+/// The three streams a manual route points a OneIP sink at.
 ///
 /// Fill in all three. The firmware decides whether a sink has a manual route
 /// at all by looking at the video and ancillary groups, so a route carrying
@@ -189,7 +189,7 @@ impl fmt::Display for V2ipRoute {
     }
 }
 
-/// The sample rate and channel count a V2IP audio stream is decoded at.
+/// The sample rate and channel count a OneIP audio stream is decoded at.
 ///
 /// Fill both in. The firmware header calls zero "use the default", but the
 /// path that applies a manual route substitutes nothing: it hands the pair to
@@ -227,7 +227,7 @@ impl fmt::Display for V2ipAudioFormat {
     }
 }
 
-/// A V2IP output's scaling mode, refresh rate and flags.
+/// A OneIP output's scaling mode, refresh rate and flags.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct V2ipScalingSettings {
     /// The signal type the output scales to.
@@ -273,7 +273,7 @@ pub const SCALING_FLAGS_DEFINED: u8 = SCALING_FLAG_MODE_VALID
     | SCALING_FLAG_SKIP_420
     | SCALING_FLAG_AUTO_SCALING;
 
-/// Lowest refresh rate a V2IP output stage accepts, in Hz.
+/// Lowest refresh rate a OneIP output stage accepts, in Hz.
 ///
 /// A receiver replaces anything outside
 /// [`V2IP_SCALING_REFRESH_MIN`]..=[`V2IP_SCALING_REFRESH_MAX`] with 50 rather
@@ -281,11 +281,11 @@ pub const SCALING_FLAGS_DEFINED: u8 = SCALING_FLAG_MODE_VALID
 /// nothing.
 pub const V2IP_SCALING_REFRESH_MIN: u16 = 24;
 
-/// Highest refresh rate a V2IP output stage accepts, in Hz. See
+/// Highest refresh rate a OneIP output stage accepts, in Hz. See
 /// [`V2IP_SCALING_REFRESH_MIN`].
 pub const V2IP_SCALING_REFRESH_MAX: u16 = 120;
 
-/// The output format to scale a V2IP sink to.
+/// The output format to scale a OneIP sink to.
 ///
 /// Built from a depth and a colour space rather than from a packed signal-type
 /// word, so the word a caller sends cannot carry the unset bpp index a sink
@@ -321,7 +321,7 @@ impl V2ipOutputMode {
             return Err("the svd names no known video descriptor");
         }
         if MxrSignalType::bpp_index_for_depth(self.depth).is_none() {
-            return Err("a V2IP output stage takes 8, 10 or 12 bits per pixel");
+            return Err("a OneIP output stage takes 8, 10 or 12 bits per pixel");
         }
         if self.colour > V2ipColourSpace::YCBCR420 {
             return Err("the colour space names none of RGB, 4:4:4, 4:2:2 or 4:2:0");
@@ -448,7 +448,7 @@ impl V2ipScalingSettings {
     }
 }
 
-/// The per-stream DSCP marking in a V2IP device configuration.
+/// The per-stream DSCP marking in a OneIP device configuration.
 ///
 /// A stream whose wire byte carries no [`V2IP_DSCP_SET`] bit reads back as
 /// `None`. Firmware treats the marking as all-or-nothing: it applies one only
@@ -486,7 +486,7 @@ pub(crate) fn parse_dscp(raw: u8) -> Option<u8> {
     (raw & V2IP_DSCP_SET != 0).then_some(raw & V2IP_DSCP_MAX)
 }
 
-/// The local encoder/decoder configuration of a V2IP device.
+/// The local encoder/decoder configuration of a OneIP device.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DeviceV2ipDetails {
     /// The video stream this device sources.
@@ -556,7 +556,7 @@ impl DeviceV2ipDetails {
     }
 }
 
-/// The sink-side route a V2IP device is subscribed to, as the mesh believes it.
+/// The sink-side route a OneIP device is subscribed to, as the mesh believes it.
 ///
 /// A route request addressed to the device sets this the moment it is seen,
 /// which is what every device on the mesh does with one. So a request the
@@ -597,13 +597,13 @@ pub struct DeviceV2ipSink {
     pub audio_fmt: Option<V2ipAudioFormat>,
 }
 
-/// The highest PTP domain a V2IP device runs in.
+/// The highest PTP domain a OneIP device runs in.
 pub const V2IP_PTP_DOMAIN_MAX: u8 = 127;
 
 /// Minutes in a day: every time in a [`V2ipPowerSaveSchedule`] is below this.
 pub const V2IP_MINUTES_PER_DAY: u16 = 24 * 60;
 
-/// A V2IP device's daily power save windows, Monday first, in the device's
+/// A OneIP device's daily power save windows, Monday first, in the device's
 /// time zone.
 ///
 /// Day `d` powers down at `start[d]` and up again at `end[d]`, both in minutes
@@ -635,7 +635,7 @@ impl V2ipPowerSaveSchedule {
     }
 }
 
-/// The device settings of a V2IP unit, as it reports them and as its
+/// The device settings of a OneIP unit, as it reports them and as its
 /// controller changes them.
 ///
 /// Each setting is carried only behind its bit in [`valid`](Self::valid), so a
@@ -674,7 +674,7 @@ pub struct V2ipDeviceSettings {
     pub ptp_messages: V2ipPtpMessages,
 }
 
-/// How a V2IP device paces its PTP messages, its SAP timings, its streams'
+/// How a OneIP device paces its PTP messages, its SAP timings, its streams'
 /// TTL and its output's rotation, which a frame carries in the same block. Each value is behind its own bit of
 /// [`V2ipDeviceSettings::valid`], one of
 /// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK).
@@ -717,10 +717,10 @@ pub struct V2ipPtpMessages {
     pub sink_rotation_step: u16,
 }
 
-/// The TTL a V2IP device's streams carry until it is set.
+/// The TTL a OneIP device's streams carry until it is set.
 pub const V2IP_STREAM_TTL_DEFAULT: u8 = 64;
 
-/// The largest angle a V2IP device's HDMI output is turned by, in degrees.
+/// The largest angle a OneIP device's HDMI output is turned by, in degrees.
 pub const V2IP_SINK_ROTATION_MAX: u16 = 359;
 
 impl V2ipPtpMessages {
@@ -957,10 +957,10 @@ impl V2ipDeviceSettings {
     }
 }
 
-/// The longest session description a V2IP output takes, in bytes.
+/// The longest session description a OneIP output takes, in bytes.
 pub const V2IP_SDP_MAX: usize = 2048;
 
-/// What a V2IP output plays from a session description, as it last reported
+/// What a OneIP output plays from a session description, as it last reported
 /// it. The stream's fields are zero while it plays none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct V2ipSinkSdp {
@@ -1005,7 +1005,7 @@ impl V2ipSinkSdp {
     }
 }
 
-/// How one of a V2IP source unit's streams is encrypted, as the unit reports
+/// How one of a OneIP source unit's streams is encrypted, as the unit reports
 /// it: the values of the stream's `a=privacy` and `a=extmap` session
 /// description attributes.
 ///
@@ -1037,7 +1037,7 @@ pub struct V2ipPrivacyStream {
     pub key_version: u32,
 }
 
-/// How a V2IP source unit's streams are encrypted, as it last reported it.
+/// How a OneIP source unit's streams are encrypted, as it last reported it.
 ///
 /// A unit reports this whenever it changes, at least once a minute, and when
 /// asked. A unit that is in no mesh sends in the clear.
@@ -1051,7 +1051,7 @@ pub struct V2ipPrivacy {
     pub anc: V2ipPrivacyStream,
 }
 
-/// A V2IP device's PTP state, as it reports it about itself.
+/// A OneIP device's PTP state, as it reports it about itself.
 ///
 /// Only the device can read its own video processor, so this is never written
 /// to a device, and a controller's frame about one carries none.
@@ -1097,7 +1097,7 @@ pub const V2IP_VLAN_PORT_SFP: usize = 0;
 /// The highest VLAN id: 0 means untagged, and 4095 is reserved by IEEE 802.1Q.
 pub const V2IP_VLAN_ID_MAX: u16 = 4094;
 
-/// VLAN tagging on a V2IP device's uplink.
+/// VLAN tagging on a OneIP device's uplink.
 ///
 /// Only the device knows what it runs, so this is what it reported about
 /// itself. A change written to it is applied at once and stays
@@ -1187,7 +1187,7 @@ pub const V2IP_SYNC_BEEP_MS_MIN: u16 = 1;
 /// The longest lip-sync beep, in milliseconds.
 pub const V2IP_SYNC_BEEP_MS_MAX: u16 = 10_000;
 
-/// A V2IP sink's test tone.
+/// A OneIP sink's test tone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct V2ipTestTone {
     /// What plays.
@@ -1219,7 +1219,7 @@ impl V2ipTestTone {
     }
 }
 
-/// A V2IP sink's lip-sync flash: a pattern frame is marked every `period`,
+/// A OneIP sink's lip-sync flash: a pattern frame is marked every `period`,
 /// the frame `lead` after a mark flashes white, and a
 /// [`BEEP`](V2ipToneMode::BEEP) tone starts `offset` sample periods after it.
 ///
@@ -1252,7 +1252,7 @@ impl V2ipTestSync {
     }
 }
 
-/// The test card a V2IP sink draws on its output, as it last reported it.
+/// The test card a OneIP sink draws on its output, as it last reported it.
 ///
 /// A sink reports it only when asked, with
 /// [`Remote::request_v2ip_testcard`](crate::Remote::request_v2ip_testcard) or
@@ -1299,7 +1299,7 @@ pub struct V2ipTxStats {
     pub overflow: u32,
 }
 
-/// The health state of a V2IP decoder.
+/// The health state of a OneIP decoder.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct V2ipDecoderState(u8);
 

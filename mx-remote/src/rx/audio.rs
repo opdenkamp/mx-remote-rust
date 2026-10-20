@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! The V2IP audio sub-protocol: the endpoint tree, its links, and the
+//! The OneIP audio sub-protocol: the endpoint tree, its links, and the
 //! per-endpoint notifications.
 
 use crate::event::Event;

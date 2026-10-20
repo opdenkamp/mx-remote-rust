@@ -257,7 +257,7 @@ impl Device {
             || self.hello.features.has(DeviceFeature::V2IP_SOURCE)
     }
 
-    /// Whether the device reports a V2IP sink, which is what carries the
+    /// Whether the device reports a OneIP sink, which is what carries the
     /// scaling settings.
     pub(crate) fn is_v2ip_sink(&self) -> bool {
         self.hello.features.has(DeviceFeature::V2IP_SINK)
@@ -286,7 +286,7 @@ impl Device {
     /// Firmware without it builds some frames over uninitialised stack, so
     /// those fields carry noise rather than values: the scaling flags and,
     /// behind a spuriously set valid bit, the scaling mode and refresh; bay 0's
-    /// addresses in the V2IP sources frame; and the padding beside the
+    /// addresses in the OneIP sources frame; and the padding beside the
     /// remote-control target.
     pub(crate) fn config_initialised(&self) -> bool {
         self.hello.features.has(DeviceFeature::CONFIG_INITIALISED)
@@ -377,7 +377,7 @@ impl Device {
 
     /// The streams the given source bay advertises.
     ///
-    /// The V2IP sources frame lists one record per source bay in bay order. A
+    /// The OneIP sources frame lists one record per source bay in bay order. A
     /// receiver with no local source still sends a record for the bay it does
     /// not have, so its list is offset by one.
     pub(crate) fn v2ip_source_for(&self, bay: &Bay) -> Option<&V2ipStreamSources> {
@@ -391,7 +391,7 @@ impl Device {
 
     /// The cross-device identity a bay is linked by.
     ///
-    /// A V2IP source is the same physical input wherever it appears, so it is
+    /// A OneIP source is the same physical input wherever it appears, so it is
     /// keyed by the device producing the stream rather than by the port it
     /// happens to be mapped to. Everything else is keyed by its own port.
     pub(crate) fn link_key(&self, bay: &Bay) -> BayUid {
@@ -418,7 +418,7 @@ impl Device {
     /// itself gives the number to expect, so counting what arrived can only be
     /// compared against a guess.
     ///
-    /// For a V2IP device this is half the answer by itself: its bays include
+    /// For a OneIP device this is half the answer by itself: its bays include
     /// ones that live on other devices, and those arrive on a frame of their
     /// own that [`Self::configuration_complete`] requires separately.
     ///
@@ -437,7 +437,7 @@ impl Device {
     /// That it reported at all is the whole of what can be established, and no
     /// count of bays stands in for it. Two reasons, either enough on its own:
     ///
-    /// A link record describes one of the sender's own ports. Most of a V2IP
+    /// A link record describes one of the sender's own ports. Most of a OneIP
     /// device's bays are proxies for streams that live on other devices, and
     /// those own no record - a 14-bay transceiver reports two, for its local
     /// input and its local output.
@@ -557,7 +557,7 @@ impl Device {
     /// the bays this device already has.
     ///
     /// A record with an empty name describes no bay, as a unit sends for an
-    /// input it cannot number, and is dropped. So is a record for a V2IP bay
+    /// input it cannot number, and is dropped. So is a record for a OneIP bay
     /// standing for another unit: what it says about that unit's bay is never
     /// refreshed, and the bay is built from the bay mappings instead.
     pub(crate) fn apply_bay_config(&mut self, cfg: &BayConfig, now: Instant, ev: &mut Vec<Event>) {
@@ -585,13 +585,13 @@ impl Device {
         if bay.mbay_id.is_none() {
             bay.mbay_id = Some(cfg.bay);
         }
-        // A unit maps its own V2IP bay to itself.
+        // A unit maps its own OneIP bay to itself.
         if bay.is_v2ip_source() || bay.is_v2ip_sink() {
             bay.v2ip_uid = self.uid;
         }
         bay.apply_bay_status(cfg.status, ev);
         bay.signal_mode = cfg.signal_mode;
-        // A V2IP source reporting a signal describes it in its own detailed
+        // A OneIP source reporting a signal describes it in its own detailed
         // report, which carries the frame rate this field has no room for.
         if !cfg.status.has(crate::wire::BayStatus::SIGNAL_DETECTED) || !is_v2ip {
             bay.set_signal_type(cfg.signal_type.clone(), ev);
@@ -623,7 +623,7 @@ impl Device {
         }
     }
 
-    /// Takes one page of the device's V2IP bay mappings: the unit owning
+    /// Takes one page of the device's OneIP bay mappings: the unit owning
     /// each bay from the one on `first_port` on, and returns the mesh bays it
     /// registered or pointed at another unit.
     ///
@@ -675,7 +675,7 @@ impl Device {
 
     /// The identity of a local bay named by port number in a routing report.
     ///
-    /// A V2IP unit's input port names a bay even before the unit's mappings
+    /// A OneIP unit's input port names a bay even before the unit's mappings
     /// have created it, as they do after its bay configuration.
     pub(crate) fn routed_source(&self, port: u16) -> Option<BayUid> {
         let named = self.bays.contains_key(&port)
@@ -1300,17 +1300,17 @@ impl Device {
     }
 }
 
-/// The protocol from which a V2IP unit numbers its ports
+/// The protocol from which a OneIP unit numbers its ports
 /// [`PortLayout::Fixed`].
 const FIXED_PORTS_SINCE: u16 = 0x2B;
 
-/// The bays a V2IP unit numbers in each direction.
+/// The bays a OneIP unit numbers in each direction.
 const V2IP_BAYS: u8 = 127;
 
 /// The bays of each direction that come first in [`PortLayout::Split`].
 const SPLIT_FIRST: u8 = 16;
 
-/// How a V2IP unit numbers the ports of its bays.
+/// How a OneIP unit numbers the ports of its bays.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PortLayout {
     /// Input n on port n, output n on port 127 + n.

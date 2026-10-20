@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
 //! Decodes that protocol 0x28 pinned down: the per-field merge rules of the
-//! V2IP device configuration, the paged reports, and the signal report.
+//! OneIP device configuration, the paged reports, and the signal report.
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
@@ -31,7 +31,7 @@ fn amp_features() -> DeviceFeature {
     DeviceFeature::AUDIO_ROUTING | DeviceFeature::VOLUME_CONTROL | DeviceFeature::AUDIO_AMPLIFIER
 }
 
-/// A V2IP source list of `count` records, short enough to be sent bare.
+/// A OneIP source list of `count` records, short enough to be sent bare.
 fn stream_rec_page(count: u8) -> Vec<u8> {
     let mut page = Vec::new();
     for n in 0..count {
@@ -382,7 +382,7 @@ fn link_pages_merge() {
 
 /// A bay that owns no link record does not hold the configuration open.
 ///
-/// A link record describes one of the sender's own ports, and most of a V2IP
+/// A link record describes one of the sender's own ports, and most of a OneIP
 /// device's bays are proxies for streams that live on other devices. The
 /// fourteen-bay transceiver below reports two records, for its local input and
 /// its local output, and that is its whole list.
@@ -552,7 +552,7 @@ fn the_window_is_not_restarted_by_another_hello() {
 /// The record is dropped, as a device drops the same frame, and the sender
 /// re-sends. What the page establishes is that the device answered at all,
 /// which is the whole of what the link configuration can establish: most of a
-/// V2IP device's bays own no record either way.
+/// OneIP device's bays own no record either way.
 #[test]
 fn a_page_of_unknown_bays_still_reports_the_link_configuration() {
     let mut h = Harness::new(34);
@@ -578,7 +578,7 @@ fn a_page_of_unknown_bays_still_reports_the_link_configuration() {
     );
 }
 
-/// Nor does the window stand in for a V2IP device's source list.
+/// Nor does the window stand in for a OneIP device's source list.
 #[test]
 fn the_window_does_not_release_the_v2ip_source_list() {
     let mut h = Harness::new(32);

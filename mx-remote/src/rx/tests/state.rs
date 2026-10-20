@@ -94,14 +94,14 @@ fn discovery_builds_a_device_from_its_configuration() {
     assert_eq!(streams.video.ip, std::net::Ipv4Addr::new(239, 1, 1, 1));
     assert_eq!(streams.audio.ip, std::net::Ipv4Addr::new(239, 1, 1, 2));
 
-    // A V2IP source is keyed by the device producing the stream, not by the
+    // A OneIP source is keyed by the device producing the stream, not by the
     // port it happens to be mapped to.
     assert_eq!(
         h.state.link_key(BayUid::new(sender, 0)),
         Some(BayUid::new(source, 0))
     );
 
-    // A V2IP device is not fully configured until its link configuration has
+    // A OneIP device is not fully configured until its link configuration has
     // arrived.
     assert!(!h.complete());
     h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 1", 0));
@@ -338,7 +338,7 @@ fn a_frame_from_an_unknown_sender_is_not_acted_on() {
     );
 }
 
-/// Builds a device that advertises V2IP sources.
+/// Builds a device that advertises OneIP sources.
 fn source_device(n: u8) -> Harness {
     let mut h = Harness::new(n);
     h.hello(

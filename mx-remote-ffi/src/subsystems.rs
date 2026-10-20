@@ -43,7 +43,7 @@ const _: () = assert!(MXR_MULTIVIEWER_INPUTS == MULTIVIEWER_INPUTS);
 /// How many pairs a UTP cable diagnostic covers.
 pub const MXR_UTP_PAIRS: usize = 4;
 
-/// Which of a V2IP device's streams an address describes.
+/// Which of a OneIP device's streams an address describes.
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum mxr_stream_kind_t {
@@ -97,7 +97,7 @@ impl From<V2ipStreamSource> for mxr_stream_source_t {
     }
 }
 
-/// The streams one V2IP source advertises.
+/// The streams one OneIP source advertises.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_stream_sources_t {
@@ -128,7 +128,7 @@ impl From<V2ipStreamSources> for mxr_stream_sources_t {
     }
 }
 
-/// A V2IP device's own encoder configuration.
+/// A OneIP device's own encoder configuration.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_details_t {
@@ -177,7 +177,7 @@ pub const MXR_SCALING_FLAG_SKIP_420: u8 = 1 << 6;
 /// Set when the output scales automatically.
 pub const MXR_SCALING_FLAG_AUTO_SCALING: u8 = 1 << 7;
 
-/// The streams a V2IP sink is subscribed to.
+/// The streams a OneIP sink is subscribed to.
 ///
 /// **Addresses that read as unset mean "no route, or the sink could not work
 /// one out" - never "definitely not subscribed".** This is the one part of a
@@ -436,7 +436,7 @@ impl From<V2ipDecoderDetail> for mxr_v2ip_decoder_t {
     }
 }
 
-/// A device's V2IP statistics, cumulative and over the last minute.
+/// A device's OneIP statistics, cumulative and over the last minute.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_stats_t {
@@ -791,7 +791,7 @@ fn not_reported(r: &mxr_remote_t, uid: mxr_uid_t, what: &str) -> mxr_result_t {
     )
 }
 
-/// Fills `out` with a device's V2IP statistics.
+/// Fills `out` with a device's OneIP statistics.
 ///
 /// A device sends these only while subscribed; see
 /// `mxr_subscribe_v2ip_stats()`.
@@ -820,11 +820,11 @@ pub unsafe extern "C" fn mxr_v2ip_stats(
                 decoder: s.decoder.into(),
             });
         // SAFETY: the caller guarantees a writable mxr_v2ip_stats_t or null.
-        unsafe { fill(r, uid, out, "V2IP statistics", value) }
+        unsafe { fill(r, uid, out, "OneIP statistics", value) }
     })
 }
 
-/// Fills `out` with a V2IP device's own encoder configuration.
+/// Fills `out` with a OneIP device's own encoder configuration.
 ///
 /// # Safety
 ///
@@ -858,11 +858,11 @@ pub unsafe extern "C" fn mxr_v2ip_details(
                 scaling_flags: d.scaling.flags,
             });
         // SAFETY: the caller guarantees a writable mxr_v2ip_details_t or null.
-        unsafe { fill(r, uid, out, "V2IP encoder configuration", value) }
+        unsafe { fill(r, uid, out, "OneIP encoder configuration", value) }
     })
 }
 
-/// Fills `out` with the streams a V2IP sink is subscribed to.
+/// Fills `out` with the streams a OneIP sink is subscribed to.
 ///
 /// # Safety
 ///
@@ -892,11 +892,11 @@ pub unsafe extern "C" fn mxr_v2ip_sink(
                 },
             });
         // SAFETY: the caller guarantees a writable mxr_v2ip_sink_t or null.
-        unsafe { fill(r, uid, out, "V2IP sink route", value) }
+        unsafe { fill(r, uid, out, "OneIP sink route", value) }
     })
 }
 
-/// Fills `out` with what a V2IP device's video processor supports.
+/// Fills `out` with what a OneIP device's video processor supports.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` while the device has not said: a processor
 /// that has yet to answer and one with none of the optional commands send the
@@ -924,7 +924,7 @@ pub unsafe extern "C" fn mxr_v2ip_features(
     })
 }
 
-/// A V2IP device's settings.
+/// A OneIP device's settings.
 ///
 /// A setting is reported only when its `MXR_V2IP_SETTING_*` bit is set in
 /// `valid`, and a device reports every setting it has.
@@ -956,7 +956,7 @@ pub const MXR_V2IP_IR_PROFILE_MAX: i8 = 18;
 const _: () = assert!(MXR_V2IP_IR_PROFILE_NOT_SET == mx_remote::V2IP_IR_PROFILE_NOT_SET);
 const _: () = assert!(MXR_V2IP_IR_PROFILE_MAX == mx_remote::V2IP_IR_PROFILE_MAX);
 
-/// Fills `out` with a V2IP device's settings.
+/// Fills `out` with a OneIP device's settings.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any. A change
 /// is announced through `on_device_update`.
@@ -989,7 +989,7 @@ pub unsafe extern "C" fn mxr_v2ip_device_settings(
     })
 }
 
-/// A V2IP device's power save settings, beside `mxr_v2ip_device_settings_t`
+/// A OneIP device's power save settings, beside `mxr_v2ip_device_settings_t`
 /// rather than in it so that struct keeps its size.
 ///
 /// Which of them the device has reported is in that struct's `valid`.
@@ -1013,7 +1013,7 @@ pub const MXR_V2IP_MINUTES_PER_DAY: u16 = 1440;
 
 const _: () = assert!(MXR_V2IP_MINUTES_PER_DAY == mx_remote::V2IP_MINUTES_PER_DAY);
 
-/// Fills `out` with a V2IP device's power save settings.
+/// Fills `out` with a OneIP device's power save settings.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
 /// `mxr_v2ip_device_settings()` says which of these it has.
@@ -1044,7 +1044,7 @@ pub unsafe extern "C" fn mxr_v2ip_power_save(
     })
 }
 
-/// A V2IP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
+/// A OneIP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
 /// than in it so that struct keeps its size.
 ///
 /// Which of them the device has reported is in that struct's `valid`.
@@ -1061,12 +1061,12 @@ pub struct mxr_v2ip_ptp_settings_t {
     pub priority1: u8,
 }
 
-/// The highest PTP domain a V2IP device runs in.
+/// The highest PTP domain a OneIP device runs in.
 pub const MXR_V2IP_PTP_DOMAIN_MAX: u8 = 127;
 
 const _: () = assert!(MXR_V2IP_PTP_DOMAIN_MAX == mx_remote::V2IP_PTP_DOMAIN_MAX);
 
-/// Fills `out` with a V2IP device's PTP settings.
+/// Fills `out` with a OneIP device's PTP settings.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
 /// `mxr_v2ip_device_settings()` says which of these it has.
@@ -1178,7 +1178,7 @@ pub unsafe extern "C" fn mxr_device_clock(
     })
 }
 
-/// VLAN tagging on a V2IP device's uplink.
+/// VLAN tagging on a OneIP device's uplink.
 ///
 /// Only the device knows what it runs, so this is what it reported about
 /// itself. A change written to it is applied at once and carries
@@ -1217,7 +1217,7 @@ const _: () = assert!(MXR_V2IP_VLAN_PORTS == mx_remote::V2IP_VLAN_PORTS);
 const _: () = assert!(MXR_V2IP_VLAN_PORT_SFP == mx_remote::V2IP_VLAN_PORT_SFP);
 const _: () = assert!(MXR_V2IP_VLAN_ID_MAX == mx_remote::V2IP_VLAN_ID_MAX);
 
-/// Fills `out` with the VLAN configuration a V2IP device last reported.
+/// Fills `out` with the VLAN configuration a OneIP device last reported.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported one. A change
 /// is announced through `on_device_update`.
@@ -1357,7 +1357,7 @@ pub unsafe extern "C" fn mxr_unit_status(
     })
 }
 
-/// Fills `out` with the level a V2IP device powers down to in power save,
+/// Fills `out` with the level a OneIP device powers down to in power save,
 /// `MXR_V2IP_POWER_SAVE_LEVEL_*`.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
@@ -1384,7 +1384,7 @@ pub unsafe extern "C" fn mxr_v2ip_power_save_level(
     })
 }
 
-/// How a V2IP device paces its PTP messages, its SAP timings, its streams'
+/// How a OneIP device paces its PTP messages, its SAP timings, its streams'
 /// TTL and its output's rotation, which a frame carries in the same block.
 /// Intervals are base-2 logarithms of seconds, so -3 is 125 ms and 1 is 2 s.
 /// Each value is meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
@@ -1455,7 +1455,7 @@ impl From<mxr_v2ip_ptp_messages_t> for V2ipPtpMessages {
     }
 }
 
-/// Fills `out` with how a V2IP device paces its PTP messages.
+/// Fills `out` with how a OneIP device paces its PTP messages.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
 /// `mxr_v2ip_device_settings()` says which of these it has.
@@ -1482,7 +1482,7 @@ pub unsafe extern "C" fn mxr_v2ip_ptp_messages(
     })
 }
 
-/// The longest session description a V2IP output takes, in bytes.
+/// The longest session description a OneIP output takes, in bytes.
 pub const MXR_V2IP_SDP_MAX: usize = 2048;
 /// Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.
 pub const MXR_V2IP_SDP_NAME_LEN: usize = 48;
@@ -1491,7 +1491,7 @@ pub const MXR_V2IP_SDP_LAYOUT_LEN: usize = 8;
 
 const _: () = assert!(MXR_V2IP_SDP_MAX == mx_remote::V2IP_SDP_MAX);
 
-/// What a V2IP output plays from a session description, as it last reported
+/// What a OneIP output plays from a session description, as it last reported
 /// it. The stream's fields are zero while it plays none.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1528,7 +1528,7 @@ pub struct mxr_v2ip_sink_sdp_t {
     pub layout: [c_char; MXR_V2IP_SDP_LAYOUT_LEN],
 }
 
-/// Fills `out` with what a V2IP output last reported playing from a session
+/// Fills `out` with what a OneIP output last reported playing from a session
 /// description.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the output has reported; it does when
@@ -1577,7 +1577,7 @@ pub unsafe extern "C" fn mxr_v2ip_sink_sdp(
     })
 }
 
-/// How one of a V2IP source unit's streams is encrypted: the values of its
+/// How one of a OneIP source unit's streams is encrypted: the values of its
 /// session description's `a=privacy` and `a=extmap` attributes. The key
 /// itself never travels: every unit of a mesh holds the same one. This
 /// library holds no key and decrypts nothing.
@@ -1607,7 +1607,7 @@ pub struct mxr_v2ip_privacy_stream_t {
     pub key_version: u32,
 }
 
-/// How a V2IP source unit's streams are encrypted, as it last reported it.
+/// How a OneIP source unit's streams are encrypted, as it last reported it.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_privacy_t {
@@ -1636,7 +1636,7 @@ fn privacy_stream(s: &V2ipPrivacyStream) -> mxr_v2ip_privacy_stream_t {
     out
 }
 
-/// Fills `out` with how a V2IP source unit's streams are encrypted, as it
+/// Fills `out` with how a OneIP source unit's streams are encrypted, as it
 /// last reported it.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the unit has reported; it does when
@@ -1909,7 +1909,7 @@ pub unsafe extern "C" fn mxr_unit_power_save(
     })
 }
 
-/// A V2IP device's PTP state, as it reported it about itself.
+/// A OneIP device's PTP state, as it reported it about itself.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_ptp_t {
@@ -1930,7 +1930,7 @@ pub struct mxr_v2ip_ptp_t {
     pub grandmaster_identity: [u8; 8],
 }
 
-/// Fills `out` with the PTP state a V2IP device last reported about itself.
+/// Fills `out` with the PTP state a OneIP device last reported about itself.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported one, and while
 /// it has none to report: no PTP on its video processor, or in power save. A
@@ -1966,7 +1966,7 @@ pub unsafe extern "C" fn mxr_v2ip_ptp(
     })
 }
 
-/// A V2IP sink's test tone.
+/// A OneIP sink's test tone.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_test_tone_t {
@@ -1983,7 +1983,7 @@ pub struct mxr_v2ip_test_tone_t {
     pub rate: u32,
 }
 
-/// A V2IP sink's lip-sync flash: a pattern frame is marked every `period`,
+/// A OneIP sink's lip-sync flash: a pattern frame is marked every `period`,
 /// the frame `lead` after a mark flashes white, and a beep tone starts
 /// `offset` sample periods after it.
 #[repr(C)]
@@ -2002,7 +2002,7 @@ pub struct mxr_v2ip_test_sync_t {
     pub beep_ms: u16,
 }
 
-/// The test card a V2IP sink last reported. The counters run free and wrap.
+/// The test card a OneIP sink last reported. The counters run free and wrap.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct mxr_v2ip_testcard_t {
@@ -2093,7 +2093,7 @@ impl From<mxr_v2ip_test_sync_t> for V2ipTestSync {
     }
 }
 
-/// Fills `out` with the test card a V2IP sink last reported.
+/// Fills `out` with the test card a OneIP sink last reported.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the sink has answered
 /// `mxr_request_v2ip_testcard()` or a change. A change is announced through
@@ -2303,7 +2303,7 @@ pub unsafe extern "C" fn mxr_v2ip_sources(
             return no_handle();
         };
         let Some(sources) = r.remote.v2ip_sources(uid.into()) else {
-            not_reported(r, uid, "V2IP stream sources");
+            not_reported(r, uid, "OneIP stream sources");
             return 0;
         };
         // SAFETY: the caller guarantees cap writable elements at out.

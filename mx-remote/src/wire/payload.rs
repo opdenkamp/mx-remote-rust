@@ -50,7 +50,7 @@ impl Default for StreamAddr {
     }
 }
 
-/// The video, audio and ancillary streams a V2IP sink is told to subscribe to.
+/// The video, audio and ancillary streams a OneIP sink is told to subscribe to.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct V2ipStreams {
     /// Video stream destination.

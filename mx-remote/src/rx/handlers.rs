@@ -264,7 +264,7 @@ pub(super) fn temperature(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     }
 }
 
-/// Width of one record in the V2IP sources frame.
+/// Width of one record in the OneIP sources frame.
 const V2IP_SOURCE_RECORD: usize = 40;
 
 /// The header a paged source list puts in front of its records: where in the
@@ -409,7 +409,7 @@ fn apply_stream_route(
     }
 }
 
-/// The device a V2IP configuration frame is about, or `None` when nothing on
+/// The device a OneIP configuration frame is about, or `None` when nothing on
 /// the network would act on it.
 ///
 /// The payload names its subject in the first sixteen bytes, and that is what
@@ -583,7 +583,7 @@ pub(super) fn ptp_messages(m: &[u8], valid: &mut V2ipDeviceSetting) -> V2ipPtpMe
     }
 }
 
-/// Applies a device's V2IP encoder configuration, and the tiling and sink
+/// Applies a device's OneIP encoder configuration, and the tiling and sink
 /// blocks a longer frame appends to it.
 ///
 /// Every block lands on the device the payload names, which is the sender only
@@ -882,7 +882,7 @@ fn bay_status_record(state: &mut State, sender: DeviceUid, record: &[u8], ev: &m
             bay.features = crate::wire::BayFeatures::from_bits(features);
         }
         bay.apply_bay_status(status, ev);
-        // A V2IP source reporting a signal describes it in its own detailed
+        // A OneIP source reporting a signal describes it in its own detailed
         // report, which carries the frame rate this field has no room for.
         if !status.has(BayStatus::SIGNAL_DETECTED) || !is_v2ip {
             bay.apply_signal_status(status.has(BayStatus::SIGNAL_DETECTED), description, ev);
@@ -921,7 +921,7 @@ pub(super) fn links(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         state.update_link(origin, linked_serial, linked_bay, features, ev);
     }
     // The page counts as the list having been reported whatever landed, which
-    // is the whole of what the link configuration establishes. Most of a V2IP
+    // is the whole of what the link configuration establishes. Most of a OneIP
     // device's bays own no record, so a record per bay is a total no device
     // reaches.
     if let Some(device) = state.device_mut(sender) {
@@ -994,7 +994,7 @@ pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
     }
 }
 
-/// Records which source device each V2IP bay stands in for.
+/// Records which source device each OneIP bay stands in for.
 ///
 /// The first `u16` packs the record count above a direction bit, and the
 /// second is the port of the bay the page starts at. A device may split its

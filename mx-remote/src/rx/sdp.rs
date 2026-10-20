@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! What a V2IP output plays from a session description.
+//! What a OneIP output plays from a session description.
 
 use std::net::Ipv4Addr;
 

@@ -146,7 +146,7 @@ fn audio_features_parse() {
     let mut p = poisoned(68);
     p[0..2].copy_from_slice(&0u16.to_le_bytes()); // the FEATURES sub-opcode
     p[28..30].copy_from_slice(&2u16.to_le_bytes()); // endpoint count
-                                                    // Entry 0 at 36: id 0, an endpoint declaration, input and V2IP transmit.
+                                                    // Entry 0 at 36: id 0, an endpoint declaration, input and OneIP transmit.
     p[36] = 0;
     p[37] = 1;
     p[44..48].copy_from_slice(
@@ -209,7 +209,7 @@ fn an_audio_report_is_read_only_whole_and_about_its_sender() {
     assert_eq!(eps.get(1).map(|e| e.linked_device), Some(linked));
 }
 
-/// A V2IP receiver's tree: endpoint 0 an output, endpoint 1 its V2IP input,
+/// A OneIP receiver's tree: endpoint 0 an output, endpoint 1 its OneIP input,
 /// which can lock its source. Each entry's status word follows its features,
 /// and every other byte is poisoned.
 fn lockable_tree(status0: u32, status1: u32) -> Vec<u8> {
@@ -511,7 +511,7 @@ fn liveness_is_refreshed_by_any_frame_until_it_lapses() {
     let mut h = Harness::new(11);
     let now = Instant::now();
 
-    // A V2IP device announces itself often enough that fifteen seconds of
+    // A OneIP device announces itself often enough that fifteen seconds of
     // silence is meaningful.
     let hello = super::hello_payload(0x27, "ONEIP", "LV0001", "4.7.9", DeviceFeature::V2IP_SINK);
     h.feed_at(op::SYS_HELLO, &hello, now - Duration::from_secs(20));

@@ -178,11 +178,13 @@ fn device_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
     state.device(uid).ok_or(ControlError::UnknownDevice(uid))
 }
 
-/// The device behind `uid`, once it is known to be a V2IP output.
+/// The device behind `uid`, once it is known to be a OneIP output.
 fn sdp_sink_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
     let device = device_of(state, uid)?;
     if !device.is_v2ip_sink() {
-        return Err(ControlError::Unsupported("the device is not a V2IP output"));
+        return Err(ControlError::Unsupported(
+            "the device is not a OneIP output",
+        ));
     }
     Ok(device)
 }
@@ -270,7 +272,7 @@ fn source_streams(device: &Device, port: u16) -> Result<&V2ipStreamSources, Cont
 fn v2ip_sink(state: &State, uid: BayUid) -> Result<(&Device, &Device, &Bay), ControlError> {
     let (_, bay) = bay_of(state, uid)?;
     if !bay.is_v2ip_sink() {
-        return Err(ControlError::Unsupported("routing needs a V2IP sink"));
+        return Err(ControlError::Unsupported("routing needs a OneIP sink"));
     }
     let (unit, sink) = acted_on(state, uid)?;
     Ok((device_of(state, uid.device)?, unit, sink))
@@ -317,7 +319,7 @@ fn stored_name(name: &str) -> String {
 impl Remote {
     // ---- routing ----
 
-    /// Routes this V2IP sink's video to the stream a source port advertises.
+    /// Routes this OneIP sink's video to the stream a source port advertises.
     ///
     /// The sink's audio then follows the video: a separate audio route is
     /// dropped, so route audio after video to keep them apart. A unit below
@@ -346,7 +348,7 @@ impl Remote {
         })
     }
 
-    /// Routes this V2IP sink's audio to the stream a source port advertises.
+    /// Routes this OneIP sink's audio to the stream a source port advertises.
     pub fn select_audio_source(&self, sink: BayUid, source_port: u16) -> Result<(), ControlError> {
         self.shared.command(|state| {
             let (listing, device, _) = v2ip_sink(state, sink)?;
@@ -359,7 +361,7 @@ impl Remote {
         })
     }
 
-    /// Routes this V2IP sink's video to the input bay with the given
+    /// Routes this OneIP sink's video to the input bay with the given
     /// user-assigned name.
     pub fn select_video_source_by_name(
         &self,
@@ -369,10 +371,10 @@ impl Remote {
         self.select_video_source(sink, self.source_port(sink, name)?)
     }
 
-    /// Routes this V2IP sink's audio to a multicast address directly, leaving
+    /// Routes this OneIP sink's audio to a multicast address directly, leaving
     /// its video and ancillary streams alone.
     ///
-    /// An unset port is the standard V2IP audio port. A format overrides the
+    /// An unset port is the standard OneIP audio port. A format overrides the
     /// sample rate and channel count the receiver would otherwise assume.
     pub fn select_audio_source_addr(
         &self,
@@ -398,7 +400,7 @@ impl Remote {
         })
     }
 
-    /// Routes this V2IP sink's video, audio and ancillary streams to
+    /// Routes this OneIP sink's video, audio and ancillary streams to
     /// multicast groups the caller names.
     ///
     /// This is the only way to reach a stream no device on the mesh
@@ -437,7 +439,7 @@ impl Remote {
         })
     }
 
-    /// Routes this V2IP sink's audio from the input bay with the given
+    /// Routes this OneIP sink's audio from the input bay with the given
     /// user-assigned name.
     ///
     /// A format is carried on the manual switch frame, which is the only form
@@ -857,7 +859,7 @@ impl Remote {
 
     // ---- the whole device ----
 
-    /// Starts or stops a V2IP device reporting its transport statistics.
+    /// Starts or stops a OneIP device reporting its transport statistics.
     ///
     /// There is no free-running mode: a device reports only while a
     /// subscription is live, at 1Hz, and the subscription lapses after a
@@ -890,7 +892,7 @@ impl Remote {
     /// arrive at [`crate::EventHandler::on_edid_received`] and stay readable
     /// through [`Remote::edid`].
     ///
-    /// Only V2IP hardware handles this opcode. A matrix or an amplifier
+    /// Only OneIP hardware handles this opcode. A matrix or an amplifier
     /// accepts the frame and answers nothing, at any protocol version, so the
     /// silence that follows is permanent rather than a reply still to come.
     /// This call cannot tell the two apart and does not try: it reports what
@@ -968,7 +970,7 @@ impl Remote {
         })
     }
 
-    /// Hands a V2IP source's stream addresses back to automatic assignment,
+    /// Hands a OneIP source's stream addresses back to automatic assignment,
     /// undoing addresses that were set on it by hand.
     ///
     /// The device takes this only from management, which this client
@@ -976,13 +978,15 @@ impl Remote {
     /// configuration report carries the addresses it ends up with, and
     /// [`Remote::v2ip_details`] reads them.
     ///
-    /// Refused for a device that is not a V2IP source, and for one below
+    /// Refused for a device that is not a OneIP source, and for one below
     /// protocol 0x2B, which predates the operation and ignores it.
     pub fn auto_assign_v2ip_source_addresses(&self, device: DeviceUid) -> Result<(), ControlError> {
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
             if !d.hello.features.has(DeviceFeature::V2IP_SOURCE) {
-                return Err(ControlError::Unsupported("the device is not a V2IP source"));
+                return Err(ControlError::Unsupported(
+                    "the device is not a OneIP source",
+                ));
             }
             let have = d.hello.supported_protocol;
             if have != 0 && have < AUTO_ADDRESSES_PROTOCOL {
@@ -1001,9 +1005,9 @@ impl Remote {
         })
     }
 
-    // ---- V2IP session descriptions ----
+    // ---- OneIP session descriptions ----
 
-    /// Has a V2IP output play the stream a session description describes.
+    /// Has a OneIP output play the stream a session description describes.
     ///
     /// The description goes out in pages of up to 1 KB, and the output plays
     /// it once the last page is in. It takes them only from its mesh
@@ -1011,7 +1015,7 @@ impl Remote {
     /// itself as. Nothing acknowledges the pages: [`Remote::v2ip_sink_sdp`]
     /// reads what the output reports next. Refused for an empty description
     /// or one longer than [`V2IP_SDP_MAX`](crate::V2IP_SDP_MAX) bytes, for a
-    /// device that is not a V2IP output, and for one below protocol 0x2E.
+    /// device that is not a OneIP output, and for one below protocol 0x2E.
     pub fn play_v2ip_sdp(&self, device: DeviceUid, sdp: &str) -> Result<(), ControlError> {
         if sdp.is_empty() || sdp.len() > V2IP_SDP_MAX {
             return Err(ControlError::InvalidRequest(
@@ -1031,36 +1035,38 @@ impl Remote {
         Ok(())
     }
 
-    /// Stops the stream a V2IP output plays from a session description. As
+    /// Stops the stream a OneIP output plays from a session description. As
     /// [`Remote::play_v2ip_sdp`].
     pub fn stop_v2ip_sdp(&self, device: DeviceUid) -> Result<(), ControlError> {
         self.sink_sdp_command(device, sdp_type::STOP, 0)
     }
 
-    /// Sets what a V2IP output shows while it plays audio alone, as the wire
+    /// Sets what a OneIP output shows while it plays audio alone, as the wire
     /// value. As [`Remote::play_v2ip_sdp`].
     pub fn set_v2ip_sdp_screen(&self, device: DeviceUid, screen: u8) -> Result<(), ControlError> {
         self.sink_sdp_command(device, sdp_type::SCREEN, screen)
     }
 
-    /// Asks a V2IP output what it plays from a session description now,
+    /// Asks a OneIP output what it plays from a session description now,
     /// rather than at its next report, which comes at least once a minute.
     /// As [`Remote::play_v2ip_sdp`].
     pub fn request_v2ip_sink_sdp(&self, device: DeviceUid) -> Result<(), ControlError> {
         self.sink_sdp_command(device, sdp_type::REQUEST, 0)
     }
 
-    /// Asks a V2IP source unit how its streams are encrypted now, rather than
+    /// Asks a OneIP source unit how its streams are encrypted now, rather than
     /// at its next report, which comes at least once a minute and whenever
     /// they change. [`Remote::v2ip_privacy`] reads the answer.
     ///
-    /// Refused for a device that is not a V2IP source, and for one below
+    /// Refused for a device that is not a OneIP source, and for one below
     /// protocol 0x30, which predates the report.
     pub fn request_v2ip_privacy(&self, device: DeviceUid) -> Result<(), ControlError> {
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
             if !d.hello.features.has(DeviceFeature::V2IP_SOURCE) {
-                return Err(ControlError::Unsupported("the device is not a V2IP source"));
+                return Err(ControlError::Unsupported(
+                    "the device is not a OneIP source",
+                ));
             }
             Ok(Command::new(
                 Addressee::device(d),
@@ -1073,7 +1079,7 @@ impl Remote {
     /// Asks a unit for the message on its output, which
     /// [`Remote::osd_message`] reads once the unit answers.
     ///
-    /// Refused for a device that is not a V2IP output.
+    /// Refused for a device that is not a OneIP output.
     pub fn request_osd_message(&self, device: DeviceUid) -> Result<(), ControlError> {
         let none = OsdMessagePriority::LOW;
         self.send_osd_message(
@@ -1097,7 +1103,7 @@ impl Remote {
     /// as, and holds it until it restarts. It answers with the message it
     /// then has, which [`Remote::osd_message`] reads, flagged
     /// [`REFUSED`](OsdMessageFlag::REFUSED) when its video processor has no
-    /// message layer. Refused here for a device that is not a V2IP output,
+    /// message layer. Refused here for a device that is not a OneIP output,
     /// and for a logo, priority or text the unit would refuse.
     pub fn show_osd_message(
         &self,
@@ -1140,7 +1146,7 @@ impl Remote {
         )
     }
 
-    /// The one send behind the message methods, to a V2IP output.
+    /// The one send behind the message methods, to a OneIP output.
     fn send_osd_message(
         &self,
         device: DeviceUid,
@@ -1153,7 +1159,9 @@ impl Remote {
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
             if !d.is_v2ip_sink() {
-                return Err(ControlError::Unsupported("the device is not a V2IP output"));
+                return Err(ControlError::Unsupported(
+                    "the device is not a OneIP output",
+                ));
             }
             Ok(Command::new(
                 Addressee::device(d),
@@ -1163,7 +1171,7 @@ impl Remote {
         })
     }
 
-    /// Asks every V2IP source unit of the mesh how its streams are encrypted,
+    /// Asks every OneIP source unit of the mesh how its streams are encrypted,
     /// as [`Remote::request_v2ip_privacy`] asks one. A unit below protocol
     /// 0x30 ignores it.
     pub fn request_all_v2ip_privacy(&self) -> Result<(), ControlError> {
@@ -1207,7 +1215,7 @@ impl Remote {
     /// The unit takes a command only from its mesh controller or a management
     /// application, which this client announces itself as. Nothing
     /// acknowledges it: [`Remote::unit_status`] reads what the unit reports
-    /// next. Refused for a device that is not a V2IP unit, and for one below
+    /// next. Refused for a device that is not a OneIP unit, and for one below
     /// protocol 0x2C, which predates the command.
     pub fn upgrade_unit_fpga(&self, device: DeviceUid, force: bool) -> Result<(), ControlError> {
         let flags = if force {
@@ -1283,7 +1291,7 @@ impl Remote {
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
             if !d.is_v2ip() {
-                return Err(ControlError::Unsupported("the device is not a V2IP unit"));
+                return Err(ControlError::Unsupported("the device is not a OneIP unit"));
             }
             Ok(Command::new(
                 Addressee::device(d),
@@ -1358,9 +1366,9 @@ impl Remote {
         Ok(())
     }
 
-    // ---- V2IP scaling ----
+    // ---- OneIP scaling ----
 
-    /// Turns a V2IP sink's automatic scaling on or off.
+    /// Turns a OneIP sink's automatic scaling on or off.
     ///
     /// Refused for a unit below protocol 0x2F: released firmware drops a
     /// scaling write from management.
@@ -1397,7 +1405,7 @@ impl Remote {
         })
     }
 
-    /// Sets the output format a V2IP sink scales to.
+    /// Sets the output format a OneIP sink scales to.
     ///
     /// Refused for a unit below protocol 0x2F: released firmware drops a
     /// scaling write from management.
@@ -1456,7 +1464,7 @@ impl Remote {
         )
     }
 
-    /// Clears the output format a V2IP sink is configured to scale to.
+    /// Clears the output format a OneIP sink is configured to scale to.
     ///
     /// Refused for a unit below protocol 0x2F: released firmware drops a
     /// scaling write from management.
@@ -1510,7 +1518,7 @@ impl Remote {
             let d = device_of(state, device)?;
             if !d.is_v2ip_sink() {
                 return Err(ControlError::Unsupported(
-                    "scaling settings need a V2IP sink",
+                    "scaling settings need a OneIP sink",
                 ));
             }
             // A unit below this protocol drops a scaling write from
@@ -1534,9 +1542,9 @@ impl Remote {
         })
     }
 
-    // ---- V2IP device settings ----
+    // ---- OneIP device settings ----
 
-    /// Switches on/off settings of a V2IP device, all to the same value.
+    /// Switches on/off settings of a OneIP device, all to the same value.
     ///
     /// `setting` names one or more of [`V2ipDeviceSetting::SWITCHES`], and
     /// each must be one the device has reported: a device ignores a setting it
@@ -1571,7 +1579,7 @@ impl Remote {
         )
     }
 
-    /// Sets the infrared profile of a V2IP device's global infrared port.
+    /// Sets the infrared profile of a OneIP device's global infrared port.
     ///
     /// `profile` is below [`V2IP_IR_PROFILE_MAX`], and is checked here because
     /// a device ignores one out of range. The terms of
@@ -1590,7 +1598,7 @@ impl Remote {
         )
     }
 
-    /// Sets the infrared profile of a V2IP device's output infrared port.
+    /// Sets the infrared profile of a OneIP device's output infrared port.
     ///
     /// [`V2IP_IR_PROFILE_NOT_SET`] makes the port follow the global one.
     /// Otherwise as [`Remote::set_v2ip_ir_profile`].
@@ -1612,7 +1620,7 @@ impl Remote {
         )
     }
 
-    /// Sets how many idle minutes a V2IP device waits before it powers down by
+    /// Sets how many idle minutes a OneIP device waits before it powers down by
     /// itself, 0 for never. The terms of [`Remote::set_v2ip_device_setting`]
     /// apply.
     pub fn set_v2ip_auto_power_save(
@@ -1630,7 +1638,7 @@ impl Remote {
         )
     }
 
-    /// Sets a V2IP device's daily power save windows.
+    /// Sets a OneIP device's daily power save windows.
     ///
     /// Every time is below [`V2IP_MINUTES_PER_DAY`](crate::V2IP_MINUTES_PER_DAY),
     /// and is checked here.
@@ -1656,7 +1664,7 @@ impl Remote {
         )
     }
 
-    /// Sets the level a V2IP device powers down to in power save. A level the
+    /// Sets the level a OneIP device powers down to in power save. A level the
     /// unit does not offer is one its [`UnitStatus`](crate::UnitStatus)
     /// reports without [`SUPPORTED`](crate::UnitPowerSave::SUPPORTED). It also
     /// switches [`POWER_SAVE_DISABLED`](V2ipDeviceSetting::POWER_SAVE_DISABLED)
@@ -1679,7 +1687,7 @@ impl Remote {
         )
     }
 
-    /// Sets how a V2IP device paces its PTP messages, its SAP timings, its
+    /// Sets how a OneIP device paces its PTP messages, its SAP timings, its
     /// streams' TTL and its output's rotation: the values of `messages` behind
     /// the bits of `which`, each one of
     /// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK). A DSCP above
@@ -1713,7 +1721,7 @@ impl Remote {
         )
     }
 
-    /// Sets the PTP mode a V2IP device runs. The terms of
+    /// Sets the PTP mode a OneIP device runs. The terms of
     /// [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_mode(
         &self,
@@ -1733,7 +1741,7 @@ impl Remote {
         )
     }
 
-    /// Sets the PTP domain a V2IP device runs in, at most
+    /// Sets the PTP domain a OneIP device runs in, at most
     /// [`V2IP_PTP_DOMAIN_MAX`](crate::V2IP_PTP_DOMAIN_MAX). The terms of
     /// [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_domain(&self, device: DeviceUid, domain: u8) -> Result<(), ControlError> {
@@ -1750,7 +1758,7 @@ impl Remote {
         )
     }
 
-    /// Sets the priority1 a V2IP device announces as a PTP grandmaster, lower
+    /// Sets the priority1 a OneIP device announces as a PTP grandmaster, lower
     /// winning. The terms of [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_priority1(
         &self,
@@ -1767,7 +1775,7 @@ impl Remote {
         )
     }
 
-    /// Changes settings on every V2IP device of the mesh with one frame.
+    /// Changes settings on every OneIP device of the mesh with one frame.
     ///
     /// `settings` carries the settings behind their bits in
     /// [`valid`](V2ipDeviceSettings::valid), as a device reports them. Each
@@ -1881,9 +1889,9 @@ impl Remote {
         })
     }
 
-    // ---- V2IP VLAN ----
+    // ---- OneIP VLAN ----
 
-    /// Changes a V2IP device's VLAN configuration.
+    /// Changes a OneIP device's VLAN configuration.
     ///
     /// Writes the VLAN ids, the pinned uplink and the
     /// [`TRUNK`](V2ipVlanFlag::TRUNK) flag of `vlan`; its other flags and the
@@ -1930,9 +1938,9 @@ impl Remote {
         })
     }
 
-    // ---- V2IP test card ----
+    // ---- OneIP test card ----
 
-    /// Asks a V2IP sink for its test card, which it reports straight back;
+    /// Asks a OneIP sink for its test card, which it reports straight back;
     /// [`Remote::v2ip_testcard`] reads it.
     ///
     /// Refused unless the sink's video processor has reported
@@ -1943,7 +1951,7 @@ impl Remote {
         self.send_v2ip_testcard(device, testcard_type::REQUEST, 0, V2ipTestcard::default())
     }
 
-    /// Shows a test pattern on a V2IP sink's output, or none for
+    /// Shows a test pattern on a OneIP sink's output, or none for
     /// [`V2ipTestPattern::OFF`]. `colour` is `0xRRGGBB`, used by
     /// [`V2ipTestPattern::FLAT`].
     ///
@@ -1974,7 +1982,7 @@ impl Remote {
         )
     }
 
-    /// Plays a test tone on a V2IP sink's output.
+    /// Plays a test tone on a OneIP sink's output.
     ///
     /// Every value is checked here, as the sink ignores a tone that is not
     /// [`V2ipTestTone::is_valid`]; [`V2ipToneMode::OFF`] stops it whatever the
@@ -2001,7 +2009,7 @@ impl Remote {
         )
     }
 
-    /// Sets a V2IP sink's lip-sync flash.
+    /// Sets a OneIP sink's lip-sync flash.
     ///
     /// Checked here as [`V2ipTestSync::is_valid`], since the sink ignores
     /// settings that are not. Otherwise as [`Remote::set_v2ip_test_pattern`].

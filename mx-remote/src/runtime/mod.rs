@@ -341,28 +341,28 @@ impl Remote {
         self.shared.read(|state| state.bay_by_stream_ip(ip, audio))
     }
 
-    /// The V2IP streams a device advertises.
+    /// The OneIP streams a device advertises.
     pub fn v2ip_sources(&self, uid: DeviceUid) -> Option<Vec<V2ipStreamSources>> {
         self.shared
             .read(|state| state.device(uid)?.v2ip_sources.clone())
     }
 
-    /// A V2IP device's own encoder configuration.
+    /// A OneIP device's own encoder configuration.
     pub fn v2ip_details(&self, uid: DeviceUid) -> Option<DeviceV2ipDetails> {
         self.shared.read(|state| state.device(uid)?.v2ip_details)
     }
 
-    /// The streams a V2IP sink is subscribed to.
+    /// The streams a OneIP sink is subscribed to.
     pub fn v2ip_sink(&self, uid: DeviceUid) -> Option<DeviceV2ipSink> {
         self.shared.read(|state| state.device(uid)?.v2ip_sink)
     }
 
-    /// Transport statistics a V2IP device reports.
+    /// Transport statistics a OneIP device reports.
     pub fn v2ip_stats(&self, uid: DeviceUid) -> Option<V2ipDeviceStats> {
         self.shared.read(|state| state.device(uid)?.v2ip_stats)
     }
 
-    /// What a V2IP device's video processor supports.
+    /// What a OneIP device's video processor supports.
     ///
     /// `None` until the device has reported a non-empty mask about itself.
     /// A device reports nothing at all while its processor has yet to answer,
@@ -373,7 +373,7 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_features)
     }
 
-    /// A V2IP device's settings, `None` until it has reported any.
+    /// A OneIP device's settings, `None` until it has reported any.
     ///
     /// A device reports only the settings it has, so one missing from
     /// [`V2ipDeviceSettings::valid`] once the rest have arrived is one the
@@ -382,20 +382,20 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_settings)
     }
 
-    /// The VLAN configuration a V2IP device last reported about itself,
+    /// The VLAN configuration a OneIP device last reported about itself,
     /// `None` until it has reported one.
     pub fn v2ip_vlan(&self, uid: DeviceUid) -> Option<V2ipVlan> {
         self.shared.read(|state| state.device(uid)?.v2ip_vlan)
     }
 
-    /// What a V2IP output last reported playing from a session description,
+    /// What a OneIP output last reported playing from a session description,
     /// `None` until it has reported.
     pub fn v2ip_sink_sdp(&self, uid: DeviceUid) -> Option<V2ipSinkSdp> {
         self.shared
             .read(|state| state.device(uid)?.v2ip_sink_sdp.clone())
     }
 
-    /// How a V2IP source unit's streams are encrypted, as it last reported
+    /// How a OneIP source unit's streams are encrypted, as it last reported
     /// it, `None` until it has reported.
     pub fn v2ip_privacy(&self, uid: DeviceUid) -> Option<V2ipPrivacy> {
         self.shared.read(|state| state.device(uid)?.v2ip_privacy)
@@ -430,14 +430,14 @@ impl Remote {
             .read(|state| state.device(uid)?.unit_status.clone())
     }
 
-    /// The PTP state a V2IP device last reported about itself, `None` until
+    /// The PTP state a OneIP device last reported about itself, `None` until
     /// it has reported one, and while it has no PTP to report: none on its
     /// video processor, or in power save.
     pub fn v2ip_ptp(&self, uid: DeviceUid) -> Option<V2ipPtpState> {
         self.shared.read(|state| state.device(uid)?.v2ip_ptp)
     }
 
-    /// The test card a V2IP sink last reported, `None` until it has answered
+    /// The test card a OneIP sink last reported, `None` until it has answered
     /// [`Remote::request_v2ip_testcard`] or a change.
     pub fn v2ip_testcard(&self, uid: DeviceUid) -> Option<V2ipTestcard> {
         self.shared.read(|state| state.device(uid)?.v2ip_testcard)
@@ -463,7 +463,7 @@ impl Remote {
         announced.checked_add(at.elapsed())
     }
 
-    /// The video-wall tiling a V2IP device is configured for.
+    /// The video-wall tiling a OneIP device is configured for.
     pub fn v2ip_tiling(&self, uid: DeviceUid) -> Option<V2ipTilingConfig> {
         self.shared.read(|state| state.device(uid)?.tiling)
     }

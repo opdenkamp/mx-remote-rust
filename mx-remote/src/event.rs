@@ -183,11 +183,11 @@ events! {
         SystemStatusChanged => on_system_status_changed(status: u16, message: String);
         /// A network port reported its link state.
         NetworkStatusChanged => on_network_status_changed(status: NetworkPortStatus);
-        /// The device reported V2IP statistics.
+        /// The device reported OneIP statistics.
         V2ipStatsChanged => on_v2ip_stats_changed(stats: V2ipDeviceStats);
         /// The streams the device's source bays advertise changed.
         V2ipSourcesChanged => on_v2ip_sources_changed(sources: Vec<V2ipStreamSources>);
-        /// The device's V2IP encoder configuration changed.
+        /// The device's OneIP encoder configuration changed.
         V2ipDetailsChanged => on_v2ip_details_changed(details: DeviceV2ipDetails);
         /// The streams the device's sink is subscribed to changed. A request
         /// addressed to it fires this too - see [`DeviceV2ipSink`].
@@ -243,7 +243,7 @@ events! {
         TimeZoneChanged => on_time_zone_changed(time_zone: TimeZone);
         /// A source bay's remote-control configuration changed.
         RcSettingsChanged => on_rc_settings_changed(settings: RcSettings);
-        /// A V2IP device was linked to a remote peer.
+        /// A OneIP device was linked to a remote peer.
         V2ipLinkChanged => on_v2ip_link_changed(target: DeviceUid);
         /// A multiviewer command arrived.
         MultiviewerCommand => on_multiviewer_command(command: MultiviewerCommand);
@@ -352,9 +352,9 @@ events! {
         FilteredDevicesChanged => on_filtered_devices_changed(filtered: Vec<DeviceUid>);
         /// The audio endpoint the bay carries changed.
         AudioEndpointChanged => on_audio_endpoint_changed(endpoint: u8);
-        /// The bay's V2IP encoder was enabled or disabled.
+        /// The bay's OneIP encoder was enabled or disabled.
         EncoderDisabledChanged => on_encoder_disabled_changed(disabled: bool);
-        /// The bay's V2IP decoder was enabled or disabled.
+        /// The bay's OneIP decoder was enabled or disabled.
         DecoderDisabledChanged => on_decoder_disabled_changed(disabled: bool);
         /// The input's source reported different content, empty when it
         /// shows none.

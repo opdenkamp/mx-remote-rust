@@ -2,7 +2,7 @@
 
 ## What this is
 
-A Rust client library for Pulse-Eight MatrixOS devices (neo matrices, OneIP/V2IP
+A Rust client library for Pulse-Eight MatrixOS devices (neo matrices, OneIP
 units, ProAmp8 amplifiers) over UDP multicast/broadcast.
 
 It is meant to be *the* public implementation third parties integrate against: a

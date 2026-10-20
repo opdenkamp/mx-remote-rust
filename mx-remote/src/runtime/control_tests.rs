@@ -139,7 +139,7 @@ impl Fixture {
     }
 
     /// Announces a unit that is every kind of thing a guarded send addresses:
-    /// a V2IP source on port 1, a V2IP sink and amplifier zone on port 2, a
+    /// a OneIP source on port 1, a OneIP sink and amplifier zone on port 2, a
     /// multiviewer, and stream addresses for the source.
     ///
     /// Every guard has to be reached to be tested, so each method's own
@@ -2820,7 +2820,7 @@ fn a_unit_command_names_its_unit_and_carries_its_command() {
     assert_eq!(&p[20..40], &[0; 20]);
 }
 
-/// A unit command goes only to a V2IP unit new enough to take it, and a
+/// A unit command goes only to a OneIP unit new enough to take it, and a
 /// network a unit cannot hold is refused before anything is sent.
 #[test]
 fn a_unit_command_the_unit_would_not_take_is_refused() {
@@ -3155,7 +3155,7 @@ fn a_session_description_goes_out_in_pages() {
     assert_eq!(header(&f), [4, 0, 0, 0], "request");
 }
 
-/// A description goes only to a V2IP output new enough to take it, and one
+/// A description goes only to a OneIP output new enough to take it, and one
 /// no output could take is refused before anything is sent.
 #[test]
 fn a_session_description_the_output_would_not_take_is_refused() {
@@ -3401,7 +3401,7 @@ fn a_device_clock_moves_on_from_what_it_announced() {
     );
 }
 
-/// Announces `uid` as a V2IP sink that takes VLANs and has it report `block`.
+/// Announces `uid` as a OneIP sink that takes VLANs and has it report `block`.
 fn vlan_device(f: &Fixture, uid: DeviceUid, serial: &str, block: &[u8; 16]) {
     f.feed(
         uid,
@@ -3847,7 +3847,7 @@ fn auto_addresses_goes_out_as_mesh_operation_6() {
     f.tap.clear();
     f.remote
         .auto_assign_v2ip_source_addresses(uid)
-        .expect("a V2IP source on 0x2B");
+        .expect("a OneIP source on 0x2B");
     let frame = f.tap.frames().pop().expect("nothing reached the gate");
     assert_eq!(&frame[20..22], &op::MESH_OPERATION.0.to_le_bytes());
     assert_eq!(

@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! V2IP encoder and decoder statistics.
+//! OneIP encoder and decoder statistics.
 
 use crate::event::Event;
 use crate::state::State;

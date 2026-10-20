@@ -130,9 +130,9 @@ bitmask! {
         IR_TX = 1 << 1;
         /// Speaks CEC.
         CEC = 1 << 2;
-        /// Acts as a V2IP stream source.
+        /// Acts as a OneIP stream source.
         V2IP_SOURCE = 1 << 3;
-        /// Acts as a V2IP stream sink.
+        /// Acts as a OneIP stream sink.
         V2IP_SINK = 1 << 4;
         /// Routes video.
         VIDEO_ROUTING = 1 << 5;
@@ -200,7 +200,7 @@ bitmask! {
 }
 
 bitmask! {
-    /// What a V2IP device's video processor supports, as the device reports it
+    /// What a OneIP device's video processor supports, as the device reports it
     /// in its configuration.
     ///
     /// Read-only, and a device's own: it fills the field in only on the frame
@@ -232,7 +232,7 @@ bitmask! {
 }
 
 bitmask! {
-    /// The device settings a V2IP configuration can carry, each on its own bit.
+    /// The device settings a OneIP configuration can carry, each on its own bit.
     ///
     /// The same bits serve as the settings a frame carries and as the values
     /// of the on/off ones among them. `IR_PROFILE` to `POWER_SAVE_SCHEDULE`
@@ -320,7 +320,7 @@ bitmask! {
 }
 
 wire_enum! {
-    /// How far a V2IP device powers down in power save, each level saving more
+    /// How far a OneIP device powers down in power save, each level saving more
     /// than the one before.
     V2ipPowerSaveLevel: u8 {
         /// No level.
@@ -348,7 +348,7 @@ bitmask! {
 }
 
 wire_enum! {
-    /// How a V2IP device takes part in PTP.
+    /// How a OneIP device takes part in PTP.
     V2ipPtpMode: u8 {
         /// No PTP.
         OFF = 0;
@@ -360,7 +360,7 @@ wire_enum! {
 }
 
 wire_enum! {
-    /// The test pattern a V2IP sink draws on its output.
+    /// The test pattern a OneIP sink draws on its output.
     V2ipTestPattern: u8 {
         /// No pattern.
         OFF = 0;
@@ -380,7 +380,7 @@ wire_enum! {
 }
 
 wire_enum! {
-    /// The test tone a V2IP sink plays on its output.
+    /// The test tone a OneIP sink plays on its output.
     V2ipToneMode: u8 {
         /// No tone.
         OFF = 0;
@@ -396,7 +396,7 @@ wire_enum! {
 }
 
 bitmask! {
-    /// What a V2IP sink reports about its test card.
+    /// What a OneIP sink reports about its test card.
     V2ipTestcardFlag: u8 {
         /// The sink can draw the test card.
         SUPPORTED = 1 << 0;
@@ -414,7 +414,7 @@ bitmask! {
 }
 
 bitmask! {
-    /// The flags of what a V2IP output plays from a session description.
+    /// The flags of what a OneIP output plays from a session description.
     V2ipSdpFlag: u8 {
         /// The output plays a stream from a description.
         ACTIVE = 1 << 0;
@@ -426,7 +426,7 @@ bitmask! {
 }
 
 wire_enum! {
-    /// The sample encoding of a stream a V2IP output plays from a description.
+    /// The sample encoding of a stream a OneIP output plays from a description.
     V2ipSdpEncoding: u8 {
         /// None.
         NONE = 0;
@@ -466,7 +466,7 @@ wire_enum! {
 }
 
 wire_enum! {
-    /// What a V2IP output's video processor times a described stream by.
+    /// What a OneIP output's video processor times a described stream by.
     V2ipSdpClockMode: u8 {
         /// Arrival.
         ARRIVAL = 0;
@@ -478,7 +478,7 @@ wire_enum! {
 }
 
 wire_enum! {
-    /// How far a V2IP output's video processor has got with a described
+    /// How far a OneIP output's video processor has got with a described
     /// stream's timing.
     V2ipSdpClockState: u8 {
         /// Idle.
@@ -565,7 +565,7 @@ bitmask! {
 }
 
 bitmask! {
-    /// The flags of a V2IP device's PTP state.
+    /// The flags of a OneIP device's PTP state.
     V2ipPtpFlag: u8 {
         /// The device runs PTP and the block holds its state. A block without
         /// it holds nothing: the device has no PTP, or is in power save.
@@ -577,7 +577,7 @@ bitmask! {
 }
 
 wire_enum! {
-    /// How far a V2IP device's PTP clock has locked to its master.
+    /// How far a OneIP device's PTP clock has locked to its master.
     V2ipPtpLock: u8 {
         /// Not locked.
         UNLOCKED = 0;
@@ -589,7 +589,7 @@ wire_enum! {
 }
 
 bitmask! {
-    /// The flags of a V2IP device's VLAN configuration.
+    /// The flags of a OneIP device's VLAN configuration.
     V2ipVlanFlag: u16 {
         /// The block carries a configuration. A block without it carries
         /// nothing, whatever its other bytes hold.
@@ -683,13 +683,13 @@ bitmask! {
         DOLBY = 1 << 11;
         /// Switches itself off when idle.
         AUTO_OFF = 1 << 12;
-        /// Is a remote V2IP source.
+        /// Is a remote OneIP source.
         V2IP_SOURCE_REMOTE = 1 << 13;
-        /// Is a remote V2IP sink.
+        /// Is a remote OneIP sink.
         V2IP_SINK_REMOTE = 1 << 14;
-        /// Is a local V2IP source.
+        /// Is a local OneIP source.
         V2IP_SOURCE_LOCAL = 1 << 15;
-        /// Is a local V2IP sink.
+        /// Is a local OneIP sink.
         V2IP_SINK_LOCAL = 1 << 16;
     }
 }
@@ -728,13 +728,13 @@ bitmask! {
         AUDIO_ARC_ANALOG = 1 << 12;
         /// The bay is offline.
         OFFLINE = 1 << 13;
-        /// The V2IP decoder is disabled.
+        /// The OneIP decoder is disabled.
         DECODER_DISABLE = 1 << 14;
-        /// The V2IP encoder is disabled.
+        /// The OneIP encoder is disabled.
         ENCODER_DISABLE = 1 << 15;
         /// CEC is switched off for this bay.
         CEC_DISABLED = 1 << 20;
-        /// The V2IP encoder reports an error.
+        /// The OneIP encoder reports an error.
         ENCODER_ERROR = 1 << 21;
         /// The bay's name was generated - a default, or taken from CEC or the
         /// EDID - rather than set by a user. A device that predates this bit
@@ -1317,7 +1317,7 @@ impl MultiviewerBool {
 }
 
 wire_enum! {
-    /// The colour space a V2IP output scales to.
+    /// The colour space a OneIP output scales to.
     ///
     /// The field is four bits wide and only these four values are defined. A
     /// receiver passes the whole nibble to its validator, so a fifth value is
@@ -1415,7 +1415,7 @@ impl MxrSignalType {
     /// The bpp index that stands for a bit depth, `None` for a depth no index
     /// names.
     ///
-    /// Only the three depths a V2IP output stage accepts are here. Index 4
+    /// Only the three depths a OneIP output stage accepts are here. Index 4
     /// names 16bpp, which [`MxrSignalType::bpp`] reads back from a device, but
     /// the output stage refuses it - so offering it as something to write would
     /// send a frame that is decoded cleanly and then dropped in silence.

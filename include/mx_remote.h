@@ -39,12 +39,12 @@
 #define MXR_FEATURE_CEC (1 << 2)
 
 /**
- * Acts as a V2IP stream source.
+ * Acts as a OneIP stream source.
  */
 #define MXR_FEATURE_V2IP_SOURCE (1 << 3)
 
 /**
- * Acts as a V2IP stream sink.
+ * Acts as a OneIP stream sink.
  */
 #define MXR_FEATURE_V2IP_SINK (1 << 4)
 
@@ -256,22 +256,22 @@
 #define MXR_BAY_AUTO_OFF (1 << 12)
 
 /**
- * Is a remote V2IP source.
+ * Is a remote OneIP source.
  */
 #define MXR_BAY_V2IP_SOURCE_REMOTE (1 << 13)
 
 /**
- * Is a remote V2IP sink.
+ * Is a remote OneIP sink.
  */
 #define MXR_BAY_V2IP_SINK_REMOTE (1 << 14)
 
 /**
- * Is a local V2IP source.
+ * Is a local OneIP source.
  */
 #define MXR_BAY_V2IP_SOURCE_LOCAL (1 << 15)
 
 /**
- * Is a local V2IP sink.
+ * Is a local OneIP sink.
  */
 #define MXR_BAY_V2IP_SINK_LOCAL (1 << 16)
 
@@ -346,12 +346,12 @@
 #define MXR_BAY_STATUS_OFFLINE (1 << 13)
 
 /**
- * The V2IP decoder is disabled.
+ * The OneIP decoder is disabled.
  */
 #define MXR_BAY_STATUS_DECODER_DISABLE (1 << 14)
 
 /**
- * The V2IP encoder is disabled.
+ * The OneIP encoder is disabled.
  */
 #define MXR_BAY_STATUS_ENCODER_DISABLE (1 << 15)
 
@@ -361,7 +361,7 @@
 #define MXR_BAY_STATUS_CEC_DISABLED (1 << 20)
 
 /**
- * The V2IP encoder reports an error.
+ * The OneIP encoder reports an error.
  */
 #define MXR_BAY_STATUS_ENCODER_ERROR (1 << 21)
 
@@ -383,12 +383,12 @@
 #define MXR_AUDIO_OUTPUT (1 << 1)
 
 /**
- * Sends a V2IP audio stream.
+ * Sends a OneIP audio stream.
  */
 #define MXR_AUDIO_V2IP_TX (1 << 2)
 
 /**
- * Receives a V2IP audio stream.
+ * Receives a OneIP audio stream.
  */
 #define MXR_AUDIO_V2IP_RX (1 << 3)
 
@@ -1221,12 +1221,12 @@
 #define MXR_V2IP_SETTING_SINK_ROTATION (1 << 31)
 
 /**
- * The TTL a V2IP device's streams carry until it is set.
+ * The TTL a OneIP device's streams carry until it is set.
  */
 #define MXR_V2IP_STREAM_TTL_DEFAULT 64
 
 /**
- * The largest angle a V2IP device's HDMI output is turned by, in degrees.
+ * The largest angle a OneIP device's HDMI output is turned by, in degrees.
  */
 #define MXR_V2IP_SINK_ROTATION_MAX 359
 
@@ -1830,7 +1830,7 @@
 #define MXR_OSD_LOGO_FIELD_Y (1 << 2)
 
 /**
- * The colour space a V2IP sink scales its output to.
+ * The colour space a OneIP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
 
@@ -1850,12 +1850,12 @@
 #define MXR_V2IP_COLOUR_YCBCR420 3
 
 /**
- * Lowest refresh rate a V2IP output stage accepts, in Hz.
+ * Lowest refresh rate a OneIP output stage accepts, in Hz.
  */
 #define MXR_V2IP_SCALING_REFRESH_MIN 24
 
 /**
- * Highest refresh rate a V2IP output stage accepts, in Hz.
+ * Highest refresh rate a OneIP output stage accepts, in Hz.
  */
 #define MXR_V2IP_SCALING_REFRESH_MAX 120
 
@@ -2003,7 +2003,7 @@
 #define MXR_V2IP_MINUTES_PER_DAY 1440
 
 /**
- * The highest PTP domain a V2IP device runs in.
+ * The highest PTP domain a OneIP device runs in.
  */
 #define MXR_V2IP_PTP_DOMAIN_MAX 127
 
@@ -2043,7 +2043,7 @@
 #define MXR_UNIT_STATUS_MESSAGE_LEN 49
 
 /**
- * The longest session description a V2IP output takes, in bytes.
+ * The longest session description a OneIP output takes, in bytes.
  */
 #define MXR_V2IP_SDP_MAX 2048
 
@@ -2257,7 +2257,7 @@ typedef int32_t mxr_result_t;
 #endif // __cplusplus
 
 /**
- * Which of a V2IP device's streams an address describes.
+ * Which of a OneIP device's streams an address describes.
  */
 enum mxr_stream_kind_t
 #ifdef __cplusplus
@@ -2417,7 +2417,7 @@ typedef struct {
 } mxr_stream_addr_t;
 
 /**
- * The three streams a manual route points a V2IP sink at.
+ * The three streams a manual route points a OneIP sink at.
  */
 typedef struct {
   /**
@@ -2501,7 +2501,7 @@ typedef struct {
 } mxr_amp_zone_settings_t;
 
 /**
- * A V2IP device's power save settings, beside `mxr_v2ip_device_settings_t`
+ * A OneIP device's power save settings, beside `mxr_v2ip_device_settings_t`
  * rather than in it so that struct keeps its size.
  *
  * Which of them the device has reported is in that struct's `valid`.
@@ -2526,7 +2526,7 @@ typedef struct {
 } mxr_v2ip_power_save_t;
 
 /**
- * A V2IP device's settings.
+ * A OneIP device's settings.
  *
  * A setting is reported only when its `MXR_V2IP_SETTING_*` bit is set in
  * `valid`, and a device reports every setting it has.
@@ -2559,7 +2559,7 @@ typedef struct {
 } mxr_v2ip_device_settings_t;
 
 /**
- * How a V2IP device paces its PTP messages, its SAP timings, its streams'
+ * How a OneIP device paces its PTP messages, its SAP timings, its streams'
  * TTL and its output's rotation, which a frame carries in the same block.
  * Intervals are base-2 logarithms of seconds, so -3 is 125 ms and 1 is 2 s.
  * Each value is meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
@@ -2616,7 +2616,7 @@ typedef struct {
 } mxr_v2ip_ptp_messages_t;
 
 /**
- * A V2IP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
+ * A OneIP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
  * than in it so that struct keeps its size.
  *
  * Which of them the device has reported is in that struct's `valid`.
@@ -2639,7 +2639,7 @@ typedef struct {
 } mxr_v2ip_ptp_settings_t;
 
 /**
- * VLAN tagging on a V2IP device's uplink.
+ * VLAN tagging on a OneIP device's uplink.
  *
  * Only the device knows what it runs, so this is what it reported about
  * itself. A change written to it is applied at once and carries
@@ -2679,7 +2679,7 @@ typedef struct {
 } mxr_v2ip_vlan_t;
 
 /**
- * A V2IP sink's test tone.
+ * A OneIP sink's test tone.
  */
 typedef struct {
   /**
@@ -2706,7 +2706,7 @@ typedef struct {
 } mxr_v2ip_test_tone_t;
 
 /**
- * A V2IP sink's lip-sync flash: a pattern frame is marked every `period`,
+ * A OneIP sink's lip-sync flash: a pattern frame is marked every `period`,
  * the frame `lead` after a mark flashes white, and a beep tone starts
  * `offset` sample periods after it.
  */
@@ -2733,7 +2733,7 @@ typedef struct {
 } mxr_v2ip_test_sync_t;
 
 /**
- * The output format to scale a V2IP sink to.
+ * The output format to scale a OneIP sink to.
  *
  * Given as a depth and a colour space rather than as a packed signal-type
  * word, so a caller cannot send the "no depth" index a sink reports while it
@@ -2941,7 +2941,7 @@ typedef struct {
    * A device that withholds its link configuration is reported complete
    * fifteen seconds after it was discovered, and keeps being asked for the
    * rest: an unreported link reads as no link, which is what a link coming
-   * up later looks like anyway. Its bays, and a V2IP device's source list,
+   * up later looks like anyway. Its bays, and a OneIP device's source list,
    * are waited for without limit - a caller names things after a bay, and a
    * name assigned to a placeholder outlives the frame that would have
    * corrected it. A management client has none of these to send and is
@@ -2955,7 +2955,7 @@ typedef struct {
    * Firmware without it builds some frames over uninitialised stack, so
    * those fields carry noise rather than values: the scaling flags and,
    * behind a spuriously set valid bit, the scaling mode and refresh; bay
-   * zero's addresses in the V2IP sources frame; and the padding beside the
+   * zero's addresses in the OneIP sources frame; and the padding beside the
    * remote-control target.
    */
   bool config_initialised;
@@ -3000,7 +3000,7 @@ typedef struct {
 /**
  * What a bay is, and what is connected to it.
  *
- * A mesh bay, a V2IP bay on one unit standing for another unit's input or
+ * A mesh bay, a OneIP bay on one unit standing for another unit's input or
  * output (`is_local` false), reports that unit's own bay 0 in the same
  * direction. Only its identity is its own: `uid`, `port_name`, `bay_num`,
  * `features`, its direction, `is_local` and `v2ip_uid`, which names that
@@ -3158,7 +3158,7 @@ typedef struct {
    */
   mxr_bay_uid_t linked_bay;
   /**
-   * The unit a V2IP bay stands for, zero when it maps to none.
+   * The unit a OneIP bay stands for, zero when it maps to none.
    */
   mxr_uid_t v2ip_uid;
   /**
@@ -3930,7 +3930,7 @@ typedef struct {
    */
   mxr_device_cb on_network_status_changed;
   /**
-   * The device reported V2IP statistics; read them with
+   * The device reported OneIP statistics; read them with
    * `mxr_v2ip_stats()`.
    */
   mxr_device_cb on_v2ip_stats_changed;
@@ -3940,7 +3940,7 @@ typedef struct {
    */
   mxr_device_cb on_v2ip_sources_changed;
   /**
-   * The device's V2IP encoder configuration changed; read it with
+   * The device's OneIP encoder configuration changed; read it with
    * `mxr_v2ip_details()`.
    */
   mxr_device_cb on_v2ip_details_changed;
@@ -4002,7 +4002,7 @@ typedef struct {
    */
   mxr_device_cb on_rc_settings_changed;
   /**
-   * A V2IP device was linked to a remote peer.
+   * A OneIP device was linked to a remote peer.
    */
   mxr_device_uid_cb on_v2ip_link_changed;
   /**
@@ -4206,11 +4206,11 @@ typedef struct {
    */
   mxr_bay_u8_cb on_audio_endpoint_changed;
   /**
-   * The bay's V2IP encoder was enabled or disabled.
+   * The bay's OneIP encoder was enabled or disabled.
    */
   mxr_bay_bool_cb on_encoder_disabled_changed;
   /**
-   * The bay's V2IP decoder was enabled or disabled.
+   * The bay's OneIP decoder was enabled or disabled.
    */
   mxr_bay_bool_cb on_decoder_disabled_changed;
   /**
@@ -4430,7 +4430,7 @@ typedef struct {
 } mxr_v2ip_decoder_t;
 
 /**
- * A device's V2IP statistics, cumulative and over the last minute.
+ * A device's OneIP statistics, cumulative and over the last minute.
  */
 typedef struct {
   /**
@@ -4480,7 +4480,7 @@ typedef struct {
 } mxr_stream_source_t;
 
 /**
- * A V2IP device's own encoder configuration.
+ * A OneIP device's own encoder configuration.
  */
 typedef struct {
   /**
@@ -4532,7 +4532,7 @@ typedef struct {
 } mxr_v2ip_details_t;
 
 /**
- * The streams one V2IP source advertises.
+ * The streams one OneIP source advertises.
  */
 typedef struct {
   /**
@@ -4562,7 +4562,7 @@ typedef struct {
 } mxr_stream_sources_t;
 
 /**
- * The streams a V2IP sink is subscribed to.
+ * The streams a OneIP sink is subscribed to.
  *
  * **Addresses that read as unset mean "no route, or the sink could not work
  * one out" - never "definitely not subscribed".** This is the one part of a
@@ -4694,7 +4694,7 @@ typedef struct {
 } mxr_unit_status_t;
 
 /**
- * What a V2IP output plays from a session description, as it last reported
+ * What a OneIP output plays from a session description, as it last reported
  * it. The stream's fields are zero while it plays none.
  */
 typedef struct {
@@ -4761,7 +4761,7 @@ typedef struct {
 } mxr_v2ip_sink_sdp_t;
 
 /**
- * How one of a V2IP source unit's streams is encrypted: the values of its
+ * How one of a OneIP source unit's streams is encrypted: the values of its
  * session description's `a=privacy` and `a=extmap` attributes. The key
  * itself never travels: every unit of a mesh holds the same one. This
  * library holds no key and decrypts nothing.
@@ -4811,7 +4811,7 @@ typedef struct {
 } mxr_v2ip_privacy_stream_t;
 
 /**
- * How a V2IP source unit's streams are encrypted, as it last reported it.
+ * How a OneIP source unit's streams are encrypted, as it last reported it.
  */
 typedef struct {
   /**
@@ -4946,7 +4946,7 @@ typedef struct {
 } mxr_unit_power_save_t;
 
 /**
- * A V2IP device's PTP state, as it reported it about itself.
+ * A OneIP device's PTP state, as it reported it about itself.
  */
 typedef struct {
   /**
@@ -4981,7 +4981,7 @@ typedef struct {
 } mxr_v2ip_ptp_t;
 
 /**
- * The test card a V2IP sink last reported. The counters run free and wrap.
+ * The test card a OneIP sink last reported. The counters run free and wrap.
  */
 typedef struct {
   /**
@@ -5525,7 +5525,7 @@ uint8_t mxr_signal_type_bpp_index(mxr_signal_type_t signal_type);
 bool mxr_signal_type_is_set(mxr_signal_type_t signal_type);
 
 /**
- * Routes a V2IP sink's video to the stream a source port advertises.
+ * Routes a OneIP sink's video to the stream a source port advertises.
  *
  * The sink's audio then follows the video: a separate audio route is
  * dropped, so route audio after video to keep them apart. A unit below
@@ -5541,7 +5541,7 @@ mxr_result_t mxr_select_video_source(const mxr_remote_t *remote,
                                      uint16_t source_port);
 
 /**
- * Routes a V2IP sink's audio to the stream a source port advertises,
+ * Routes a OneIP sink's audio to the stream a source port advertises,
  * leaving its video where it is.
  *
  * # Safety
@@ -5553,7 +5553,7 @@ mxr_result_t mxr_select_audio_source(const mxr_remote_t *remote,
                                      uint16_t source_port);
 
 /**
- * Routes a V2IP sink's video to the source bay with this user-assigned name.
+ * Routes a OneIP sink's video to the source bay with this user-assigned name.
  *
  * # Safety
  *
@@ -5564,7 +5564,7 @@ mxr_result_t mxr_select_video_source_by_name(const mxr_remote_t *remote,
                                              const char *name);
 
 /**
- * Routes a V2IP sink's audio to the source bay with this user-assigned name.
+ * Routes a OneIP sink's audio to the source bay with this user-assigned name.
  *
  * `format` may be null to leave the sink's audio format alone.
  *
@@ -5579,7 +5579,7 @@ mxr_result_t mxr_select_audio_source_by_name(const mxr_remote_t *remote,
                                              const mxr_audio_format_t *format);
 
 /**
- * Routes a V2IP sink's audio to a multicast group directly, for a source this
+ * Routes a OneIP sink's audio to a multicast group directly, for a source this
  * client has not heard advertise it.
  *
  * `audio_port` may be zero for the default, and `format` may be null to leave
@@ -5598,7 +5598,7 @@ mxr_result_t mxr_select_audio_source_addr(const mxr_remote_t *remote,
                                           const mxr_audio_format_t *format);
 
 /**
- * Routes a V2IP sink's video, audio and ancillary streams to multicast groups
+ * Routes a OneIP sink's video, audio and ancillary streams to multicast groups
  * the caller names.
  *
  * This is the only way to reach a stream no device on the mesh advertises,
@@ -5856,7 +5856,7 @@ mxr_result_t mxr_select_audio_endpoint_input(const mxr_remote_t *remote,
  * The device answers a moment later. The bytes reach `on_edid_received` and
  * stay readable through `mxr_device_edid()`.
  *
- * Only V2IP hardware handles this opcode. A matrix or an amplifier accepts
+ * Only OneIP hardware handles this opcode. A matrix or an amplifier accepts
  * the frame and answers nothing, at any protocol version, so the silence that
  * follows is permanent rather than a reply still to come. `MXR_OK` here means
  * the frame was sent, and nothing more; a caller polling for an EDID should
@@ -5883,7 +5883,7 @@ mxr_result_t mxr_request_edid(const mxr_remote_t *remote, mxr_uid_t device, bool
 mxr_result_t mxr_request_signal_status(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
- * Subscribes to, or unsubscribes from, a device's V2IP statistics.
+ * Subscribes to, or unsubscribes from, a device's OneIP statistics.
  *
  * # Safety
  *
@@ -5914,11 +5914,11 @@ mxr_result_t mxr_reboot(const mxr_remote_t *remote, mxr_uid_t device);
 mxr_result_t mxr_ping(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
- * Hands a V2IP source's stream addresses back to automatic assignment,
+ * Hands a OneIP source's stream addresses back to automatic assignment,
  * undoing addresses that were set on it by hand. The device's next
  * configuration report carries the addresses it ends up with.
  *
- * `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+ * `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP source, and
  * `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2B, which ignores it,
  * sending nothing in either case.
  *
@@ -5976,7 +5976,7 @@ mxr_result_t mxr_set_mesh_time(const mxr_remote_t *remote, uint64_t utc);
 mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
 
 /**
- * Turns a V2IP sink's automatic scaling on or off.
+ * Turns a OneIP sink's automatic scaling on or off.
  *
  * Automatic scaling and a configured output mode are separate reasons for a
  * sink to scale, and this moves only the first: a sink with a mode configured
@@ -6001,7 +6001,7 @@ mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
 mxr_result_t mxr_set_v2ip_auto_scaling(const mxr_remote_t *remote, mxr_uid_t device, bool enabled);
 
 /**
- * Switches on/off settings of a V2IP device, all to the same value.
+ * Switches on/off settings of a OneIP device, all to the same value.
  *
  * `setting` is one or more `MXR_V2IP_SETTING_*` on/off bits, each one the
  * device has reported. Returns `MXR_ERR_NOT_REPORTED` before the device has
@@ -6020,7 +6020,7 @@ mxr_result_t mxr_set_v2ip_device_setting(const mxr_remote_t *remote,
                                          bool enabled);
 
 /**
- * Sets the infrared profile of a V2IP device's global infrared port.
+ * Sets the infrared profile of a OneIP device's global infrared port.
  *
  * `profile` is from 0 up to, not including, `MXR_V2IP_IR_PROFILE_MAX`.
  * Otherwise as `mxr_set_v2ip_device_setting()`.
@@ -6032,7 +6032,7 @@ mxr_result_t mxr_set_v2ip_device_setting(const mxr_remote_t *remote,
 mxr_result_t mxr_set_v2ip_ir_profile(const mxr_remote_t *remote, mxr_uid_t device, int8_t profile);
 
 /**
- * Sets how many idle minutes a V2IP device waits before it powers down by
+ * Sets how many idle minutes a OneIP device waits before it powers down by
  * itself, 0 for never. Otherwise as `mxr_set_v2ip_device_setting()`.
  *
  * # Safety
@@ -6044,7 +6044,7 @@ mxr_result_t mxr_set_v2ip_auto_power_save(const mxr_remote_t *remote,
                                           uint16_t minutes);
 
 /**
- * Sets a V2IP device's daily power save windows from `schedule`'s `start`
+ * Sets a OneIP device's daily power save windows from `schedule`'s `start`
  * and `end`; its `auto_minutes` is not sent.
  *
  * `MXR_ERR_INVALID_ARGUMENT` for a time not below
@@ -6060,7 +6060,7 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
                                               const mxr_v2ip_power_save_t *schedule);
 
 /**
- * Changes settings on every V2IP device of the mesh with one frame.
+ * Changes settings on every OneIP device of the mesh with one frame.
  *
  * `settings` carries the settings behind their `MXR_V2IP_SETTING_*` bits in
  * `valid`, as `mxr_v2ip_device_settings()` reports them; its `ir_profiles`
@@ -6088,7 +6088,7 @@ mxr_result_t mxr_set_all_v2ip_device_settings(const mxr_remote_t *remote,
                                               const mxr_v2ip_power_save_t *power_save);
 
 /**
- * Sets the level a V2IP device powers down to in power save,
+ * Sets the level a OneIP device powers down to in power save,
  * `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT` for a level with no
  * name. `mxr_unit_power_save()` says which levels the unit offers. It also
  * switches `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
@@ -6103,7 +6103,7 @@ mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
                                            uint8_t level);
 
 /**
- * Sets the power save level of every V2IP device of the mesh with one frame,
+ * Sets the power save level of every OneIP device of the mesh with one frame,
  * `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT`, sending nothing,
  * for a level with no name. Each device that takes the level also switches
  * `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
@@ -6117,7 +6117,7 @@ mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
 mxr_result_t mxr_set_all_v2ip_power_save_level(const mxr_remote_t *remote, uint8_t level);
 
 /**
- * Sets how a V2IP device paces its PTP messages, its SAP timings, its
+ * Sets how a OneIP device paces its PTP messages, its SAP timings, its
  * streams' TTL and its output's rotation: the values of `messages` behind
  * the `MXR_V2IP_SETTING_PTP_*` message bits, `MXR_V2IP_SETTING_SAP_EXPIRE`
  * and `_SAP_INTERVAL`, `MXR_V2IP_SETTING_STREAM_TTL` and
@@ -6138,7 +6138,7 @@ mxr_result_t mxr_set_v2ip_ptp_messages(const mxr_remote_t *remote,
                                        const mxr_v2ip_ptp_messages_t *messages);
 
 /**
- * Changes how every V2IP device of the mesh paces its PTP messages, with one
+ * Changes how every OneIP device of the mesh paces its PTP messages, with one
  * frame. As `mxr_set_v2ip_ptp_messages()` for its arguments, except that a
  * rotation is refused only above `MXR_V2IP_SINK_ROTATION_MAX`, and each
  * device takes it only by its own step. Otherwise as
@@ -6154,7 +6154,7 @@ mxr_result_t mxr_set_all_v2ip_ptp_messages(const mxr_remote_t *remote,
                                            const mxr_v2ip_ptp_messages_t *messages);
 
 /**
- * Sets the PTP mode a V2IP device runs, `MXR_V2IP_PTP_MODE_*`.
+ * Sets the PTP mode a OneIP device runs, `MXR_V2IP_PTP_MODE_*`.
  * `MXR_ERR_INVALID_ARGUMENT` for a mode with no name. Otherwise as
  * `mxr_set_v2ip_device_setting()`.
  *
@@ -6165,7 +6165,7 @@ mxr_result_t mxr_set_all_v2ip_ptp_messages(const mxr_remote_t *remote,
 mxr_result_t mxr_set_v2ip_ptp_mode(const mxr_remote_t *remote, mxr_uid_t device, uint8_t mode);
 
 /**
- * Sets the PTP domain a V2IP device runs in. `MXR_ERR_INVALID_ARGUMENT` above
+ * Sets the PTP domain a OneIP device runs in. `MXR_ERR_INVALID_ARGUMENT` above
  * `MXR_V2IP_PTP_DOMAIN_MAX`. Otherwise as `mxr_set_v2ip_device_setting()`.
  *
  * # Safety
@@ -6175,7 +6175,7 @@ mxr_result_t mxr_set_v2ip_ptp_mode(const mxr_remote_t *remote, mxr_uid_t device,
 mxr_result_t mxr_set_v2ip_ptp_domain(const mxr_remote_t *remote, mxr_uid_t device, uint8_t domain);
 
 /**
- * Sets the priority1 a V2IP device announces as a PTP grandmaster, lower
+ * Sets the priority1 a OneIP device announces as a PTP grandmaster, lower
  * winning. Otherwise as `mxr_set_v2ip_device_setting()`.
  *
  * # Safety
@@ -6187,7 +6187,7 @@ mxr_result_t mxr_set_v2ip_ptp_priority1(const mxr_remote_t *remote,
                                         uint8_t priority1);
 
 /**
- * Changes PTP settings on every V2IP device of the mesh with one frame.
+ * Changes PTP settings on every OneIP device of the mesh with one frame.
  *
  * `valid` names the `MXR_V2IP_SETTING_PTP_*` bits to send, and `ptp` carries
  * their values. `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `ptp`,
@@ -6205,7 +6205,7 @@ mxr_result_t mxr_set_all_v2ip_ptp_settings(const mxr_remote_t *remote,
                                            const mxr_v2ip_ptp_settings_t *ptp);
 
 /**
- * Has a V2IP output play the stream a session description describes.
+ * Has a OneIP output play the stream a session description describes.
  *
  * The description goes out in pages of up to 1 KB, and the output plays it
  * once the last page is in. It takes them only from its mesh controller or a
@@ -6213,7 +6213,7 @@ mxr_result_t mxr_set_all_v2ip_ptp_settings(const mxr_remote_t *remote,
  * acknowledges the pages: `mxr_v2ip_sink_sdp()` reads what the output
  * reports next. `MXR_ERR_INVALID_ARGUMENT` for a null or empty description or
  * one longer than `MXR_V2IP_SDP_MAX` bytes, `MXR_ERR_UNSUPPORTED` for a device
- * that is not a V2IP output and `MXR_ERR_PROTOCOL_TOO_OLD` for one below
+ * that is not a OneIP output and `MXR_ERR_PROTOCOL_TOO_OLD` for one below
  * protocol 0x2E, sending nothing in each case.
  *
  * # Safety
@@ -6224,7 +6224,7 @@ mxr_result_t mxr_set_all_v2ip_ptp_settings(const mxr_remote_t *remote,
 mxr_result_t mxr_play_v2ip_sdp(const mxr_remote_t *remote, mxr_uid_t device, const char *sdp);
 
 /**
- * Stops the stream a V2IP output plays from a session description. As
+ * Stops the stream a OneIP output plays from a session description. As
  * `mxr_play_v2ip_sdp()`.
  *
  * # Safety
@@ -6234,7 +6234,7 @@ mxr_result_t mxr_play_v2ip_sdp(const mxr_remote_t *remote, mxr_uid_t device, con
 mxr_result_t mxr_stop_v2ip_sdp(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
- * Sets what a V2IP output shows while it plays audio alone. As
+ * Sets what a OneIP output shows while it plays audio alone. As
  * `mxr_play_v2ip_sdp()`.
  *
  * # Safety
@@ -6244,7 +6244,7 @@ mxr_result_t mxr_stop_v2ip_sdp(const mxr_remote_t *remote, mxr_uid_t device);
 mxr_result_t mxr_set_v2ip_sdp_screen(const mxr_remote_t *remote, mxr_uid_t device, uint8_t screen);
 
 /**
- * Asks a V2IP output what it plays from a session description now. As
+ * Asks a OneIP output what it plays from a session description now. As
  * `mxr_play_v2ip_sdp()`.
  *
  * # Safety
@@ -6254,9 +6254,9 @@ mxr_result_t mxr_set_v2ip_sdp_screen(const mxr_remote_t *remote, mxr_uid_t devic
 mxr_result_t mxr_request_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
- * Asks a V2IP source unit how its streams are encrypted now, rather than at
+ * Asks a OneIP source unit how its streams are encrypted now, rather than at
  * its next report; `mxr_v2ip_privacy()` reads the answer.
- * `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP source, and
+ * `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP source, and
  * `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x30.
  *
  * # Safety
@@ -6266,7 +6266,7 @@ mxr_result_t mxr_request_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t dev
 mxr_result_t mxr_request_v2ip_privacy(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
- * Asks every V2IP source unit of the mesh how its streams are encrypted, as
+ * Asks every OneIP source unit of the mesh how its streams are encrypted, as
  * `mxr_request_v2ip_privacy()` asks one. A unit below protocol 0x30 ignores
  * it.
  *
@@ -6278,7 +6278,7 @@ mxr_result_t mxr_request_all_v2ip_privacy(const mxr_remote_t *remote);
 
 /**
  * Asks a unit for the message on its output; `mxr_osd_message()` reads the
- * answer. `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP output.
+ * answer. `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP output.
  *
  * # Safety
  *
@@ -6299,7 +6299,7 @@ mxr_result_t mxr_request_osd_message(const mxr_remote_t *remote, mxr_uid_t devic
  *
  * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `text` and for a
  * logo, priority or text the unit would refuse, and `MXR_ERR_UNSUPPORTED`
- * for a device that is not a V2IP output.
+ * for a device that is not a OneIP output.
  *
  * # Safety
  *
@@ -6337,7 +6337,7 @@ mxr_result_t mxr_clear_unit_status(const mxr_remote_t *remote, mxr_uid_t device)
  * The unit takes a command only from its mesh controller or a management
  * application, which this client announces itself as. Nothing acknowledges
  * it: `mxr_unit_status()` reads what the unit reports next.
- * `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP unit, and
+ * `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP unit, and
  * `MXR_ERR_PROTOCOL_TOO_OLD` for one below protocol 0x2C.
  *
  * # Safety
@@ -6393,7 +6393,7 @@ mxr_result_t mxr_set_unit_network(const mxr_remote_t *remote,
 mxr_result_t mxr_confirm_unit_network(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
- * Changes a V2IP device's VLAN configuration.
+ * Changes a OneIP device's VLAN configuration.
  *
  * Sends `vlan`'s ids, its `uplink` and its `MXR_V2IP_VLAN_TRUNK` bit; its
  * other flags, `active_uplink` and `revert_s` are the device's to report and
@@ -6417,7 +6417,7 @@ mxr_result_t mxr_set_v2ip_vlan(const mxr_remote_t *remote,
                                const mxr_v2ip_vlan_t *vlan);
 
 /**
- * Asks a V2IP sink for its test card, which it reports straight back;
+ * Asks a OneIP sink for its test card, which it reports straight back;
  * `mxr_v2ip_testcard()` reads it.
  *
  * `MXR_ERR_NOT_REPORTED` before the sink has reported its video processor
@@ -6434,7 +6434,7 @@ mxr_result_t mxr_set_v2ip_vlan(const mxr_remote_t *remote,
 mxr_result_t mxr_request_v2ip_testcard(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
- * Shows `MXR_V2IP_TEST_PATTERN_*` on a V2IP sink's output; `colour` is
+ * Shows `MXR_V2IP_TEST_PATTERN_*` on a OneIP sink's output; `colour` is
  * `0xRRGGBB`, used by a flat pattern. The pattern runs until it is turned
  * off, and holds the output on while it does.
  *
@@ -6452,7 +6452,7 @@ mxr_result_t mxr_set_v2ip_test_pattern(const mxr_remote_t *remote,
                                        uint32_t colour);
 
 /**
- * Plays a test tone on a V2IP sink's output.
+ * Plays a test tone on a OneIP sink's output.
  *
  * `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
  * `mxr_v2ip_test_tone_t` gives, unless its mode is `MXR_V2IP_TONE_MODE_OFF`,
@@ -6469,7 +6469,7 @@ mxr_result_t mxr_set_v2ip_test_tone(const mxr_remote_t *remote,
                                     const mxr_v2ip_test_tone_t *tone);
 
 /**
- * Sets a V2IP sink's lip-sync flash.
+ * Sets a OneIP sink's lip-sync flash.
  *
  * `MXR_ERR_INVALID_ARGUMENT` for a value out of the ranges
  * `mxr_v2ip_test_sync_t` gives. Otherwise as `mxr_request_v2ip_testcard()`.
@@ -6484,7 +6484,7 @@ mxr_result_t mxr_set_v2ip_test_sync(const mxr_remote_t *remote,
                                     const mxr_v2ip_test_sync_t *sync);
 
 /**
- * Sets the infrared profile of a V2IP device's output infrared port.
+ * Sets the infrared profile of a OneIP device's output infrared port.
  *
  * `MXR_V2IP_IR_PROFILE_NOT_SET` makes the port follow the global one.
  * Otherwise as `mxr_set_v2ip_ir_profile()`.
@@ -6498,7 +6498,7 @@ mxr_result_t mxr_set_v2ip_sink_ir_profile(const mxr_remote_t *remote,
                                           int8_t profile);
 
 /**
- * Sets the output format a V2IP sink scales to.
+ * Sets the output format a OneIP sink scales to.
  *
  * The mode is checked here and `MXR_ERR_INVALID_ARGUMENT` returned without
  * sending anything, because a sink refuses a bad one in silence. Passing is
@@ -6539,7 +6539,7 @@ mxr_result_t mxr_set_v2ip_output_mode(const mxr_remote_t *remote,
                                       const mxr_v2ip_output_mode_t *mode);
 
 /**
- * Clears the output format a V2IP sink is configured to scale to.
+ * Clears the output format a OneIP sink is configured to scale to.
  *
  * The sink stops scaling for that reason and keeps its automatic scaling
  * setting. This is the only way to express "no mode configured", and it is
@@ -7252,7 +7252,7 @@ mxr_result_t mxr_remote_update_config(const mxr_remote_t *remote,
 mxr_result_t mxr_discover(const mxr_remote_t *remote);
 
 /**
- * Fills `out` with a device's V2IP statistics.
+ * Fills `out` with a device's OneIP statistics.
  *
  * A device sends these only while subscribed; see
  * `mxr_subscribe_v2ip_stats()`.
@@ -7265,7 +7265,7 @@ mxr_result_t mxr_discover(const mxr_remote_t *remote);
 mxr_result_t mxr_v2ip_stats(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_stats_t *out);
 
 /**
- * Fills `out` with a V2IP device's own encoder configuration.
+ * Fills `out` with a OneIP device's own encoder configuration.
  *
  * # Safety
  *
@@ -7275,7 +7275,7 @@ mxr_result_t mxr_v2ip_stats(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_
 mxr_result_t mxr_v2ip_details(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_details_t *out);
 
 /**
- * Fills `out` with the streams a V2IP sink is subscribed to.
+ * Fills `out` with the streams a OneIP sink is subscribed to.
  *
  * # Safety
  *
@@ -7285,7 +7285,7 @@ mxr_result_t mxr_v2ip_details(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2i
 mxr_result_t mxr_v2ip_sink(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_sink_t *out);
 
 /**
- * Fills `out` with what a V2IP device's video processor supports.
+ * Fills `out` with what a OneIP device's video processor supports.
  *
  * Reports `MXR_ERR_NOT_REPORTED` while the device has not said: a processor
  * that has yet to answer and one with none of the optional commands send the
@@ -7299,7 +7299,7 @@ mxr_result_t mxr_v2ip_sink(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_s
 mxr_result_t mxr_v2ip_features(const mxr_remote_t *remote, mxr_uid_t uid, uint64_t *out);
 
 /**
- * Fills `out` with a V2IP device's settings.
+ * Fills `out` with a OneIP device's settings.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any. A change
  * is announced through `on_device_update`.
@@ -7314,7 +7314,7 @@ mxr_result_t mxr_v2ip_device_settings(const mxr_remote_t *remote,
                                       mxr_v2ip_device_settings_t *out);
 
 /**
- * Fills `out` with a V2IP device's power save settings.
+ * Fills `out` with a OneIP device's power save settings.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
  * `mxr_v2ip_device_settings()` says which of these it has.
@@ -7329,7 +7329,7 @@ mxr_result_t mxr_v2ip_power_save(const mxr_remote_t *remote,
                                  mxr_v2ip_power_save_t *out);
 
 /**
- * Fills `out` with a V2IP device's PTP settings.
+ * Fills `out` with a OneIP device's PTP settings.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
  * `mxr_v2ip_device_settings()` says which of these it has.
@@ -7372,7 +7372,7 @@ mxr_result_t mxr_time_zone(const mxr_remote_t *remote, mxr_uid_t uid, mxr_time_z
 mxr_result_t mxr_device_clock(const mxr_remote_t *remote, mxr_uid_t uid, uint64_t *out);
 
 /**
- * Fills `out` with the VLAN configuration a V2IP device last reported.
+ * Fills `out` with the VLAN configuration a OneIP device last reported.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the device has reported one. A change
  * is announced through `on_device_update`.
@@ -7398,7 +7398,7 @@ mxr_result_t mxr_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_v
 mxr_result_t mxr_unit_status(const mxr_remote_t *remote, mxr_uid_t uid, mxr_unit_status_t *out);
 
 /**
- * Fills `out` with the level a V2IP device powers down to in power save,
+ * Fills `out` with the level a OneIP device powers down to in power save,
  * `MXR_V2IP_POWER_SAVE_LEVEL_*`.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
@@ -7411,7 +7411,7 @@ mxr_result_t mxr_unit_status(const mxr_remote_t *remote, mxr_uid_t uid, mxr_unit
 mxr_result_t mxr_v2ip_power_save_level(const mxr_remote_t *remote, mxr_uid_t uid, uint8_t *out);
 
 /**
- * Fills `out` with how a V2IP device paces its PTP messages.
+ * Fills `out` with how a OneIP device paces its PTP messages.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
  * `mxr_v2ip_device_settings()` says which of these it has.
@@ -7426,7 +7426,7 @@ mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
                                    mxr_v2ip_ptp_messages_t *out);
 
 /**
- * Fills `out` with what a V2IP output last reported playing from a session
+ * Fills `out` with what a OneIP output last reported playing from a session
  * description.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the output has reported; it does when
@@ -7442,7 +7442,7 @@ mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
 mxr_result_t mxr_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_sink_sdp_t *out);
 
 /**
- * Fills `out` with how a V2IP source unit's streams are encrypted, as it
+ * Fills `out` with how a OneIP source unit's streams are encrypted, as it
  * last reported it.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the unit has reported; it does when
@@ -7517,7 +7517,7 @@ mxr_result_t mxr_unit_power_save(const mxr_remote_t *remote,
                                  mxr_unit_power_save_t *out);
 
 /**
- * Fills `out` with the PTP state a V2IP device last reported about itself.
+ * Fills `out` with the PTP state a OneIP device last reported about itself.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the device has reported one, and while
  * it has none to report: no PTP on its video processor, or in power save. A
@@ -7531,7 +7531,7 @@ mxr_result_t mxr_unit_power_save(const mxr_remote_t *remote,
 mxr_result_t mxr_v2ip_ptp(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_ptp_t *out);
 
 /**
- * Fills `out` with the test card a V2IP sink last reported.
+ * Fills `out` with the test card a OneIP sink last reported.
  *
  * Reports `MXR_ERR_NOT_REPORTED` until the sink has answered
  * `mxr_request_v2ip_testcard()` or a change. A change is announced through
