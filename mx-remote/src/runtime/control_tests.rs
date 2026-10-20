@@ -3001,6 +3001,8 @@ fn a_ptp_message_write_carries_its_block() {
         sap_expire_min: 60,
         sap_interval_s: 0x0102,
         stream_ttl: 8,
+        sink_rotation: 90,
+        sink_rotation_step: 45,
     };
     let which =
         V2ipDeviceSetting::PTP_SYNC | V2ipDeviceSetting::PTP_DSCP | V2ipDeviceSetting::SAP_INTERVAL;
@@ -3031,6 +3033,8 @@ fn a_ptp_message_write_carries_its_block() {
                 sap_expire_min: 5,
                 sap_interval_s: 9,
                 stream_ttl: 9,
+                sink_rotation: 270,
+                sink_rotation_step: 15,
             },
         )
         .expect("the device has reported the settings");
@@ -4407,4 +4411,168 @@ fn a_mesh_bay_without_its_unit_refuses_commands() {
         "{call:?}"
     );
     assert!(f.tap.frames().is_empty(), "a frame was built");
+}
+
+/// A report of the output's rotation and its step, from a device whose
+/// output turns by 90 degrees.
+fn rotation_report(cfg: &Cfg, degrees: u16) -> Vec<u8> {
+    let rotation = V2ipDeviceSetting::SINK_ROTATION;
+    let mut p = cfg.bytes_with_power_save(rotation.bits(), 0, 0, &V2ipPowerSaveSchedule::default());
+    p.resize(232, 0);
+    p[226..228].copy_from_slice(&degrees.to_le_bytes());
+    p[228..230].copy_from_slice(&90u16.to_le_bytes());
+    p
+}
+
+/// The rotation and its step are read from a block long enough to hold
+/// both, and a shorter one gives neither while keeping the stream TTL.
+#[test]
+fn a_rotation_is_read_from_a_block_that_holds_its_step() {
+    let f = Fixture::new();
+    let uid = uid_n(248);
+    f.everything(uid, 0x30, "RT0001");
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let both = V2ipDeviceSetting::STREAM_TTL | V2ipDeviceSetting::SINK_ROTATION;
+    let report = |len: usize| {
+        let mut p = rotation_report(&cfg, 270);
+        p[128..132].copy_from_slice(&both.bits().to_le_bytes());
+        p[224] = 32;
+        p.truncate(len);
+        p
+    };
+    let cached = || {
+        f.remote.v2ip_device_settings(uid).map(|s| {
+            (
+                s.valid,
+                s.ptp_messages.sink_rotation,
+                s.ptp_messages.sink_rotation_step,
+            )
+        })
+    };
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(229));
+    assert_eq!(cached(), Some((V2ipDeviceSetting::STREAM_TTL, 0, 0)));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(230));
+    assert_eq!(cached(), Some((both, 270, 90)));
+}
+
+/// A write runs the block on to 16 bytes with the angle at 10 and no step,
+/// and is refused unless the device turns its output by that angle.
+#[test]
+fn a_rotation_write_goes_by_the_devices_step() {
+    let f = Fixture::new();
+    let uid = uid_n(249);
+    f.everything(uid, 0x30, "RT0002");
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    f.feed(uid, op::V2IP_DEVICE_CFG, &rotation_report(&cfg, 0));
+    f.connect();
+    let rotation = V2ipDeviceSetting::SINK_ROTATION;
+    let turned = |degrees| V2ipPtpMessages {
+        sink_rotation: degrees,
+        sink_rotation_step: 45,
+        stream_ttl: 9,
+        ..V2ipPtpMessages::default()
+    };
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_ptp_messages(uid, rotation, turned(180))
+        .expect("a multiple of the step");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 232);
+    assert_eq!(p[224], 0, "a TTL the write does not carry");
+    assert_eq!(&p[226..230], &[180, 0, 0, 0]);
+    let cached = f.remote.v2ip_device_settings(uid).map(|s| {
+        (
+            s.ptp_messages.sink_rotation,
+            s.ptp_messages.sink_rotation_step,
+        )
+    });
+    assert_eq!(cached, Some((180, 90)), "the step is the device's");
+
+    for degrees in [45, 360] {
+        assert!(
+            matches!(
+                f.remote
+                    .set_v2ip_ptp_messages(uid, rotation, turned(degrees)),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{degrees} was sent"
+        );
+    }
+
+    f.tap.clear();
+    let all = |degrees| V2ipDeviceSettings {
+        valid: rotation,
+        ptp_messages: turned(degrees),
+        ..V2ipDeviceSettings::default()
+    };
+    f.remote
+        .set_all_v2ip_device_settings(all(45))
+        .expect("each device judges the step");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!((p.len(), &p[58..62]), (64, &[45, 0, 0, 0][..]));
+    assert!(matches!(
+        f.remote.set_all_v2ip_device_settings(all(360)),
+        Err(ControlError::InvalidRequest(_))
+    ));
+}
+
+/// Another sender's write is cached only by the device's step, which it
+/// leaves as the device reported it.
+#[test]
+fn another_senders_rotation_is_kept_by_the_devices_step() {
+    let f = Fixture::new();
+    let (uid, controller) = (uid_n(250), uid_n(251));
+    f.everything(uid, 0x30, "RT0003");
+    f.feed(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x30, "Ctrl", "RT0004", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let write = |degrees: u16| {
+        let mut p = rotation_report(&cfg, degrees);
+        p[228..230].fill(0);
+        p
+    };
+    let cached = || {
+        f.remote.v2ip_device_settings(uid).map(|s| {
+            (
+                s.ptp_messages.sink_rotation,
+                s.ptp_messages.sink_rotation_step,
+            )
+        })
+    };
+    f.feed(uid, op::V2IP_DEVICE_CFG, &rotation_report(&cfg, 90));
+    f.feed(controller, op::V2IP_DEVICE_CFG, &write(45));
+    assert_eq!(cached(), Some((90, 90)));
+    f.feed(controller, op::V2IP_DEVICE_CFG, &write(180));
+    assert_eq!(cached(), Some((180, 90)));
+}
+
+/// A device whose output cannot turn reports a step of 0, and takes only 0.
+#[test]
+fn an_output_that_cannot_turn_takes_only_0() {
+    let f = Fixture::new();
+    let uid = uid_n(252);
+    f.everything(uid, 0x30, "RT0005");
+    let mut p = rotation_report(&Cfg::addresses(uid, "239.1.2.3"), 0);
+    p[228..230].fill(0);
+    f.feed(uid, op::V2IP_DEVICE_CFG, &p);
+    f.connect();
+    let rotation = V2ipDeviceSetting::SINK_ROTATION;
+    let turned = |degrees| V2ipPtpMessages {
+        sink_rotation: degrees,
+        ..V2ipPtpMessages::default()
+    };
+    assert!(matches!(
+        f.remote.set_v2ip_ptp_messages(uid, rotation, turned(90)),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    f.remote
+        .set_v2ip_ptp_messages(uid, rotation, turned(0))
+        .expect("0 is every device's");
 }

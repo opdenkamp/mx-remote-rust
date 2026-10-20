@@ -546,11 +546,15 @@ const V2IP_PTP_MESSAGES_AT: usize = V2IP_PTP_AT + V2IP_PTP_SIZE;
 const V2IP_PTP_MESSAGES_SIZE: usize = 8;
 /// Where in that block the stream TTL is, which only a longer block holds.
 const V2IP_STREAM_TTL_AT: usize = 8;
+/// Where in that block the output's rotation and its step are, each a u16.
+const V2IP_SINK_ROTATION_AT: usize = 10;
+const V2IP_SINK_ROTATION_STEP_AT: usize = 12;
 
 /// Reads a settings block, the last block of its frame, and clears the bits
 /// of `valid` whose values it is too short to hold: the three PTP intervals as
 /// signed bytes, the announce timeout and the DSCP, then the SAP expiry in
-/// minutes, the SAP interval in seconds, and from 8 the stream TTL.
+/// minutes, the SAP interval in seconds, from 8 the stream TTL, and from 10
+/// the output's rotation and its step.
 pub(super) fn ptp_messages(m: &[u8], valid: &mut V2ipDeviceSetting) -> V2ipPtpMessages {
     if m.len() < V2IP_PTP_MESSAGES_SIZE {
         *valid = valid.without(V2ipDeviceSetting::SETTINGS_BLOCK);
@@ -560,6 +564,11 @@ pub(super) fn ptp_messages(m: &[u8], valid: &mut V2ipDeviceSetting) -> V2ipPtpMe
     if stream_ttl.is_none() {
         *valid = valid.without(V2ipDeviceSetting::STREAM_TTL);
     }
+    let rotation = m.len() >= V2IP_SINK_ROTATION_STEP_AT + 2;
+    if !rotation {
+        *valid = valid.without(V2ipDeviceSetting::SINK_ROTATION);
+    }
+    let at = |i| if rotation { u16_at(m, i) } else { 0 };
     V2ipPtpMessages {
         log_announce_interval: m[0] as i8,
         log_sync_interval: m[1] as i8,
@@ -569,6 +578,8 @@ pub(super) fn ptp_messages(m: &[u8], valid: &mut V2ipDeviceSetting) -> V2ipPtpMe
         sap_expire_min: m[5],
         sap_interval_s: u16_at(m, 6),
         stream_ttl: stream_ttl.unwrap_or(0),
+        sink_rotation: at(V2IP_SINK_ROTATION_AT),
+        sink_rotation_step: at(V2IP_SINK_ROTATION_STEP_AT),
     }
 }
 
@@ -753,8 +764,7 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             let frame = if subject == rx.sender() {
                 frame
             } else {
-                let reported = device.v2ip_settings.unwrap_or_default().valid;
-                frame.as_applied_to(reported)
+                frame.as_applied_to(&device.v2ip_settings.unwrap_or_default())
             };
             device.merge_v2ip_settings(frame, ev);
         }

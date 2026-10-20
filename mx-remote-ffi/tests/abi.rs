@@ -970,6 +970,8 @@ fn the_ptp_message_calls_check_their_arguments_first() {
         sap_expire_min: 60,
         sap_interval_s: 30,
         stream_ttl: 0,
+        sink_rotation: 360,
+        sink_rotation_step: 0,
     };
     let dscp = MXR_V2IP_SETTING_PTP_DSCP;
     // SAFETY: a live handle; a null struct is what is under test.
@@ -1036,6 +1038,19 @@ fn the_ptp_message_calls_check_their_arguments_first() {
     };
     // SAFETY: a live handle and an initialised struct.
     let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, ttl, &one) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
+
+    // So does the output's rotation, which turns less than a full circle.
+    let rotation = MXR_V2IP_SETTING_SINK_ROTATION;
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, rotation, &messages) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "a full circle");
+    let most = mxr_v2ip_ptp_messages_t {
+        sink_rotation: MXR_V2IP_SINK_ROTATION_MAX,
+        ..messages
+    };
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_all_v2ip_ptp_messages(remote, rotation, &most) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
     let all = mxr_v2ip_device_settings_t {
         valid: sap,

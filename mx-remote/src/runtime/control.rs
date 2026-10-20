@@ -36,7 +36,8 @@ use crate::types::{
     V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
     V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX, V2IP_VLAN_PORT_SFP,
+    VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -1584,11 +1585,13 @@ impl Remote {
         )
     }
 
-    /// Sets how a V2IP device paces its PTP messages, and its SAP timings: the
-    /// values of `messages` behind the bits of `which`, each one of
+    /// Sets how a V2IP device paces its PTP messages, its SAP timings, its
+    /// streams' TTL and its output's rotation: the values of `messages` behind
+    /// the bits of `which`, each one of
     /// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK). A DSCP above
-    /// [`V2IP_DSCP_MAX`](crate::V2IP_DSCP_MAX) and a stream TTL of 0 are
-    /// refused. The terms of [`Remote::set_v2ip_device_setting`] apply.
+    /// [`V2IP_DSCP_MAX`](crate::V2IP_DSCP_MAX), a stream TTL of 0 and a
+    /// rotation that is not 0 or a multiple of the step the device reports
+    /// are refused. The terms of [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_messages(
         &self,
         device: DeviceUid,
@@ -1597,7 +1600,7 @@ impl Remote {
     ) -> Result<(), ControlError> {
         if which.is_empty() || !V2ipDeviceSetting::SETTINGS_BLOCK.has(which) {
             return Err(ControlError::InvalidRequest(
-                "only PTP message, SAP timing and stream TTL settings are carried here",
+                "only PTP message, SAP timing, stream TTL and rotation settings are carried here",
             ));
         }
         if which.has(V2ipDeviceSetting::PTP_DSCP) && messages.dscp > V2IP_DSCP_MAX {
@@ -1677,9 +1680,11 @@ impl Remote {
     /// device applies those it has and ignores the rest, and none that
     /// predates the frame applies any. A setting only a device reports about
     /// itself, a profile, PTP mode, PTP domain, power save level or PTP DSCP
-    /// out of range, a stream TTL of 0 and a schedule time that is not a time
-    /// of day are refused
-    /// here, since every device would ignore them.
+    /// out of range, a stream TTL of 0, a rotation above
+    /// [`V2IP_SINK_ROTATION_MAX`](crate::V2IP_SINK_ROTATION_MAX) and a
+    /// schedule time that is not a time of day are refused here, since every
+    /// device would ignore them. Each device takes a rotation only by its own
+    /// step.
     ///
     /// Nothing is cached: each device that applies a change reports its
     /// settings, and [`Remote::v2ip_device_settings`] reads that.
@@ -1728,6 +1733,11 @@ impl Remote {
         if valid.has(V2ipDeviceSetting::STREAM_TTL) && settings.ptp_messages.stream_ttl == 0 {
             return Err(ControlError::InvalidRequest("a stream TTL of 0"));
         }
+        if valid.has(V2ipDeviceSetting::SINK_ROTATION)
+            && settings.ptp_messages.sink_rotation > V2IP_SINK_ROTATION_MAX
+        {
+            return Err(ControlError::InvalidRequest("a rotation above 359 degrees"));
+        }
         self.shared.send(
             &Addressee::Broadcast,
             op::V2IP_SETTINGS_ALL,
@@ -1752,6 +1762,18 @@ impl Remote {
                     "the device does not have this setting",
                 ));
             }
+            if settings.valid.has(V2ipDeviceSetting::SINK_ROTATION)
+                && !reported
+                    .ptp_messages
+                    .takes_sink_rotation(settings.ptp_messages.sink_rotation)
+            {
+                return Err(ControlError::InvalidRequest(
+                    "the device does not turn its output by this angle",
+                ));
+            }
+            // The step is the device's own, which a write leaves as it was.
+            let mut settings = settings;
+            settings.ptp_messages.sink_rotation_step = reported.ptp_messages.sink_rotation_step;
             Ok(Command::new(
                 Addressee::device(d),
                 op::V2IP_DEVICE_CFG,

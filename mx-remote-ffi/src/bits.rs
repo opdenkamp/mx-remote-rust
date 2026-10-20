@@ -777,8 +777,16 @@ pub const MXR_V2IP_SETTING_STREAM_TTL: u32 = 1 << 29;
 /// report it connects regardless.
 pub const MXR_V2IP_SETTING_CLOUD: u32 = 1 << 30;
 
+/// The angle the device's HDMI output is turned by, in
+/// `mxr_v2ip_ptp_messages_t`'s `sink_rotation`. Reported only by a device
+/// with an HDMI output.
+pub const MXR_V2IP_SETTING_SINK_ROTATION: u32 = 1 << 31;
+
 /// The TTL a V2IP device's streams carry until it is set.
 pub const MXR_V2IP_STREAM_TTL_DEFAULT: u8 = 64;
+
+/// The largest angle a V2IP device's HDMI output is turned by, in degrees.
+pub const MXR_V2IP_SINK_ROTATION_MAX: u16 = 359;
 
 // ---- what a V2IP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
 

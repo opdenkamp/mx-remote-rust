@@ -313,6 +313,9 @@ bitmask! {
         /// Connects to the cloud service. A device that does not report it
         /// connects regardless.
         CLOUD = 1 << 30;
+        /// The angle the device's HDMI output is turned by. Reported only by
+        /// a device with an HDMI output.
+        SINK_ROTATION = 1 << 31;
     }
 }
 
@@ -635,9 +638,15 @@ impl V2ipDeviceSetting {
 
     /// The settings whose values a frame carries in a block of their own
     /// behind the rest, [`V2ipPtpMessages`](crate::V2ipPtpMessages): the PTP
-    /// message settings, the two SAP values and the stream TTL.
-    pub const SETTINGS_BLOCK: Self =
-        Self(Self::PTP_MESSAGES.0 | Self::SAP_EXPIRE.0 | Self::SAP_INTERVAL.0 | Self::STREAM_TTL.0);
+    /// message settings, the two SAP values, the stream TTL and the output's
+    /// rotation.
+    pub const SETTINGS_BLOCK: Self = Self(
+        Self::PTP_MESSAGES.0
+            | Self::SAP_EXPIRE.0
+            | Self::SAP_INTERVAL.0
+            | Self::STREAM_TTL.0
+            | Self::SINK_ROTATION.0,
+    );
 
     /// These bits with every bit of `other` cleared.
     pub(crate) const fn without(self, other: Self) -> Self {

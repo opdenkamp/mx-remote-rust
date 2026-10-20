@@ -515,7 +515,7 @@ pub(crate) fn build_v2ip_scaling(
 /// VLAN block at 176, which without its valid bit carries nothing, a zeroed
 /// PTP state at 192, which a receiver takes only from a device describing
 /// itself, and the PTP message block at 216, which runs on to 232 when it
-/// carries the stream TTL.
+/// carries the stream TTL or the output's rotation.
 pub(crate) fn build_v2ip_device_settings(
     target: DeviceUid,
     settings: &V2ipDeviceSettings,
@@ -549,9 +549,10 @@ fn carries_ptp_messages(settings: &V2ipDeviceSettings) -> bool {
 /// signed bytes at 0, 1 and 2, the announce timeout at 3, the DSCP at 4, the
 /// SAP expiry at 5 and the SAP interval as a u16 at 6.
 ///
-/// 8 bytes, or 16 with the stream TTL at 8 when `valid` carries it. Only a
-/// device that has the TTL reads past 8, so a frame without it keeps the
-/// length every device knows.
+/// 8 bytes, or 16 when `valid` carries the stream TTL, at 8, or the output's
+/// rotation, a u16 at 10. Only a device that has either reads past 8, so a
+/// frame without them keeps the length every device knows. The rotation's
+/// step at 12 is the device's to report, and is left 0.
 fn build_ptp_messages_block(valid: V2ipDeviceSetting, m: &V2ipPtpMessages) -> Vec<u8> {
     let [i0, i1] = m.sap_interval_s.to_le_bytes();
     let mut block = vec![
@@ -564,9 +565,16 @@ fn build_ptp_messages_block(valid: V2ipDeviceSetting, m: &V2ipPtpMessages) -> Ve
         i0,
         i1,
     ];
-    if valid.has(V2ipDeviceSetting::STREAM_TTL) {
-        block.push(m.stream_ttl);
+    let ttl = valid.has(V2ipDeviceSetting::STREAM_TTL);
+    let rotation = valid.has(V2ipDeviceSetting::SINK_ROTATION);
+    if ttl || rotation {
         block.resize(16, 0);
+    }
+    if ttl {
+        block[8] = m.stream_ttl;
+    }
+    if rotation {
+        block[10..12].copy_from_slice(&m.sink_rotation.to_le_bytes());
     }
     block
 }

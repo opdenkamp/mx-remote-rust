@@ -1214,9 +1214,21 @@
 #define MXR_V2IP_SETTING_CLOUD (1 << 30)
 
 /**
+ * The angle the device's HDMI output is turned by, in
+ * `mxr_v2ip_ptp_messages_t`'s `sink_rotation`. Reported only by a device
+ * with an HDMI output.
+ */
+#define MXR_V2IP_SETTING_SINK_ROTATION (1 << 31)
+
+/**
  * The TTL a V2IP device's streams carry until it is set.
  */
 #define MXR_V2IP_STREAM_TTL_DEFAULT 64
+
+/**
+ * The largest angle a V2IP device's HDMI output is turned by, in degrees.
+ */
+#define MXR_V2IP_SINK_ROTATION_MAX 359
 
 /**
  * The output plays a stream from a description.
@@ -2501,11 +2513,12 @@ typedef struct {
 } mxr_v2ip_device_settings_t;
 
 /**
- * How a V2IP device paces its PTP messages, its SAP timings and its streams'
- * TTL, which a frame carries in the same block. Intervals are base-2
- * logarithms of seconds, so -3 is 125 ms and 1 is 2 s. Each value is
- * meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
- * `MXR_V2IP_SETTING_SAP_*` or `MXR_V2IP_SETTING_STREAM_TTL` bit in
+ * How a V2IP device paces its PTP messages, its SAP timings, its streams'
+ * TTL and its output's rotation, which a frame carries in the same block.
+ * Intervals are base-2 logarithms of seconds, so -3 is 125 ms and 1 is 2 s.
+ * Each value is meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
+ * `MXR_V2IP_SETTING_SAP_*`, `MXR_V2IP_SETTING_STREAM_TTL` or
+ * `MXR_V2IP_SETTING_SINK_ROTATION` bit in
  * `mxr_v2ip_device_settings_t`'s `valid`.
  */
 typedef struct {
@@ -2543,6 +2556,17 @@ typedef struct {
    * `MXR_V2IP_STREAM_TTL_DEFAULT`.
    */
   uint8_t stream_ttl;
+  /**
+   * The degrees the device's HDMI output is turned by, clockwise, at most
+   * `MXR_V2IP_SINK_ROTATION_MAX`.
+   */
+  uint16_t sink_rotation;
+  /**
+   * The step the output turns by: the device takes only an angle that is
+   * a multiple of it, and 0 alone when it is 0. Only the device reports
+   * it; a write ignores it.
+   */
+  uint16_t sink_rotation_step;
 } mxr_v2ip_ptp_messages_t;
 
 /**
@@ -5979,8 +6003,8 @@ mxr_result_t mxr_set_v2ip_power_save_schedule(const mxr_remote_t *remote,
  * when one only a device reports is, for a PTP setting, which
  * `mxr_set_all_v2ip_ptp_settings()` carries, for the power save level, which
  * `mxr_set_all_v2ip_power_save_level()` carries, for a PTP message, SAP
- * timing or stream TTL setting, which `mxr_set_all_v2ip_ptp_messages()`
- * carries, for a profile out of range or a schedule time not below
+ * timing, stream TTL or rotation setting, which
+ * `mxr_set_all_v2ip_ptp_messages()` carries, for a profile out of range or a schedule time not below
  * `MXR_V2IP_MINUTES_PER_DAY`. Nothing is cached: a device that applies a
  * change reports it.
  *
@@ -6024,13 +6048,15 @@ mxr_result_t mxr_set_v2ip_power_save_level(const mxr_remote_t *remote,
 mxr_result_t mxr_set_all_v2ip_power_save_level(const mxr_remote_t *remote, uint8_t level);
 
 /**
- * Sets how a V2IP device paces its PTP messages, its SAP timings and its
- * streams' TTL: the values of `messages` behind the `MXR_V2IP_SETTING_PTP_*`
- * message bits, `MXR_V2IP_SETTING_SAP_EXPIRE` and `_SAP_INTERVAL`, and
- * `MXR_V2IP_SETTING_STREAM_TTL` in `valid`. `MXR_ERR_INVALID_ARGUMENT`,
+ * Sets how a V2IP device paces its PTP messages, its SAP timings, its
+ * streams' TTL and its output's rotation: the values of `messages` behind
+ * the `MXR_V2IP_SETTING_PTP_*` message bits, `MXR_V2IP_SETTING_SAP_EXPIRE`
+ * and `_SAP_INTERVAL`, `MXR_V2IP_SETTING_STREAM_TTL` and
+ * `MXR_V2IP_SETTING_SINK_ROTATION` in `valid`. `MXR_ERR_INVALID_ARGUMENT`,
  * sending nothing, for a null `messages`, for no such bit or any other bit in
- * `valid`, for a DSCP above 63 or for a stream TTL of 0. Otherwise as
- * `mxr_set_v2ip_device_setting()`.
+ * `valid`, for a DSCP above 63, for a stream TTL of 0, or for a rotation that
+ * is not 0 or a multiple of the `sink_rotation_step` the device reports.
+ * Otherwise as `mxr_set_v2ip_device_setting()`.
  *
  * # Safety
  *
@@ -6044,7 +6070,9 @@ mxr_result_t mxr_set_v2ip_ptp_messages(const mxr_remote_t *remote,
 
 /**
  * Changes how every V2IP device of the mesh paces its PTP messages, with one
- * frame. As `mxr_set_v2ip_ptp_messages()` for its arguments, and otherwise as
+ * frame. As `mxr_set_v2ip_ptp_messages()` for its arguments, except that a
+ * rotation is refused only above `MXR_V2IP_SINK_ROTATION_MAX`, and each
+ * device takes it only by its own step. Otherwise as
  * `mxr_set_all_v2ip_device_settings()`, which carries the other settings.
  *
  * # Safety

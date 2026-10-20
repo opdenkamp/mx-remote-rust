@@ -1384,11 +1384,12 @@ pub unsafe extern "C" fn mxr_v2ip_power_save_level(
     })
 }
 
-/// How a V2IP device paces its PTP messages, its SAP timings and its streams'
-/// TTL, which a frame carries in the same block. Intervals are base-2
-/// logarithms of seconds, so -3 is 125 ms and 1 is 2 s. Each value is
-/// meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
-/// `MXR_V2IP_SETTING_SAP_*` or `MXR_V2IP_SETTING_STREAM_TTL` bit in
+/// How a V2IP device paces its PTP messages, its SAP timings, its streams'
+/// TTL and its output's rotation, which a frame carries in the same block.
+/// Intervals are base-2 logarithms of seconds, so -3 is 125 ms and 1 is 2 s.
+/// Each value is meaningful only behind its `MXR_V2IP_SETTING_PTP_*`,
+/// `MXR_V2IP_SETTING_SAP_*`, `MXR_V2IP_SETTING_STREAM_TTL` or
+/// `MXR_V2IP_SETTING_SINK_ROTATION` bit in
 /// `mxr_v2ip_device_settings_t`'s `valid`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1411,6 +1412,13 @@ pub struct mxr_v2ip_ptp_messages_t {
     /// processor cannot change it keeps the setting and sends
     /// `MXR_V2IP_STREAM_TTL_DEFAULT`.
     pub stream_ttl: u8,
+    /// The degrees the device's HDMI output is turned by, clockwise, at most
+    /// `MXR_V2IP_SINK_ROTATION_MAX`.
+    pub sink_rotation: u16,
+    /// The step the output turns by: the device takes only an angle that is
+    /// a multiple of it, and 0 alone when it is 0. Only the device reports
+    /// it; a write ignores it.
+    pub sink_rotation_step: u16,
 }
 
 impl From<V2ipPtpMessages> for mxr_v2ip_ptp_messages_t {
@@ -1424,6 +1432,8 @@ impl From<V2ipPtpMessages> for mxr_v2ip_ptp_messages_t {
             sap_expire_min: m.sap_expire_min,
             sap_interval_s: m.sap_interval_s,
             stream_ttl: m.stream_ttl,
+            sink_rotation: m.sink_rotation,
+            sink_rotation_step: m.sink_rotation_step,
         }
     }
 }
@@ -1439,6 +1449,8 @@ impl From<mxr_v2ip_ptp_messages_t> for V2ipPtpMessages {
             sap_expire_min: m.sap_expire_min,
             sap_interval_s: m.sap_interval_s,
             stream_ttl: m.stream_ttl,
+            sink_rotation: m.sink_rotation,
+            sink_rotation_step: m.sink_rotation_step,
         }
     }
 }

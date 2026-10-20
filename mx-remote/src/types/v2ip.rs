@@ -674,8 +674,8 @@ pub struct V2ipDeviceSettings {
     pub ptp_messages: V2ipPtpMessages,
 }
 
-/// How a V2IP device paces its PTP messages, its SAP timings and its streams'
-/// TTL, which a frame carries in the same block. Each value is behind its own bit of
+/// How a V2IP device paces its PTP messages, its SAP timings, its streams'
+/// TTL and its output's rotation, which a frame carries in the same block. Each value is behind its own bit of
 /// [`V2ipDeviceSettings::valid`], one of
 /// [`SETTINGS_BLOCK`](V2ipDeviceSetting::SETTINGS_BLOCK).
 ///
@@ -707,10 +707,21 @@ pub struct V2ipPtpMessages {
     /// processor cannot change it keeps the setting and sends
     /// [`V2IP_STREAM_TTL_DEFAULT`].
     pub stream_ttl: u8,
+    /// The degrees the device's HDMI output is turned by, clockwise, at most
+    /// [`V2IP_SINK_ROTATION_MAX`], behind
+    /// [`SINK_ROTATION`](V2ipDeviceSetting::SINK_ROTATION).
+    pub sink_rotation: u16,
+    /// The step the output turns by: the device takes only an angle that is
+    /// a multiple of it, and 0 alone when it is 0. Only the device reports
+    /// it, behind the same bit.
+    pub sink_rotation_step: u16,
 }
 
 /// The TTL a V2IP device's streams carry until it is set.
 pub const V2IP_STREAM_TTL_DEFAULT: u8 = 64;
+
+/// The largest angle a V2IP device's HDMI output is turned by, in degrees.
+pub const V2IP_SINK_ROTATION_MAX: u16 = 359;
 
 impl V2ipPtpMessages {
     /// The values behind the bits of `which` copied from `from`, the rest
@@ -742,7 +753,20 @@ impl V2ipPtpMessages {
         if which.has(V2ipDeviceSetting::STREAM_TTL) {
             out.stream_ttl = from.stream_ttl;
         }
+        if which.has(V2ipDeviceSetting::SINK_ROTATION) {
+            out.sink_rotation = from.sink_rotation;
+            out.sink_rotation_step = from.sink_rotation_step;
+        }
         out
+    }
+
+    /// Whether a device reporting this step takes `degrees` as its output's
+    /// rotation.
+    pub(crate) const fn takes_sink_rotation(&self, degrees: u16) -> bool {
+        degrees == 0
+            || (degrees <= V2IP_SINK_ROTATION_MAX
+                && self.sink_rotation_step != 0
+                && degrees % self.sink_rotation_step == 0)
     }
 }
 
@@ -889,10 +913,11 @@ impl V2ipDeviceSettings {
     /// This block limited to what a device takes from a write about it.
     ///
     /// A device applies a setting only if it has it, a profile only within
-    /// its range, and never what only it can report about itself.
+    /// its range, a rotation only by its own step, and never what only it can
+    /// report about itself.
     #[must_use]
-    pub(crate) fn as_applied_to(self, reported: V2ipDeviceSetting) -> Self {
-        let mut valid = (self.valid & reported).without(V2ipDeviceSetting::REPORTED_ONLY);
+    pub(crate) fn as_applied_to(self, reported: &Self) -> Self {
+        let mut valid = (self.valid & reported.valid).without(V2ipDeviceSetting::REPORTED_ONLY);
         if !(0..V2IP_IR_PROFILE_MAX).contains(&self.ir_profile) {
             valid = valid.without(V2ipDeviceSetting::IR_PROFILE);
         }
@@ -914,7 +939,21 @@ impl V2ipDeviceSettings {
         if self.ptp_messages.stream_ttl == 0 {
             valid = valid.without(V2ipDeviceSetting::STREAM_TTL);
         }
-        Self { valid, ..self }
+        if !reported
+            .ptp_messages
+            .takes_sink_rotation(self.ptp_messages.sink_rotation)
+        {
+            valid = valid.without(V2ipDeviceSetting::SINK_ROTATION);
+        }
+        let ptp_messages = V2ipPtpMessages {
+            sink_rotation_step: reported.ptp_messages.sink_rotation_step,
+            ..self.ptp_messages
+        };
+        Self {
+            valid,
+            ptp_messages,
+            ..self
+        }
     }
 }
 
