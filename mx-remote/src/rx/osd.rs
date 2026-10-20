@@ -7,13 +7,14 @@ use crate::event::Event;
 use crate::state::State;
 use crate::types::OSD_SYNC_RECORDS_MAX;
 use crate::types::{
-    OsdCaption, OsdLogo, OsdSync, OsdSyncReport, OsdSyncRequest, OsdSyncSetting, OsdSyncSlot,
-    OsdSyncValue,
+    OsdCaption, OsdLogo, OsdMessage, OsdSync, OsdSyncReport, OsdSyncRequest, OsdSyncSetting,
+    OsdSyncSlot, OsdSyncValue,
 };
 use crate::wire::{
     cstr, osd_kind, osd_setting, DeviceFeature, DeviceUid, OsdCaptionAlign, OsdCaptionFormat,
-    OsdSyncSize, OsdSyncState, OsdSyncWhat, OSD_BACKGROUND_SIZE, OSD_CAPTION_SIZE, OSD_FONT_LEN,
-    OSD_HEADER_SIZE, OSD_LOGO_SIZE, OSD_REPORT_SIZE, OSD_REQUEST_SIZE, OSD_REQUEST_SOURCE_AT,
+    OsdMessageFlag, OsdMessagePriority, OsdSyncSize, OsdSyncState, OsdSyncWhat,
+    OSD_BACKGROUND_SIZE, OSD_CAPTION_SIZE, OSD_FONT_LEN, OSD_HEADER_SIZE, OSD_LOGO_SIZE,
+    OSD_MESSAGE_SIZE, OSD_REPORT_SIZE, OSD_REQUEST_SIZE, OSD_REQUEST_SOURCE_AT,
     OSD_SETTING_BODY_AT, OSD_SYNC_SIZE, OSD_SYNC_SLOTS_AT, OSD_SYNC_SLOT_SIZE, OSD_SYNC_VERSION,
 };
 
@@ -32,6 +33,10 @@ const SYNC_RECORDS_MAX: u16 = OSD_SYNC_RECORDS_MAX as u16;
 /// as its target, and is read only when it does. One asking for a new sync,
 /// or naming this client as the source, is also queued for the runtime,
 /// which answers it while this client holds a sync.
+///
+/// A unit answers for its own output only, so the message it reports is read
+/// only when it names itself. A request for a message, or a write of one,
+/// is for a unit with an output, which this client is not.
 pub(super) fn osd_sync(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
     let sender = rx.sender();
@@ -71,8 +76,28 @@ pub(super) fn osd_sync(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                 device.set_osd_sync_report(report, ev);
             }
         }
+        osd_kind::MESSAGE_STATE if target == sender => {
+            if let Some(message) = message(p) {
+                if let Some(device) = state.device_mut(sender) {
+                    device.set_osd_message(message, ev);
+                }
+            }
+        }
         _ => {}
     }
+}
+
+/// Reads a message, which a unit takes only with all the text it counts.
+fn message(p: &[u8]) -> Option<OsdMessage> {
+    let text = p.get(OSD_MESSAGE_SIZE..)?;
+    let len = usize::from(u16_at(p, 24));
+    let text = text.get(..len)?;
+    Some(OsdMessage {
+        flags: OsdMessageFlag::from_bits(p[20]),
+        logo: p[21] as i8,
+        priority: OsdMessagePriority::from_wire(p[22]),
+        text: String::from_utf8_lossy(text).into_owned(),
+    })
 }
 
 /// Whether a unit counts `uid` as management: the mesh controller, or a

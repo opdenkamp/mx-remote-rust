@@ -11,9 +11,9 @@ use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry, UnitStatus, V2ipDeviceSettings,
-    V2ipDeviceStats, V2ipPrivacy, V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp,
-    V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
+    OsdMessage, OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry, UnitStatus,
+    V2ipDeviceSettings, V2ipDeviceStats, V2ipPrivacy, V2ipPtpState, V2ipScalingSettings,
+    V2ipSinkSdp, V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
     SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{
@@ -131,6 +131,7 @@ pub(crate) struct Device {
     pub(crate) v2ip_privacy: Option<V2ipPrivacy>,
     pub(crate) osd_sync: Option<OsdSync>,
     pub(crate) osd_sync_report: Option<OsdSyncReport>,
+    pub(crate) osd_message: Option<OsdMessage>,
     /// The PTP state the device last reported about itself, `None` while it
     /// reports none.
     pub(crate) v2ip_ptp: Option<V2ipPtpState>,
@@ -188,6 +189,7 @@ impl Device {
             v2ip_privacy: None,
             osd_sync: None,
             osd_sync_report: None,
+            osd_message: None,
             v2ip_testcard: None,
             v2ip_stats: None,
             setup_done: None,
@@ -1131,6 +1133,17 @@ impl Device {
         ev.push(Event::OsdSyncChanged {
             device: self.uid,
             sync,
+        });
+    }
+
+    pub(crate) fn set_osd_message(&mut self, message: OsdMessage, ev: &mut Vec<Event>) {
+        if self.osd_message.as_ref() == Some(&message) {
+            return;
+        }
+        self.osd_message = Some(message.clone());
+        ev.push(Event::OsdMessageChanged {
+            device: self.uid,
+            message,
         });
     }
 

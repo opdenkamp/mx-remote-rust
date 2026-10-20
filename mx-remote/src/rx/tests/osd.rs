@@ -8,8 +8,8 @@ use std::net::Ipv4Addr;
 use crate::event::Event;
 use crate::types::{OsdSyncSlot, OsdSyncValue};
 use crate::wire::{
-    op, DeviceFeature, DeviceUid, OsdCaptionAlign, OsdCaptionFormat, OsdSyncSize, OsdSyncState,
-    OsdSyncWhat,
+    op, DeviceFeature, DeviceUid, OsdCaptionAlign, OsdCaptionFormat, OsdMessageFlag,
+    OsdMessagePriority, OsdSyncSize, OsdSyncState, OsdSyncWhat,
 };
 
 use crate::testing::{hello_payload, poisoned, uid_n};
@@ -379,4 +379,65 @@ fn a_sync_from_a_controller_units_do_not_follow_is_not_read() {
         &sync_frame(8, DeviceUid::ZERO, 1, 3),
     );
     assert_eq!(sync_events(&h), 1, "a controller no unit follows");
+}
+
+/// A message of `kind` from `unit`'s output: every flag but REFUSED, no logo,
+/// the top priority, and `text` counted, with poisoned bytes behind it.
+fn message_frame(kind: u8, unit: DeviceUid, text: &[u8]) -> Vec<u8> {
+    let mut p = frame(kind, 0, unit, 26 + text.len() + 4);
+    p[20..24].copy_from_slice(&[0x07, 0xFF, 2, 0xA5]);
+    p[24..26].copy_from_slice(&(text.len() as u16).to_le_bytes());
+    p[26..26 + text.len()].copy_from_slice(text);
+    p
+}
+
+fn message_of(h: &Harness, unit: DeviceUid) -> Option<crate::types::OsdMessage> {
+    h.state.device(unit).and_then(|d| d.osd_message.clone())
+}
+
+/// A unit's message is read field by field, the text as long as it counts,
+/// and announced only when it changes.
+#[test]
+fn a_message_is_read_field_by_field() {
+    let (mut h, _, unit) = mesh();
+    let text = b"Input <b>3</b> is back";
+    h.feed_as(unit, op::V2IP_OSD_SYNC, &message_frame(6, unit, text));
+
+    let m = message_of(&h, unit).expect("no message was read");
+    assert_eq!(m.flags, OsdMessageFlag::from_bits(0x07));
+    assert_eq!(m.logo, -1);
+    assert_eq!(m.priority, OsdMessagePriority::TOP);
+    assert_eq!(m.text.as_bytes(), text);
+    let changes = |h: &Harness| {
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::OsdMessageChanged { device, .. } if *device == unit))
+            .count()
+    };
+    assert_eq!(changes(&h), 1);
+    h.feed_as(unit, op::V2IP_OSD_SYNC, &message_frame(6, unit, text));
+    assert_eq!(changes(&h), 1, "an unchanged message was announced");
+}
+
+/// A unit answers for its own output only, and with the whole text; a
+/// request or a write is for a unit with an output.
+#[test]
+fn only_a_units_own_whole_message_is_kept() {
+    let (mut h, source, unit) = mesh();
+    let text = b"Back soon";
+    let mut short = message_frame(6, unit, text);
+    short.truncate(26 + text.len() - 1);
+    let mut long = message_frame(6, unit, text);
+    long[25] = 1;
+    for (what, from, frame) in [
+        ("another unit's", source, message_frame(6, unit, text)),
+        ("a cut text", unit, short),
+        ("a text counted past the frame", unit, long),
+        ("a request", unit, message_frame(4, unit, text)),
+        ("a write", unit, message_frame(5, unit, text)),
+    ] {
+        h.feed_as(from, op::V2IP_OSD_SYNC, &frame);
+        assert_eq!(message_of(&h, unit), None, "{what} was kept");
+        assert_eq!(message_of(&h, source), None, "{what} was kept");
+    }
 }

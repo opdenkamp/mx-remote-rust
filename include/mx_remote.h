@@ -1667,6 +1667,47 @@
 #define MXR_OSD_SYNC_STATE_DEFERRED 3
 
 /**
+ * A message is set. Without it the other fields are empty.
+ */
+#define MXR_OSD_MESSAGE_SET (1 << 0)
+
+/**
+ * The output shows it, rather than another message ahead of it.
+ */
+#define MXR_OSD_MESSAGE_SHOWN (1 << 1)
+
+/**
+ * The unit's video processor composes the message layer.
+ */
+#define MXR_OSD_MESSAGE_SUPPORTED (1 << 2)
+
+/**
+ * The unit did not take the write it answers, and reports the message it
+ * kept.
+ */
+#define MXR_OSD_MESSAGE_REFUSED (1 << 3)
+
+/**
+ * After the unit's own upgrade, Locate Device and encrypted source messages.
+ */
+#define MXR_OSD_MESSAGE_PRIORITY_LOW 0
+
+/**
+ * Between them.
+ */
+#define MXR_OSD_MESSAGE_PRIORITY_NORMAL 1
+
+/**
+ * Before them.
+ */
+#define MXR_OSD_MESSAGE_PRIORITY_TOP 2
+
+/**
+ * The longest message text a unit takes, in bytes.
+ */
+#define MXR_OSD_MESSAGE_TEXT_MAX 255
+
+/**
  * The setting sets a caption.
  */
 #define MXR_OSD_SYNC_TYPE_CAPTION 0
@@ -2025,6 +2066,11 @@
  * Bytes in `mxr_osd_sync_report_t.reason`, its NUL included.
  */
 #define MXR_OSD_SYNC_REASON_LEN 65
+
+/**
+ * Bytes in `mxr_osd_message_t.text`, its NUL included.
+ */
+#define MXR_OSD_MESSAGE_TEXT_LEN 256
 
 /**
  * The power save levels a unit reports what it offers at.
@@ -4865,6 +4911,29 @@ typedef struct {
 } mxr_osd_sync_report_t;
 
 /**
+ * The message on a unit's output, as the unit last reported it.
+ */
+typedef struct {
+  /**
+   * `MXR_OSD_MESSAGE_*` bits. Without `MXR_OSD_MESSAGE_SET` the other
+   * fields are empty.
+   */
+  uint8_t flags;
+  /**
+   * The logo shown with it: 0 the built-in logo, -1 none, 1 to 5 a slot.
+   */
+  int8_t logo;
+  /**
+   * `MXR_OSD_MESSAGE_PRIORITY_*`.
+   */
+  uint8_t priority;
+  /**
+   * Its markup.
+   */
+  char text[MXR_OSD_MESSAGE_TEXT_LEN];
+} mxr_osd_message_t;
+
+/**
  * What a unit offers at each power save level.
  */
 typedef struct {
@@ -6208,6 +6277,53 @@ mxr_result_t mxr_request_v2ip_privacy(const mxr_remote_t *remote, mxr_uid_t devi
 mxr_result_t mxr_request_all_v2ip_privacy(const mxr_remote_t *remote);
 
 /**
+ * Asks a unit for the message on its output; `mxr_osd_message()` reads the
+ * answer. `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP output. A
+ * unit whose overlay module predates messages does not answer.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_osd_message(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
+ * Shows a message on a unit's output, in place of any it has, until the unit
+ * restarts.
+ *
+ * `logo` is shown with it: 0 the built-in logo, -1 none, 1 to 5 a logo slot.
+ * `priority` is `MXR_OSD_MESSAGE_PRIORITY_*`. `text` is markup of at most
+ * `MXR_OSD_MESSAGE_TEXT_MAX` bytes with no control character; empty, the
+ * logo shows alone. The unit answers with the message it then has, which
+ * `mxr_osd_message()` reads, `MXR_OSD_MESSAGE_REFUSED` set when its video
+ * processor has no message layer.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `text` and for a
+ * logo, priority or text the unit would refuse, and `MXR_ERR_UNSUPPORTED`
+ * for a device that is not a V2IP output. A unit whose overlay module
+ * predates messages ignores it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `text` is
+ * null or a NUL-terminated string.
+ */
+mxr_result_t mxr_show_osd_message(const mxr_remote_t *remote,
+                                  mxr_uid_t device,
+                                  int8_t logo,
+                                  uint8_t priority,
+                                  const char *text);
+
+/**
+ * Takes the message down from a unit's output. As `mxr_show_osd_message()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_clear_osd_message(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
  * Clears a unit's current system status. As `mxr_upgrade_unit_fpga()`.
  *
  * # Safety
@@ -7371,6 +7487,21 @@ mxr_result_t mxr_osd_sync(const mxr_remote_t *remote, mxr_uid_t uid, mxr_osd_syn
 mxr_result_t mxr_osd_sync_report(const mxr_remote_t *remote,
                                  mxr_uid_t uid,
                                  mxr_osd_sync_report_t *out);
+
+/**
+ * Fills `out` with the message on a unit's output, as the unit last
+ * reported it to this client.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` until it has. A unit reports it only when
+ * asked with `mxr_request_osd_message()` or written to, and a change is
+ * announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_osd_message_t`.
+ */
+mxr_result_t mxr_osd_message(const mxr_remote_t *remote, mxr_uid_t uid, mxr_osd_message_t *out);
 
 /**
  * Fills `out` with what a unit offers at each power save level, as its last

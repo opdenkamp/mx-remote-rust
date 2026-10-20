@@ -1006,6 +1006,28 @@ pub const MXR_OSD_SYNC_STATE_FAILED: u8 = 2;
 /// Kept for later, as the unit's video processor is off in power save.
 pub const MXR_OSD_SYNC_STATE_DEFERRED: u8 = 3;
 
+// ---- the message on a unit's output, in `mxr_osd_message_t` ----
+
+/// A message is set. Without it the other fields are empty.
+pub const MXR_OSD_MESSAGE_SET: u8 = 1 << 0;
+/// The output shows it, rather than another message ahead of it.
+pub const MXR_OSD_MESSAGE_SHOWN: u8 = 1 << 1;
+/// The unit's video processor composes the message layer.
+pub const MXR_OSD_MESSAGE_SUPPORTED: u8 = 1 << 2;
+/// The unit did not take the write it answers, and reports the message it
+/// kept.
+pub const MXR_OSD_MESSAGE_REFUSED: u8 = 1 << 3;
+
+/// After the unit's own upgrade, Locate Device and encrypted source messages.
+pub const MXR_OSD_MESSAGE_PRIORITY_LOW: u8 = 0;
+/// Between them.
+pub const MXR_OSD_MESSAGE_PRIORITY_NORMAL: u8 = 1;
+/// Before them.
+pub const MXR_OSD_MESSAGE_PRIORITY_TOP: u8 = 2;
+
+/// The longest message text a unit takes, in bytes.
+pub const MXR_OSD_MESSAGE_TEXT_MAX: usize = 255;
+
 // ---- overlay sync settings, in `mxr_osd_sync_entry_t` ----
 
 /// The setting sets a caption.

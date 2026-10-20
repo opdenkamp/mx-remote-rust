@@ -27,8 +27,8 @@ use mx_remote::{
     V2ipTestPattern, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
 };
 use mx_remote::{
-    OsdCaption, OsdCaptionAlign, OsdCaptionFormat, OsdLogo, OsdSyncContent, OsdSyncEntry,
-    OsdSyncImage, OsdSyncSize, OsdSyncValue, OsdSyncWhat,
+    OsdCaption, OsdCaptionAlign, OsdCaptionFormat, OsdLogo, OsdMessagePriority, OsdSyncContent,
+    OsdSyncEntry, OsdSyncImage, OsdSyncSize, OsdSyncValue, OsdSyncWhat,
 };
 
 use crate::abi::{
@@ -1572,6 +1572,86 @@ pub unsafe extern "C" fn mxr_request_all_v2ip_privacy(remote: *const mxr_remote_
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
         from_control(r.remote.request_all_v2ip_privacy())
+    })
+}
+
+/// Asks a unit for the message on its output; `mxr_osd_message()` reads the
+/// answer. `MXR_ERR_UNSUPPORTED` for a device that is not a V2IP output. A
+/// unit whose overlay module predates messages does not answer.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_osd_message(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_osd_message(device.into()))
+    })
+}
+
+/// Shows a message on a unit's output, in place of any it has, until the unit
+/// restarts.
+///
+/// `logo` is shown with it: 0 the built-in logo, -1 none, 1 to 5 a logo slot.
+/// `priority` is `MXR_OSD_MESSAGE_PRIORITY_*`. `text` is markup of at most
+/// `MXR_OSD_MESSAGE_TEXT_MAX` bytes with no control character; empty, the
+/// logo shows alone. The unit answers with the message it then has, which
+/// `mxr_osd_message()` reads, `MXR_OSD_MESSAGE_REFUSED` set when its video
+/// processor has no message layer.
+///
+/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a null `text` and for a
+/// logo, priority or text the unit would refuse, and `MXR_ERR_UNSUPPORTED`
+/// for a device that is not a V2IP output. A unit whose overlay module
+/// predates messages ignores it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `text` is
+/// null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_show_osd_message(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    logo: i8,
+    priority: u8,
+    text: *const c_char,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees a NUL-terminated string or null.
+        let text = match unsafe { req_str(text) } {
+            Ok(text) => text,
+            Err(code) => return code,
+        };
+        from_control(r.remote.show_osd_message(
+            device.into(),
+            logo,
+            OsdMessagePriority::from_wire(priority),
+            text,
+        ))
+    })
+}
+
+/// Takes the message down from a unit's output. As `mxr_show_osd_message()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_clear_osd_message(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.clear_osd_message(device.into()))
     })
 }
 

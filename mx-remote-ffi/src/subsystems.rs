@@ -19,12 +19,12 @@ use std::time::UNIX_EPOCH;
 
 use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    MultiviewerStatus, NetworkPortStatus, OsdSync, OsdSyncReport, RcSettings, StreamKind,
-    TopologyEntry, UnitStatus, UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings,
+    MultiviewerStatus, NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport, RcSettings,
+    StreamKind, TopologyEntry, UnitStatus, UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings,
     V2ipDeviceStats, V2ipFpgaFeature, V2ipPrivacy, V2ipPrivacyStream, V2ipPtpMessages,
     V2ipPtpState, V2ipRxStats, V2ipSinkSdp, V2ipStreamSource, V2ipStreamSources, V2ipTestSync,
     V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus,
-    MULTIVIEWER_INPUTS, OSD_SYNC_SLOTS,
+    MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, OSD_SYNC_SLOTS,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -1807,6 +1807,61 @@ pub unsafe extern "C" fn mxr_osd_sync_report(
             });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "overlay sync report", value) }
+    })
+}
+
+/// Bytes in `mxr_osd_message_t.text`, its NUL included.
+pub const MXR_OSD_MESSAGE_TEXT_LEN: usize = 256;
+
+const _: () = assert!(MXR_OSD_MESSAGE_TEXT_LEN == OSD_MESSAGE_TEXT_MAX + 1);
+
+/// The message on a unit's output, as the unit last reported it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_osd_message_t {
+    /// `MXR_OSD_MESSAGE_*` bits. Without `MXR_OSD_MESSAGE_SET` the other
+    /// fields are empty.
+    pub flags: u8,
+    /// The logo shown with it: 0 the built-in logo, -1 none, 1 to 5 a slot.
+    pub logo: i8,
+    /// `MXR_OSD_MESSAGE_PRIORITY_*`.
+    pub priority: u8,
+    /// Its markup.
+    pub text: [c_char; MXR_OSD_MESSAGE_TEXT_LEN],
+}
+
+/// Fills `out` with the message on a unit's output, as the unit last
+/// reported it to this client.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` until it has. A unit reports it only when
+/// asked with `mxr_request_osd_message()` or written to, and a change is
+/// announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_osd_message_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_osd_message(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_osd_message_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r.remote.osd_message(uid.into()).map(|m: OsdMessage| {
+            let mut out = mxr_osd_message_t {
+                flags: m.flags.bits(),
+                logo: m.logo,
+                priority: m.priority.to_wire(),
+                text: [0; MXR_OSD_MESSAGE_TEXT_LEN],
+            };
+            put_str(&mut out.text, &m.text);
+            out
+        });
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "output message", value) }
     })
 }
 

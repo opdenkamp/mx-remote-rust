@@ -1461,6 +1461,34 @@ bitmask! {
     }
 }
 
+bitmask! {
+    /// What a unit says of the message on its output.
+    OsdMessageFlag: u8 {
+        /// A message is set. In a write: show it, rather than take it down.
+        SET = 1 << 0;
+        /// The output shows it, rather than another message ahead of it.
+        SHOWN = 1 << 1;
+        /// The unit's video processor composes the message layer.
+        SUPPORTED = 1 << 2;
+        /// The unit did not take the write it answers, and reports the
+        /// message it kept.
+        REFUSED = 1 << 3;
+    }
+}
+
+wire_enum! {
+    /// Where a message stands against the unit's own messages: its upgrade,
+    /// Locate Device and encrypted source messages.
+    OsdMessagePriority: u8 {
+        /// After them.
+        LOW = 0;
+        /// Between them.
+        NORMAL = 1;
+        /// Before them.
+        TOP = 2;
+    }
+}
+
 wire_enum! {
     /// How far a unit has got with taking an overlay sync.
     OsdSyncState: u8 {

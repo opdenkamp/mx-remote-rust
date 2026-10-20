@@ -229,6 +229,9 @@ events! {
         OsdSyncRequested => on_osd_sync_requested(request: OsdSyncRequest);
         /// The management unit sent one setting of an overlay sync to a unit.
         OsdSyncSettingReceived => on_osd_sync_setting_received(setting: OsdSyncSetting);
+        /// The unit reported something different about the message on its
+        /// output.
+        OsdMessageChanged => on_osd_message_changed(message: OsdMessage);
         /// The unit reported a different status.
         UnitStatusChanged => on_unit_status_changed(status: UnitStatus);
         /// The device reported a different PTP state, or stopped reporting

@@ -10,11 +10,11 @@ use std::sync::Arc;
 use crate::testing::{datagram, hello_payload, uid_n};
 use crate::types::{
     OsdCaption, OsdLogo, OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncValue,
-    OSD_SYNC_IMAGE_MAX,
+    OSD_MESSAGE_TEXT_MAX, OSD_SYNC_IMAGE_MAX,
 };
 use crate::wire::{
-    crc32, op, Conn, DeviceFeature, DeviceUid, OsdCaptionAlign, OsdCaptionFormat, OsdSyncSize,
-    OsdSyncWhat, HEADER_LEN, PROTOCOL_VERSION,
+    crc32, op, Conn, DeviceFeature, DeviceUid, OsdCaptionAlign, OsdCaptionFormat,
+    OsdMessagePriority, OsdSyncSize, OsdSyncWhat, HEADER_LEN, PROTOCOL_VERSION,
 };
 
 use super::super::tests::{client_with, Tap};
@@ -655,6 +655,88 @@ fn a_resend_goes_only_to_a_unit_taking_overlay_syncs() {
     assert!(matches!(
         m.remote.resend_osd_sync(c),
         Err(ControlError::Unsupported(_))
+    ));
+    assert!(m.sent().is_empty());
+}
+
+/// The message frames go to the unit they name, the text counted and not
+/// terminated, and a request and a take-down carry nothing else.
+#[test]
+fn a_message_names_the_unit_it_is_for() {
+    let m = mesh();
+    let text = "x".repeat(OSD_MESSAGE_TEXT_MAX);
+    m.remote
+        .show_osd_message(m.a, 5, OsdMessagePriority::NORMAL, &text)
+        .expect("a message the unit takes");
+    m.remote
+        .clear_osd_message(m.b)
+        .expect("a unit with an output");
+    m.remote
+        .request_osd_message(m.a)
+        .expect("a unit with an output");
+
+    let sent = m.sent();
+    assert_eq!(sent.len(), 3);
+    let head = |kind: u8, unit: DeviceUid| {
+        let mut p = vec![2, kind, 0, 0];
+        p.extend_from_slice(unit.as_bytes());
+        p
+    };
+    let mut show = head(5, m.a);
+    show.extend_from_slice(&[1, 5, 1, 0, 255, 0]);
+    show.extend_from_slice(text.as_bytes());
+    assert_eq!(sent[0], show);
+    let mut clear = head(5, m.b);
+    clear.extend_from_slice(&[0; 6]);
+    assert_eq!(sent[1], clear);
+    let mut request = head(4, m.a);
+    request.extend_from_slice(&[0; 6]);
+    assert_eq!(sent[2], request);
+}
+
+/// What a unit would refuse, or has no output to show, is not sent.
+#[test]
+fn a_message_a_unit_would_refuse_is_not_sent() {
+    let m = mesh();
+    let source = uid_n(0x23);
+    m.feed(
+        source,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "OI0023", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+    m.tap.clear();
+    let normal = OsdMessagePriority::NORMAL;
+    let show =
+        |unit, logo, priority, text: &str| m.remote.show_osd_message(unit, logo, priority, text);
+    let long = "x".repeat(OSD_MESSAGE_TEXT_MAX + 1);
+    for (what, result) in [
+        ("logo 6", show(m.a, 6, normal, "")),
+        ("logo -2", show(m.a, -2, normal, "")),
+        (
+            "priority 3",
+            show(m.a, 0, OsdMessagePriority::from_wire(3), ""),
+        ),
+        ("a long text", show(m.a, 0, normal, &long)),
+        ("a line break", show(m.a, 0, normal, "two\nlines")),
+    ] {
+        assert!(
+            matches!(result, Err(ControlError::InvalidRequest(_))),
+            "{what}: {result:?}"
+        );
+    }
+    for result in [
+        show(source, 0, normal, "hi"),
+        m.remote.clear_osd_message(source),
+        m.remote.request_osd_message(source),
+    ] {
+        assert!(
+            matches!(result, Err(ControlError::Unsupported(_))),
+            "{result:?}"
+        );
+    }
+    assert!(matches!(
+        m.remote.request_osd_message(uid_n(0x24)),
+        Err(ControlError::UnknownDevice(_))
     ));
     assert!(m.sent().is_empty());
 }

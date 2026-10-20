@@ -35,26 +35,27 @@ use crate::types::{
     V2ipAudioFormat, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages,
     V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
     V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX, V2IP_VLAN_PORT_SFP,
-    VIDEO_WALL_CLEARED,
+    OSD_MESSAGE_TEXT_MAX, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
+    SCALING_FLAG_OPTIONS_VALID, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX,
+    V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation,
-    build_privacy_request, build_rc_action, build_rc_key, build_set_bay_name, build_set_volume,
-    build_sink_sdp_command, build_sink_sdp_pages, build_stats_request, build_target_only,
-    build_time_zone, build_unit_command, build_v2ip_device_settings,
+    build_osd_message, build_privacy_request, build_rc_action, build_rc_key, build_set_bay_name,
+    build_set_volume, build_sink_sdp_command, build_sink_sdp_pages, build_stats_request,
+    build_target_only, build_time_zone, build_unit_command, build_v2ip_device_settings,
     build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_settings_all,
     build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan, build_video_wall, mesh_op,
-    mv_cmd_payload, mv_sub, op, sdp_type, testcard_part, testcard_type, Addressee, BayUid,
-    DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    mv_cmd_payload, mv_sub, op, osd_kind, sdp_type, testcard_part, testcard_type, Addressee,
+    BayUid, DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
     MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode, RcAction,
-    RcKey, SendError, StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting,
-    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
-    V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode,
+    OsdMessageFlag, OsdMessagePriority, RcAction, RcKey, SendError, StreamAddr, UnitCommandFlag,
+    UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode,
+    V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
+    TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1065,6 +1066,101 @@ impl Remote {
                 Addressee::device(d),
                 op::V2IP_PRIVACY,
                 build_privacy_request(d.uid),
+            ))
+        })
+    }
+
+    /// Asks a unit for the message on its output, which
+    /// [`Remote::osd_message`] reads once the unit answers.
+    ///
+    /// Refused for a device that is not a V2IP output. A unit whose overlay
+    /// module predates messages does not answer.
+    pub fn request_osd_message(&self, device: DeviceUid) -> Result<(), ControlError> {
+        let none = OsdMessagePriority::LOW;
+        self.send_osd_message(
+            device,
+            osd_kind::MESSAGE_REQUEST,
+            OsdMessageFlag::NONE,
+            0,
+            none,
+            "",
+        )
+    }
+
+    /// Shows a message on a unit's output, in place of any it has.
+    ///
+    /// `logo` is shown with it: 0 the built-in logo, -1 none, 1 to 5 a logo
+    /// slot. `text` is markup of at most
+    /// [`OSD_MESSAGE_TEXT_MAX`](crate::OSD_MESSAGE_TEXT_MAX) bytes, with no
+    /// control character; empty, the logo shows alone.
+    ///
+    /// The unit takes it from management, which this client announces itself
+    /// as, and holds it until it restarts. It answers with the message it
+    /// then has, which [`Remote::osd_message`] reads, flagged
+    /// [`REFUSED`](OsdMessageFlag::REFUSED) when its video processor has no
+    /// message layer. Refused here for a device that is not a V2IP output,
+    /// and for a logo, priority or text the unit would refuse. A unit whose
+    /// overlay module predates messages ignores it and does not answer.
+    pub fn show_osd_message(
+        &self,
+        device: DeviceUid,
+        logo: i8,
+        priority: OsdMessagePriority,
+        text: &str,
+    ) -> Result<(), ControlError> {
+        if !(-1..=5).contains(&logo) {
+            return Err(ControlError::InvalidRequest("a logo of -1 to 5"));
+        }
+        if priority > OsdMessagePriority::TOP {
+            return Err(ControlError::InvalidRequest("no such message priority"));
+        }
+        if text.len() > OSD_MESSAGE_TEXT_MAX {
+            return Err(ControlError::InvalidRequest(
+                "a message of at most 255 bytes",
+            ));
+        }
+        if text.bytes().any(|b| b < 0x20) {
+            return Err(ControlError::InvalidRequest(
+                "a control character in a message",
+            ));
+        }
+        let set = OsdMessageFlag::SET;
+        self.send_osd_message(device, osd_kind::MESSAGE_SET, set, logo, priority, text)
+    }
+
+    /// Takes the message down from a unit's output. As
+    /// [`Remote::show_osd_message`].
+    pub fn clear_osd_message(&self, device: DeviceUid) -> Result<(), ControlError> {
+        let none = OsdMessagePriority::LOW;
+        self.send_osd_message(
+            device,
+            osd_kind::MESSAGE_SET,
+            OsdMessageFlag::NONE,
+            0,
+            none,
+            "",
+        )
+    }
+
+    /// The one send behind the message methods, to a V2IP output.
+    fn send_osd_message(
+        &self,
+        device: DeviceUid,
+        kind: u8,
+        flags: OsdMessageFlag,
+        logo: i8,
+        priority: OsdMessagePriority,
+        text: &str,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.is_v2ip_sink() {
+                return Err(ControlError::Unsupported("the device is not a V2IP output"));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_OSD_SYNC,
+                build_osd_message(kind, d.uid, flags, logo, priority, text),
             ))
         })
     }

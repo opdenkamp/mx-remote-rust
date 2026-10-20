@@ -1092,6 +1092,49 @@ fn the_privacy_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// The output message calls answer a caller's mistake as an argument error
+/// and a device never heard from as not found, before anything is sent.
+#[test]
+fn the_message_calls_check_their_arguments_first() {
+    let remote = client(c"abi-message", c"00000022.00000000.00000000.000000ae");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_osd_message(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_osd_message_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_osd_message(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    let normal = MXR_OSD_MESSAGE_PRIORITY_NORMAL;
+    // SAFETY: a live handle; a null text is what is under test.
+    let rc = unsafe { mxr_show_osd_message(remote, uid_n(9), 0, normal, ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no text");
+    let long = CString::new("x".repeat(MXR_OSD_MESSAGE_TEXT_MAX + 1)).expect("no NUL");
+    // SAFETY: a live handle and NUL-terminated strings.
+    let refused = unsafe {
+        [
+            mxr_show_osd_message(remote, uid_n(9), 6, normal, c"".as_ptr()),
+            mxr_show_osd_message(remote, uid_n(9), 0, 3, c"".as_ptr()),
+            mxr_show_osd_message(remote, uid_n(9), 0, normal, long.as_ptr()),
+            mxr_show_osd_message(remote, uid_n(9), 0, normal, c"a\tb".as_ptr()),
+        ]
+    };
+    assert_eq!(refused, [mxr_result_t::MXR_ERR_INVALID_ARGUMENT; 4]);
+    // SAFETY: a live handle and NUL-terminated strings.
+    let unknown = unsafe {
+        [
+            mxr_show_osd_message(remote, uid_n(9), -1, normal, c"hi".as_ptr()),
+            mxr_clear_osd_message(remote, uid_n(9)),
+            mxr_request_osd_message(remote, uid_n(9)),
+        ]
+    };
+    assert_eq!(unknown, [mxr_result_t::MXR_ERR_NOT_FOUND; 3]);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// The session description calls answer a caller's mistake as an argument
 /// error and a device never heard from as not found, before anything is sent.
 #[test]

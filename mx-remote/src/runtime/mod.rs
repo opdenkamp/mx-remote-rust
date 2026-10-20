@@ -415,6 +415,14 @@ impl Remote {
             .read(|state| state.device(uid)?.osd_sync_report.clone())
     }
 
+    /// The message on a unit's output, as the unit last reported it to this
+    /// client, `None` until it has. A unit reports it only when asked, or
+    /// when this client writes it.
+    pub fn osd_message(&self, uid: DeviceUid) -> Option<OsdMessage> {
+        self.shared
+            .read(|state| state.device(uid)?.osd_message.clone())
+    }
+
     /// The health and IP configuration a unit last reported, `None` until it
     /// has reported them.
     pub fn unit_status(&self, uid: DeviceUid) -> Option<UnitStatus> {

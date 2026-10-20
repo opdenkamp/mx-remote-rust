@@ -12,7 +12,8 @@
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, OsdCaptionAlign, OsdCaptionFormat, OsdSyncSize, OsdSyncState, OsdSyncWhat,
+    DeviceUid, OsdCaptionAlign, OsdCaptionFormat, OsdMessageFlag, OsdMessagePriority, OsdSyncSize,
+    OsdSyncState, OsdSyncWhat,
 };
 
 /// The logo slots a sync can copy.
@@ -223,3 +224,23 @@ pub struct OsdSyncContent {
     /// The four logo slots, or `None` to leave every unit's own.
     pub images: Option<[OsdSyncImage; OSD_SYNC_SLOTS]>,
 }
+
+/// The message on a unit's output, as the unit last reported it.
+///
+/// The unit holds it until it restarts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OsdMessage {
+    /// Whether a message is set and shown, whether the unit can show one, and
+    /// whether it refused the write it answers. Without
+    /// [`SET`](OsdMessageFlag::SET) the other fields are empty.
+    pub flags: OsdMessageFlag,
+    /// The logo shown with it: 0 the built-in logo, -1 none, 1 to 5 a slot.
+    pub logo: i8,
+    /// Where it stands against the unit's own messages.
+    pub priority: OsdMessagePriority,
+    /// Its markup.
+    pub text: String,
+}
+
+/// The longest message text a unit takes, in bytes.
+pub const OSD_MESSAGE_TEXT_MAX: usize = 255;

@@ -4,11 +4,12 @@
 //! The overlay sync layout, which the decoder and the builders share.
 //!
 //! Every frame opens with a 20-byte header: the payload version, the kind,
-//! the sync's `seq` and the unit it is for.
+//! the sync's `seq` and the unit it is for. The message kinds carry the
+//! message on one unit's output instead, with a `seq` of 0.
 
 use crate::types::{OsdSyncEntry, OsdSyncSlot, OsdSyncValue, OSD_SYNC_SLOTS};
 
-use super::enums::OsdSyncWhat;
+use super::enums::{OsdMessageFlag, OsdMessagePriority, OsdSyncWhat};
 use super::payload::append_fixed_str;
 use super::uid::DeviceUid;
 
@@ -24,6 +25,9 @@ pub(crate) mod osd_kind {
     pub(crate) const REQUEST: u8 = 1;
     pub(crate) const SETTING: u8 = 2;
     pub(crate) const REPORT: u8 = 3;
+    pub(crate) const MESSAGE_REQUEST: u8 = 4;
+    pub(crate) const MESSAGE_SET: u8 = 5;
+    pub(crate) const MESSAGE_STATE: u8 = 6;
 }
 
 /// Width of a sync: the header, what, the HTTP port, source address,
@@ -57,6 +61,10 @@ pub(crate) const OSD_BACKGROUND_SIZE: usize = 4;
 /// Width of a report: the header, state, written, refused and a 64-byte
 /// reason.
 pub(crate) const OSD_REPORT_SIZE: usize = 90;
+
+/// Width of a message frame without its text: the header, flags, logo,
+/// priority, a reserved byte and the text's length.
+pub(crate) const OSD_MESSAGE_SIZE: usize = 26;
 
 fn header(kind: u8, seq: u16, target: DeviceUid, size: usize) -> Vec<u8> {
     let mut p = Vec::with_capacity(size);
@@ -137,6 +145,23 @@ pub(crate) fn build_osd_setting(
         }
         OsdSyncValue::Background(colour) => p.extend_from_slice(&colour.to_le_bytes()),
     }
+    p
+}
+
+/// Builds a message frame of `kind` for the output of `target`, the text
+/// written as given and not terminated.
+pub(crate) fn build_osd_message(
+    kind: u8,
+    target: DeviceUid,
+    flags: OsdMessageFlag,
+    logo: i8,
+    priority: OsdMessagePriority,
+    text: &str,
+) -> Vec<u8> {
+    let mut p = header(kind, 0, target, OSD_MESSAGE_SIZE + text.len());
+    p.extend_from_slice(&[flags.bits(), logo as u8, priority.to_wire(), 0]);
+    p.extend_from_slice(&(text.len() as u16).to_le_bytes());
+    p.extend_from_slice(text.as_bytes());
     p
 }
 
@@ -304,6 +329,24 @@ mod tests {
         assert_setting_head(&p, 2, target);
         assert_eq!(p.len(), 30 + OSD_BACKGROUND_SIZE);
         assert_eq!(u32_at(&p, 30), 0x00C1_D2E3);
+    }
+
+    #[test]
+    fn a_message_puts_each_field_at_its_offset() {
+        let target = uid_n(9);
+        let p = build_osd_message(
+            osd_kind::MESSAGE_SET,
+            target,
+            OsdMessageFlag::SET,
+            -1,
+            OsdMessagePriority::TOP,
+            "Back at <b>3</b>",
+        );
+        assert_eq!(&p[..4], &[2, 5, 0, 0]);
+        assert_eq!(&p[4..20], target.as_bytes());
+        assert_eq!(&p[20..24], &[1, 0xFF, 2, 0]);
+        assert_eq!(usize::from(u16_at(&p, 24)), "Back at <b>3</b>".len());
+        assert_eq!(&p[26..], b"Back at <b>3</b>", "the text has no terminator");
     }
 
     /// The check value every CRC-32 catalogue gives for this variant, which

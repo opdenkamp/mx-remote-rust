@@ -29,10 +29,10 @@ pub use commands::{
 pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{MacAddress, NetworkPortStatus, UtpCableStatus, UtpLinkErrors, VctStatus};
 pub use osd::{
-    OsdCaption, OsdLogo, OsdSync, OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncReport,
-    OsdSyncRequest, OsdSyncSetting, OsdSyncSlot, OsdSyncValue, OSD_SYNC_FONT_MAX,
-    OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX, OSD_SYNC_IMAGE_WIDTH_MAX, OSD_SYNC_PERCENT_MAX,
-    OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
+    OsdCaption, OsdLogo, OsdMessage, OsdSync, OsdSyncContent, OsdSyncEntry, OsdSyncImage,
+    OsdSyncReport, OsdSyncRequest, OsdSyncSetting, OsdSyncSlot, OsdSyncValue, OSD_MESSAGE_TEXT_MAX,
+    OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX, OSD_SYNC_IMAGE_WIDTH_MAX,
+    OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
 };
 pub use status::{
     ArcStatus, BayAudioDetails, BayContentField, BayMirrorStatus, BaySignalDetails, ConnectStatus,
