@@ -65,8 +65,22 @@ const PROBE_TICK: Duration = Duration::from_secs(1);
 /// How often that thread looks up from waiting to see whether it should stop.
 const SHUTDOWN_POLL: Duration = Duration::from_millis(50);
 
-/// Shortest gap between two discovery requests.
-const DISCOVER_INTERVAL: Duration = Duration::from_secs(5);
+/// Shortest gap between two discovers to every device.
+///
+/// Every unit answers one with everything it holds, so each costs the whole
+/// mesh's state, and a unit merges only the discovers that arrive while its
+/// answer is pending.
+const DISCOVER_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Shortest gap between two discovers asking one device for what it still
+/// owes.
+const OWED_ASK_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How many times a device is asked for what it still owes.
+///
+/// Every unit broadcasts everything it holds every five minutes unasked, so a
+/// device still owing something after these asks is described by that.
+const OWED_ASK_LIMIT: u8 = 3;
 
 /// How long a discover to every device stands in for asking any one of them.
 ///
@@ -641,7 +655,11 @@ impl Shared {
     }
 
     fn discover(&self) -> Result<(), SendError> {
-        lock(&self.schedule).discovered(Instant::now());
+        self.discover_at(Instant::now())
+    }
+
+    fn discover_at(&self, now: Instant) -> Result<(), SendError> {
+        lock(&self.schedule).discovered(now);
         self.send(&Addressee::Broadcast, op::SYS_DISCOVER, &[])?;
         Ok(())
     }
@@ -741,10 +759,16 @@ impl Shared {
     }
 
     /// One pass: liveness, completion, the announcement timer and discovery.
+    ///
+    /// A discover to every device goes only while none is known. A device
+    /// that is online and still owes part of its description past
+    /// [`CONFIG_GRACE`] is asked by a discover naming it, as
+    /// [`OWED_ASK_INTERVAL`] and [`OWED_ASK_LIMIT`] allow. An ask skipped
+    /// because a discover to every device covers it is not counted.
     pub(super) fn probe_once(&self, now: Instant) {
-        let want_discover = self.mutate(|state, ev| {
-            let mut incomplete = false;
-            let mut any_complete = false;
+        let covered = lock(&self.schedule).discover_covers(now);
+        let (none_known, owed) = self.mutate(|state, ev| {
+            let mut owed = Vec::new();
             for device in state.devices.values_mut() {
                 device.check_online(now, ev);
                 // Re-tested here rather than only where a frame lands: a device
@@ -752,24 +776,33 @@ impl Shared {
                 // arrives to announce that.
                 device.check_config_complete(now, ev);
                 if device.configuration_complete(now) {
-                    any_complete = true;
-                } else if now.saturating_duration_since(device.first_seen) > CONFIG_GRACE {
-                    // Past the grace period a device has said nothing more, so
-                    // ask the network again rather than wait forever.
-                    incomplete = true;
+                    device.owed_asks = 0;
+                    device.last_owed_ask = None;
+                } else if device.online
+                    && !covered
+                    && now.saturating_duration_since(device.first_seen) > CONFIG_GRACE
+                    && device.owed_asks < OWED_ASK_LIMIT
+                    && device.last_owed_ask.map_or(true, |last| {
+                        now.saturating_duration_since(last) >= OWED_ASK_INTERVAL
+                    })
+                {
+                    device.owed_asks += 1;
+                    device.last_owed_ask = Some(now);
+                    owed.push(device.uid);
                 }
             }
-            // Nothing has finished describing itself, so nothing has been
-            // discovered yet at all.
-            incomplete || !any_complete
+            (state.devices.is_empty(), owed)
         });
 
         let discover_due = lock(&self.schedule).discover_due(now);
         if self.announce_due(now) {
             self.announce();
         }
-        if want_discover && discover_due {
-            let _ = self.discover();
+        if none_known && discover_due {
+            let _ = self.discover_at(now);
+        }
+        for device in owed {
+            let _ = self.send(&Addressee::Broadcast, op::SYS_DISCOVER, device.as_bytes());
         }
     }
 }

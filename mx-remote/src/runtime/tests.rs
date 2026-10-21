@@ -505,9 +505,8 @@ fn a_device_that_never_described_itself_is_still_reported_gone() {
 ///
 /// A manager - another controller, or a second instance of this library - sends
 /// a hello and nothing else: it has no bays or links to report. Waiting for
-/// them never ends, and a pass that finds a device still undescribed past its
-/// window asks the whole network to describe itself again, every few seconds
-/// for as long as the manager is there.
+/// them never ends, and a device still undescribed past its window is asked
+/// for the rest again.
 #[test]
 fn a_management_client_does_not_keep_discovery_going() {
     let (remote, tap) = client(214);
@@ -642,4 +641,151 @@ fn a_recent_discover_covers_a_device_that_appears() {
         vec![uid_n(228).as_bytes().to_vec()],
         "not asked once the window had passed"
     );
+}
+
+/// Keeps `peer` counted alive at `at`, as a device pinging away would.
+fn keep_alive(remote: &Remote, peer: DeviceUid, at: Instant) {
+    remote.shared.mutate(|state, _| {
+        state
+            .device_mut(peer)
+            .expect("peer not registered")
+            .last_ping = at;
+    });
+}
+
+/// Runs the probe pass once a second for `minutes` from `start`, keeping
+/// `peer` alive, and returns how many discovers had named it by the end of
+/// each minute.
+fn asks_by_minute(
+    remote: &Remote,
+    tap: &Tap,
+    peer: DeviceUid,
+    start: Instant,
+    minutes: u64,
+) -> Vec<usize> {
+    let mut counts = Vec::new();
+    for second in 0..minutes * 60 {
+        let at = start + Duration::from_secs(second);
+        keep_alive(remote, peer, at);
+        remote.shared.probe_once(at);
+        if second % 60 == 59 {
+            let named = discovers(tap)
+                .iter()
+                .filter(|p| p.as_slice() == peer.as_bytes())
+                .count();
+            counts.push(named);
+        }
+    }
+    counts
+}
+
+/// A device still owing its description is asked by name, at most once a
+/// minute and three times in all.
+///
+/// Each unit answers a discover with everything it holds and nothing limits
+/// how often, so asking on every pass keeps a whole mesh broadcasting. A unit
+/// also broadcasts everything every five minutes unasked, which is what still
+/// reaches a device that answered none of the asks.
+#[test]
+fn a_device_owing_its_description_is_asked_a_few_times() {
+    let (remote, tap) = client(230);
+    let peer = uid_n(231);
+    hello_with(&remote, peer, DeviceFeature::VIDEO_ROUTING);
+    age(&remote, peer, CONFIG_GRACE + Duration::from_secs(1));
+    tap.clear();
+
+    assert_eq!(
+        asks_by_minute(&remote, &tap, peer, Instant::now(), 5),
+        vec![1, 2, 3, 3, 3]
+    );
+    assert!(
+        discovers(&tap).iter().all(|p| !p.is_empty()),
+        "a discover to every device went while one was known"
+    );
+}
+
+/// An ask a recent discover to every device stood in for is not counted.
+#[test]
+fn an_ask_covered_by_a_discover_is_not_counted() {
+    let (remote, tap) = client(232);
+    let peer = uid_n(233);
+    hello_with(&remote, peer, DeviceFeature::VIDEO_ROUTING);
+    age(&remote, peer, CONFIG_GRACE + Duration::from_secs(1));
+    let start = Instant::now();
+    let _ = remote.discover();
+    tap.clear();
+
+    assert_eq!(
+        asks_by_minute(&remote, &tap, peer, start, 5),
+        vec![0, 1, 2, 3, 3]
+    );
+}
+
+/// A device that has gone offline is not asked: nothing would answer.
+#[test]
+fn an_offline_device_is_not_asked() {
+    let (remote, tap) = client(234);
+    let peer = uid_n(235);
+    hello_with(&remote, peer, DeviceFeature::VIDEO_ROUTING);
+    age(&remote, peer, CONFIG_GRACE + Duration::from_secs(1));
+    silence(&remote, peer);
+    tap.clear();
+
+    remote.shared.probe_once(Instant::now());
+    assert!(discovers(&tap).is_empty());
+}
+
+/// A device that described itself and then dropped back is asked afresh.
+///
+/// Going offline or rebooting has it describe itself again, and the asks
+/// spent on its first description say nothing about this one.
+#[test]
+fn the_asks_start_over_once_a_device_is_described() {
+    let (remote, tap) = client(236);
+    let peer = uid_n(237);
+    hello_with(&remote, peer, DeviceFeature::VIDEO_ROUTING);
+    age(&remote, peer, CONFIG_GRACE + Duration::from_secs(1));
+    tap.clear();
+    let start = Instant::now();
+    assert_eq!(asks_by_minute(&remote, &tap, peer, start, 3), vec![1, 2, 3]);
+
+    matrix_with_one_bay(&remote, peer);
+    keep_alive(&remote, peer, start + Duration::from_secs(180));
+    remote.shared.probe_once(start + Duration::from_secs(180));
+    assert!(remote
+        .shared
+        .mutate(|state, _| state.devices[&peer].have_config));
+    silence(&remote, peer);
+    remote.shared.probe_once(start + Duration::from_secs(181));
+    hello_with(&remote, peer, DeviceFeature::VIDEO_ROUTING);
+    tap.clear();
+
+    let later = start + Duration::from_secs(181);
+    assert_eq!(asks_by_minute(&remote, &tap, peer, later, 1), vec![1]);
+}
+
+/// A discover to every device goes only while none is known, and at most once
+/// a minute.
+#[test]
+fn every_device_is_discovered_only_while_none_is_known() {
+    let (remote, tap) = client(238);
+    let start = Instant::now();
+    let empty = |tap: &Tap| discovers(tap).iter().filter(|p| p.is_empty()).count();
+
+    for second in 0..120 {
+        remote
+            .shared
+            .probe_once(start + Duration::from_secs(second));
+    }
+    assert_eq!(empty(&tap), 2, "once a minute while none is known");
+
+    let peer = uid_n(239);
+    hello_with(&remote, peer, DeviceFeature::VIDEO_ROUTING);
+    tap.clear();
+    for second in 120..300 {
+        let at = start + Duration::from_secs(second);
+        keep_alive(&remote, peer, at);
+        remote.shared.probe_once(at);
+    }
+    assert_eq!(empty(&tap), 0, "while a device is known");
 }

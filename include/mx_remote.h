@@ -2939,9 +2939,9 @@ typedef struct {
    * Whether every part of the device's configuration has arrived.
    *
    * A device that withholds its link configuration is reported complete
-   * fifteen seconds after it was discovered, and keeps being asked for the
-   * rest: an unreported link reads as no link, which is what a link coming
-   * up later looks like anyway. Its bays, and a OneIP device's source list,
+   * fifteen seconds after it was discovered, and is asked for the rest up to
+   * three times, a minute apart: an unreported link reads as no link, which
+   * is what a link coming up later looks like anyway. Its bays, and a OneIP device's source list,
    * are waited for without limit - a caller names things after a bay, and a
    * name assigned to a placeholder outlives the frame that would have
    * corrected it. A management client has none of these to send and is

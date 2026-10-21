@@ -46,8 +46,8 @@ const SLOW_HELLO_PROTOCOL: u16 = 0x2A;
 
 /// How long a device is given to finish describing itself.
 ///
-/// Past this its link configuration stops being waited for, and it keeps being
-/// asked for the rest. It never stands in for the bay configuration - see
+/// Past this its link configuration stops being waited for, and it is asked for
+/// the rest a few times. It never stands in for the bay configuration - see
 /// [`Device::has_bays`].
 pub(crate) const CONFIG_GRACE: Duration = Duration::from_secs(15);
 
@@ -92,6 +92,10 @@ pub(crate) struct Device {
     /// every few seconds, and a window restarted by each announcement is one
     /// that never closes.
     pub(crate) first_seen: Instant,
+    /// The discovers naming this device that asked it for what it still owes,
+    /// and when the last one went. Both reset once it has described itself.
+    pub(crate) owed_asks: u8,
+    pub(crate) last_owed_ask: Option<Instant>,
     /// Whether the device has reported its link configuration.
     pub(crate) link_config_received: bool,
     /// Whether the device has sent its primary bay configuration.
@@ -172,6 +176,8 @@ impl Device {
             rebooting: false,
             last_ping: now,
             first_seen: now,
+            owed_asks: 0,
+            last_owed_ask: None,
             link_config_received: false,
             bay_config_received: false,
             v2ip_sources: None,
@@ -447,8 +453,8 @@ impl Device {
     /// no second one, so even a device whose bays are all its own never
     /// accounts for the last of them.
     ///
-    /// Waiting ends after [`CONFIG_GRACE`], and the device keeps being asked
-    /// for the rest. Nothing a caller has already built needs revising when the
+    /// Waiting ends after [`CONFIG_GRACE`], and the device is asked for the
+    /// rest a few times. Nothing a caller has already built needs revising when the
     /// records do arrive: a link is reported per bay and read on access, so an
     /// unreported one reads as no link, which is what a link coming up later
     /// looks like anyway. A withheld frame therefore costs a consumer that
