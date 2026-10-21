@@ -393,6 +393,37 @@ fn a_source_list_of_an_unplaceable_length_is_refused() {
     );
 }
 
+/// An empty source list is the whole list, with no records.
+///
+/// A OneIP unit that knows no source still sends the frame, with nothing in
+/// it, and sends no other. Refusing it would leave the unit waiting for a list
+/// that never comes, and never reported complete.
+#[test]
+fn an_empty_source_list_completes_a_device() {
+    let mut h = source_device(34);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            1,
+            0,
+            "Output 1",
+            "TV",
+            BayStatus::NONE,
+            BayFeatures::V2IP_SINK_LOCAL,
+        ),
+    );
+    h.feed(op::SYS_LINKS, &link_rec(0, "AMP00001", "Zone 1", 0));
+    assert!(!h.complete(), "complete before its source list");
+
+    h.feed(op::SYS_BAY_V2IP_SOURCES, &[]);
+    assert_eq!(h.device().v2ip_sources, Some(Vec::new()));
+    assert!(
+        h.complete(),
+        "an empty source list was not taken as the list"
+    );
+}
+
 /// Pages are placed by the position they state, not by the order they arrive.
 ///
 /// Each page is its own datagram, so reordering and loss are both ordinary. A
