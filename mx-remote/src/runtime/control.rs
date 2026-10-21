@@ -32,12 +32,12 @@ use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, UnitNetConfig,
-    V2ipAudioFormat, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages,
-    V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
-    V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
-    OSD_MESSAGE_TEXT_MAX, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS_VALID, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX,
-    V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipOutputMode, V2ipPowerSaveSchedule,
+    V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources,
+    V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow,
+    VolumeMuteStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX,
+    V2IP_SINK_ROTATION_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -45,17 +45,17 @@ use crate::wire::{
     build_osd_message, build_privacy_request, build_rc_action, build_rc_key, build_set_bay_name,
     build_set_volume, build_sink_sdp_command, build_sink_sdp_pages, build_stats_request,
     build_target_only, build_time_zone, build_unit_command, build_v2ip_device_settings,
-    build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_settings_all,
-    build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan, build_video_wall, mesh_op,
-    mv_cmd_payload, mv_sub, op, osd_kind, sdp_type, testcard_part, testcard_type, Addressee,
-    BayUid, DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
-    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode,
-    OsdMessageFlag, OsdMessagePriority, RcAction, RcKey, SendError, StreamAddr, UnitCommandFlag,
-    UnitCommandKind, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode,
-    V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
-    TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_downmix, build_v2ip_manual_source_switch, build_v2ip_scaling,
+    build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan,
+    build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, osd_kind, sdp_type, testcard_part,
+    testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
+    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
+    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
+    MultiviewerViewMode, MxrSignalType, Opcode, OsdMessageFlag, OsdMessagePriority, RcAction,
+    RcKey, SendError, StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting,
+    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
+    V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX,
+    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1719,6 +1719,48 @@ impl Remote {
                 ..V2ipDeviceSettings::default()
             },
         )
+    }
+
+    /// Sets how a OneIP device's output mixes 5.1 and 7.1 PCM down to stereo:
+    /// the mode, level and LFE percent of `downmix`, which the device applies
+    /// together. Its state and channels are the device's to report, and are
+    /// not sent.
+    ///
+    /// Refused before anything is sent for a mode, level or LFE percent out of
+    /// range, and unless the device reports a downmix, which one whose output
+    /// cannot mix down never does. The new downmix is cached once the frame
+    /// is sent, and the device's next report replaces it.
+    pub fn set_v2ip_downmix(
+        &self,
+        device: DeviceUid,
+        downmix: V2ipDownmix,
+    ) -> Result<(), ControlError> {
+        if !downmix.is_valid() {
+            return Err(ControlError::InvalidRequest(
+                "no such downmix mode or level, or an LFE above 100 percent",
+            ));
+        }
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if d.v2ip_settings.is_none() {
+                return Err(ControlError::NotReported("the device's settings"));
+            }
+            let Some(reported) = d.v2ip_downmix else {
+                return Err(ControlError::Unsupported(
+                    "the device does not mix its output down",
+                ));
+            };
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_DEVICE_CFG,
+                build_v2ip_downmix(d.uid, &downmix),
+            )
+            .then(move |state, ev| {
+                if let Some(d) = state.device_mut(device) {
+                    d.set_v2ip_downmix(Some(reported.written(downmix)), ev);
+                }
+            }))
+        })
     }
 
     /// Sets the PTP mode a OneIP device runs. The terms of

@@ -19,7 +19,7 @@ use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n,
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
     EdidProfileChange, EdidRequest, KeyTransmitRequest, UnitNetConfig, V2ipAudioFormat,
-    V2ipOutputMode, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipVlan,
+    V2ipDownmix, V2ipOutputMode, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipVlan,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
     V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
@@ -29,9 +29,9 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams,
-    V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION,
-    V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET,
+    V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel,
+    V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, HEADER_LEN,
+    PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET,
     V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
     V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
@@ -4575,4 +4575,182 @@ fn an_output_that_cannot_turn_takes_only_0() {
     f.remote
         .set_v2ip_ptp_messages(uid, rotation, turned(0))
         .expect("0 is every device's");
+}
+
+/// A device's settings frame reporting its stream TTL and, behind the second
+/// valid word, its downmix: mode 1, level 1, LFE 70, state 3 and 6 channels.
+fn downmix_report(cfg: &Cfg, valid_ext: u32) -> Vec<u8> {
+    let ttl = V2ipDeviceSetting::STREAM_TTL;
+    let mut p = cfg.bytes_with_power_save(ttl.bits(), 0, 0, &V2ipPowerSaveSchedule::default());
+    p.resize(248, 0);
+    p[224] = 64;
+    p[232..236].copy_from_slice(&valid_ext.to_le_bytes());
+    p[236..241].copy_from_slice(&[1, 1, 70, 3, 6]);
+    p
+}
+
+/// The downmix [`downmix_report`] reports.
+const REPORTED_DOWNMIX: V2ipDownmix = V2ipDownmix {
+    mode: V2ipDownmixMode::AUTO,
+    level: V2ipDownmixLevel::UNSCALED,
+    lfe: 70,
+    state: 3,
+    channels: 6,
+};
+
+/// A device's own report is read from a block that holds the downmix's last
+/// field, and one that holds it without the bit says the device has none.
+#[test]
+fn a_downmix_is_read_from_a_block_that_holds_it() {
+    let f = Fixture::new();
+    let uid = uid_n(253);
+    f.everything(uid, 0x30, "DM0001");
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let report = |valid_ext: u32, len: usize| {
+        let mut p = downmix_report(&cfg, valid_ext);
+        p.truncate(len);
+        p
+    };
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(1, 240));
+    assert_eq!(f.remote.v2ip_downmix(uid), None);
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(1, 241));
+    assert_eq!(f.remote.v2ip_downmix(uid), Some(REPORTED_DOWNMIX));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(1, 240));
+    assert_eq!(
+        f.remote.v2ip_downmix(uid),
+        Some(REPORTED_DOWNMIX),
+        "a block too short to say"
+    );
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(0, 241));
+    assert_eq!(f.remote.v2ip_downmix(uid), None);
+}
+
+/// A write carries the second valid word and the three settings, and no bit
+/// of the first, and leaves the state and channels to the device.
+#[test]
+fn a_downmix_write_carries_its_three_settings() {
+    let f = Fixture::new();
+    let uid = uid_n(253);
+    f.everything(uid, 0x30, "DM0002");
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    f.feed(uid, op::V2IP_DEVICE_CFG, &downmix_report(&cfg, 1));
+    f.connect();
+    let mixed = V2ipDownmix {
+        mode: V2ipDownmixMode::ALWAYS,
+        level: V2ipDownmixLevel::UNSCALED,
+        lfe: 100,
+        state: 9,
+        channels: 9,
+    };
+
+    f.tap.clear();
+    f.remote
+        .set_v2ip_downmix(uid, mixed)
+        .expect("a device that mixes down");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 248);
+    assert_eq!(&p[..16], uid.as_bytes());
+    assert_eq!(&p[128..132], &[0; 4], "a setting of the first valid word");
+    assert_eq!(&p[232..241], &[1, 0, 0, 0, 2, 1, 100, 0, 0]);
+    assert_eq!(
+        f.remote.v2ip_downmix(uid),
+        Some(V2ipDownmix {
+            state: 3,
+            channels: 6,
+            ..mixed
+        }),
+        "the state and channels are the device's"
+    );
+}
+
+/// A downmix out of range, or for a device that reports none, is refused
+/// before anything is sent.
+#[test]
+fn a_downmix_the_device_would_not_take_is_not_sent() {
+    let f = Fixture::new();
+    let (mixes, cannot) = (uid_n(253), uid_n(255));
+    f.everything(mixes, 0x30, "DM0003");
+    f.everything(cannot, 0x30, "DM0004");
+    f.feed(
+        mixes,
+        op::V2IP_DEVICE_CFG,
+        &downmix_report(&Cfg::addresses(mixes, "239.1.2.3"), 1),
+    );
+    f.feed(
+        cannot,
+        op::V2IP_DEVICE_CFG,
+        &downmix_report(&Cfg::addresses(cannot, "239.1.2.4"), 0),
+    );
+    f.tap.clear();
+
+    for refused in [
+        V2ipDownmix {
+            mode: V2ipDownmixMode::from_wire(3),
+            ..REPORTED_DOWNMIX
+        },
+        V2ipDownmix {
+            level: V2ipDownmixLevel::from_wire(2),
+            ..REPORTED_DOWNMIX
+        },
+        V2ipDownmix {
+            lfe: 101,
+            ..REPORTED_DOWNMIX
+        },
+    ] {
+        assert!(
+            matches!(
+                f.remote.set_v2ip_downmix(mixes, refused),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{refused:?} was sent"
+        );
+    }
+    assert!(matches!(
+        f.remote.set_v2ip_downmix(cannot, REPORTED_DOWNMIX),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty());
+}
+
+/// Another sender's write is applied only to a device that reports a
+/// downmix, and keeps the state and channels it reported.
+#[test]
+fn another_senders_downmix_keeps_the_devices_state() {
+    let f = Fixture::new();
+    let (uid, controller) = (uid_n(253), uid_n(255));
+    f.everything(uid, 0x30, "DM0005");
+    f.feed(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x30, "Ctrl", "DM0006", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let mut write = downmix_report(&cfg, 1);
+    write[236..241].copy_from_slice(&[2, 0, 10, 0, 0]);
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &downmix_report(&cfg, 0));
+    f.feed(controller, op::V2IP_DEVICE_CFG, &write);
+    assert_eq!(f.remote.v2ip_downmix(uid), None, "a device that has none");
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &downmix_report(&cfg, 1));
+    let mut unflagged = write.clone();
+    unflagged[232..236].fill(0);
+    f.feed(controller, op::V2IP_DEVICE_CFG, &unflagged);
+    assert_eq!(
+        f.remote.v2ip_downmix(uid),
+        Some(REPORTED_DOWNMIX),
+        "a write without the bit"
+    );
+    f.feed(controller, op::V2IP_DEVICE_CFG, &write);
+    assert_eq!(
+        f.remote.v2ip_downmix(uid),
+        Some(V2ipDownmix {
+            mode: V2ipDownmixMode::ALWAYS,
+            level: V2ipDownmixLevel::NORMALISED,
+            lfe: 10,
+            ..REPORTED_DOWNMIX
+        })
+    );
 }

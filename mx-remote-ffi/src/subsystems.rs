@@ -21,13 +21,17 @@ use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport, RcSettings,
     StreamKind, TopologyEntry, UnitStatus, UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings,
-    V2ipDeviceStats, V2ipFpgaFeature, V2ipPrivacy, V2ipPrivacyStream, V2ipPtpMessages,
-    V2ipPtpState, V2ipRxStats, V2ipSinkSdp, V2ipStreamSource, V2ipStreamSources, V2ipTestSync,
-    V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus,
-    MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, OSD_SYNC_SLOTS,
+    V2ipDeviceStats, V2ipDownmix, V2ipDownmixLevel, V2ipDownmixMode, V2ipFpgaFeature, V2ipPrivacy,
+    V2ipPrivacyStream, V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipSinkSdp, V2ipStreamSource,
+    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode,
+    V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, OSD_SYNC_SLOTS,
+    V2IP_DOWNMIX_LFE_MAX,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
+use crate::bits::{
+    MXR_V2IP_DOWNMIX_ALWAYS, MXR_V2IP_DOWNMIX_LEVEL_UNSCALED, MXR_V2IP_DOWNMIX_LFE_MAX,
+};
 use crate::control::mxr_audio_format_t;
 use crate::info::{copy_into, not_heard_from, null_out, MXR_NAME_LEN, MXR_VERSION_LEN};
 use crate::remote::{mxr_remote_t, with, MXR_IP_STRING_LEN};
@@ -1482,6 +1486,80 @@ pub unsafe extern "C" fn mxr_v2ip_ptp_messages(
     })
 }
 
+/// How a OneIP output mixes 5.1 and 7.1 PCM down to stereo, and whether it
+/// does now.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_downmix_t {
+    /// When the output mixes down, an `MXR_V2IP_DOWNMIX_*` mode.
+    pub mode: u8,
+    /// How loud the mix is, an `MXR_V2IP_DOWNMIX_LEVEL_*`.
+    pub level: u8,
+    /// The percent the LFE channel is mixed in at, at most
+    /// `MXR_V2IP_DOWNMIX_LFE_MAX`; 0 leaves it out.
+    pub lfe: u8,
+    /// Why the stream is or is not mixed down, as the device's own code. Only
+    /// the device reports it; a write ignores it.
+    pub state: u8,
+    /// The stream's channels while it is mixed down, else 0. Only the device
+    /// reports it; a write ignores it.
+    pub channels: u8,
+}
+
+// The header carries these as literals, so they are held to the core's here.
+const _: () = assert!(MXR_V2IP_DOWNMIX_ALWAYS == V2ipDownmixMode::ALWAYS.to_wire());
+const _: () = assert!(MXR_V2IP_DOWNMIX_LEVEL_UNSCALED == V2ipDownmixLevel::UNSCALED.to_wire());
+const _: () = assert!(MXR_V2IP_DOWNMIX_LFE_MAX == V2IP_DOWNMIX_LFE_MAX);
+
+impl From<V2ipDownmix> for mxr_v2ip_downmix_t {
+    fn from(d: V2ipDownmix) -> Self {
+        Self {
+            mode: d.mode.to_wire(),
+            level: d.level.to_wire(),
+            lfe: d.lfe,
+            state: d.state,
+            channels: d.channels,
+        }
+    }
+}
+
+impl From<mxr_v2ip_downmix_t> for V2ipDownmix {
+    fn from(d: mxr_v2ip_downmix_t) -> Self {
+        Self {
+            mode: V2ipDownmixMode::from_wire(d.mode),
+            level: V2ipDownmixLevel::from_wire(d.level),
+            lfe: d.lfe,
+            state: d.state,
+            channels: d.channels,
+        }
+    }
+}
+
+/// Fills `out` with how a OneIP device's output mixes down to stereo.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` while the device reports no downmix: until
+/// its video processor has answered for it, and always for one whose output
+/// cannot mix down. A change is announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_v2ip_downmix_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_downmix(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_v2ip_downmix_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r.remote.v2ip_downmix(uid.into()).map(Into::into);
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { fill(r, uid, out, "downmix", value) }
+    })
+}
+
 /// The longest session description a OneIP output takes, in bytes.
 pub const MXR_V2IP_SDP_MAX: usize = 2048;
 /// Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.
@@ -2576,9 +2654,28 @@ mod tests {
     use std::ffi::CStr;
     use std::net::Ipv4Addr;
 
-    use mx_remote::V2ipPrivacyStream;
+    use mx_remote::{V2ipDownmix, V2ipDownmixLevel, V2ipDownmixMode, V2ipPrivacyStream};
 
-    use super::privacy_stream;
+    use super::{mxr_v2ip_downmix_t, privacy_stream};
+
+    /// Each field of a downmix lands in its own C field and back, every one of
+    /// them distinct.
+    #[test]
+    fn a_downmix_keeps_every_field() {
+        let d = V2ipDownmix {
+            mode: V2ipDownmixMode::ALWAYS,
+            level: V2ipDownmixLevel::UNSCALED,
+            lfe: 70,
+            state: 3,
+            channels: 6,
+        };
+        let c = mxr_v2ip_downmix_t::from(d);
+        assert_eq!(
+            (c.mode, c.level, c.lfe, c.state, c.channels),
+            (2, 1, 70, 3, 6)
+        );
+        assert_eq!(V2ipDownmix::from(c), d);
+    }
 
     /// Each field lands in its own C field, every one of them distinct.
     #[test]

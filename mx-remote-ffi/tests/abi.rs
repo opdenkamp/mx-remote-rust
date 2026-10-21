@@ -1135,6 +1135,55 @@ fn the_message_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// The downmix calls answer a caller's mistake as an argument error and a
+/// device never heard from as not found, before anything is sent.
+#[test]
+fn the_downmix_calls_check_their_arguments_first() {
+    let remote = client(c"abi-downmix", c"00000022.00000000.00000000.000000af");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_downmix(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = std::mem::MaybeUninit::<mxr_v2ip_downmix_t>::zeroed();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_v2ip_downmix(remote, uid_n(9), out.as_mut_ptr()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: a live handle; a null downmix is what is under test.
+    let rc = unsafe { mxr_set_v2ip_downmix(remote, uid_n(9), ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no downmix");
+    let most = mxr_v2ip_downmix_t {
+        mode: MXR_V2IP_DOWNMIX_ALWAYS,
+        level: MXR_V2IP_DOWNMIX_LEVEL_UNSCALED,
+        lfe: MXR_V2IP_DOWNMIX_LFE_MAX,
+        state: 0xff,
+        channels: 0xff,
+    };
+    let refused = [
+        mxr_v2ip_downmix_t {
+            mode: MXR_V2IP_DOWNMIX_ALWAYS + 1,
+            ..most
+        },
+        mxr_v2ip_downmix_t {
+            level: MXR_V2IP_DOWNMIX_LEVEL_UNSCALED + 1,
+            ..most
+        },
+        mxr_v2ip_downmix_t {
+            lfe: MXR_V2IP_DOWNMIX_LFE_MAX + 1,
+            ..most
+        },
+    ]
+    // SAFETY: a live handle and initialised structs.
+    .map(|d| unsafe { mxr_set_v2ip_downmix(remote, uid_n(9), &d) });
+    assert_eq!(refused, [mxr_result_t::MXR_ERR_INVALID_ARGUMENT; 3]);
+    // SAFETY: a live handle and an initialised struct.
+    let rc = unsafe { mxr_set_v2ip_downmix(remote, uid_n(9), &most) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND, "the most of each");
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// The session description calls answer a caller's mistake as an argument
 /// error and a device never heard from as not found, before anything is sent.
 #[test]

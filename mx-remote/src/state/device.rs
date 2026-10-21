@@ -12,9 +12,9 @@ use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
     OsdMessage, OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry, UnitStatus,
-    V2ipDeviceSettings, V2ipDeviceStats, V2ipPrivacy, V2ipPtpState, V2ipScalingSettings,
-    V2ipSinkSdp, V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
-    SCALING_FLAG_MODE_VALID,
+    V2ipDeviceSettings, V2ipDeviceStats, V2ipDownmix, V2ipPrivacy, V2ipPtpState,
+    V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
+    VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{
     BayConfig, BayFeatures, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature,
@@ -139,6 +139,9 @@ pub(crate) struct Device {
     /// The PTP state the device last reported about itself, `None` while it
     /// reports none.
     pub(crate) v2ip_ptp: Option<V2ipPtpState>,
+    /// How the device's output mixes down to stereo, `None` while it reports
+    /// no downmix.
+    pub(crate) v2ip_downmix: Option<V2ipDownmix>,
     /// The test card the sink last reported.
     pub(crate) v2ip_testcard: Option<V2ipTestcard>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
@@ -190,6 +193,7 @@ impl Device {
             v2ip_settings: None,
             v2ip_vlan: None,
             v2ip_ptp: None,
+            v2ip_downmix: None,
             unit_status: None,
             v2ip_sink_sdp: None,
             v2ip_privacy: None,
@@ -1194,6 +1198,17 @@ impl Device {
         ev.push(Event::V2ipPtpChanged {
             device: self.uid,
             ptp,
+        });
+    }
+
+    pub(crate) fn set_v2ip_downmix(&mut self, downmix: Option<V2ipDownmix>, ev: &mut Vec<Event>) {
+        if self.v2ip_downmix == downmix {
+            return;
+        }
+        self.v2ip_downmix = downmix;
+        ev.push(Event::V2ipDownmixChanged {
+            device: self.uid,
+            downmix,
         });
     }
 

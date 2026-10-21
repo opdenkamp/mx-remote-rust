@@ -320,6 +320,28 @@ bitmask! {
 }
 
 wire_enum! {
+    /// When a OneIP output mixes 5.1 and 7.1 PCM down to stereo.
+    V2ipDownmixMode: u8 {
+        /// Never.
+        OFF = 0;
+        /// When the display's EDID lists two PCM channels or fewer.
+        AUTO = 1;
+        /// Always.
+        ALWAYS = 2;
+    }
+}
+
+wire_enum! {
+    /// How loud a OneIP output's stereo downmix is.
+    V2ipDownmixLevel: u8 {
+        /// Scaled so the mix never clips.
+        NORMALISED = 0;
+        /// Unscaled, with dialogue at the level it has in stereo.
+        UNSCALED = 1;
+    }
+}
+
+wire_enum! {
     /// How far a OneIP device powers down in power save, each level saving more
     /// than the one before.
     V2ipPowerSaveLevel: u8 {

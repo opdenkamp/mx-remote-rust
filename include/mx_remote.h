@@ -1231,6 +1231,36 @@
 #define MXR_V2IP_SINK_ROTATION_MAX 359
 
 /**
+ * `mode`: never.
+ */
+#define MXR_V2IP_DOWNMIX_OFF 0
+
+/**
+ * `mode`: when the display's EDID lists two PCM channels or fewer.
+ */
+#define MXR_V2IP_DOWNMIX_AUTO 1
+
+/**
+ * `mode`: always.
+ */
+#define MXR_V2IP_DOWNMIX_ALWAYS 2
+
+/**
+ * `level`: scaled so the mix never clips.
+ */
+#define MXR_V2IP_DOWNMIX_LEVEL_NORMALISED 0
+
+/**
+ * `level`: unscaled, with dialogue at the level it has in stereo.
+ */
+#define MXR_V2IP_DOWNMIX_LEVEL_UNSCALED 1
+
+/**
+ * The largest percent a OneIP output mixes its LFE channel in at.
+ */
+#define MXR_V2IP_DOWNMIX_LFE_MAX 100
+
+/**
  * The output plays a stream from a description.
  */
 #define MXR_V2IP_SDP_FLAG_ACTIVE (1 << 0)
@@ -2614,6 +2644,36 @@ typedef struct {
    */
   uint16_t sink_rotation_step;
 } mxr_v2ip_ptp_messages_t;
+
+/**
+ * How a OneIP output mixes 5.1 and 7.1 PCM down to stereo, and whether it
+ * does now.
+ */
+typedef struct {
+  /**
+   * When the output mixes down, an `MXR_V2IP_DOWNMIX_*` mode.
+   */
+  uint8_t mode;
+  /**
+   * How loud the mix is, an `MXR_V2IP_DOWNMIX_LEVEL_*`.
+   */
+  uint8_t level;
+  /**
+   * The percent the LFE channel is mixed in at, at most
+   * `MXR_V2IP_DOWNMIX_LFE_MAX`; 0 leaves it out.
+   */
+  uint8_t lfe;
+  /**
+   * Why the stream is or is not mixed down, as the device's own code. Only
+   * the device reports it; a write ignores it.
+   */
+  uint8_t state;
+  /**
+   * The stream's channels while it is mixed down, else 0. Only the device
+   * reports it; a write ignores it.
+   */
+  uint8_t channels;
+} mxr_v2ip_downmix_t;
 
 /**
  * A OneIP device's PTP settings, beside `mxr_v2ip_device_settings_t` rather
@@ -6138,6 +6198,23 @@ mxr_result_t mxr_set_v2ip_ptp_messages(const mxr_remote_t *remote,
                                        const mxr_v2ip_ptp_messages_t *messages);
 
 /**
+ * Sets how a OneIP device's output mixes 5.1 and 7.1 PCM down to stereo: the
+ * `mode`, `level` and `lfe` of `downmix`, which the device applies together;
+ * `state` and `channels` are ignored. `MXR_ERR_INVALID_ARGUMENT`, sending
+ * nothing, for a null `downmix` or a mode, level or LFE percent out of range,
+ * and `MXR_ERR_UNSUPPORTED` for a device that reports no downmix, as
+ * `mxr_v2ip_downmix()` reads it. Otherwise as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `downmix`
+ * is null or points at an initialised `mxr_v2ip_downmix_t`.
+ */
+mxr_result_t mxr_set_v2ip_downmix(const mxr_remote_t *remote,
+                                  mxr_uid_t device,
+                                  const mxr_v2ip_downmix_t *downmix);
+
+/**
  * Changes how every OneIP device of the mesh paces its PTP messages, with one
  * frame. As `mxr_set_v2ip_ptp_messages()` for its arguments, except that a
  * rotation is refused only above `MXR_V2IP_SINK_ROTATION_MAX`, and each
@@ -7421,6 +7498,20 @@ mxr_result_t mxr_v2ip_power_save_level(const mxr_remote_t *remote, mxr_uid_t uid
 mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
                                    mxr_uid_t uid,
                                    mxr_v2ip_ptp_messages_t *out);
+
+/**
+ * Fills `out` with how a OneIP device's output mixes down to stereo.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` while the device reports no downmix: until
+ * its video processor has answered for it, and always for one whose output
+ * cannot mix down. A change is announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_v2ip_downmix_t`.
+ */
+mxr_result_t mxr_v2ip_downmix(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_downmix_t *out);
 
 /**
  * Fills `out` with what a OneIP output last reported playing from a session

@@ -396,6 +396,13 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_settings)
     }
 
+    /// How a OneIP device's output mixes down to stereo, as it last reported,
+    /// `None` while it reports no downmix: until its video processor has
+    /// answered for it, and always for one whose output cannot mix down.
+    pub fn v2ip_downmix(&self, uid: DeviceUid) -> Option<V2ipDownmix> {
+        self.shared.read(|state| state.device(uid)?.v2ip_downmix)
+    }
+
     /// The VLAN configuration a OneIP device last reported about itself,
     /// `None` until it has reported one.
     pub fn v2ip_vlan(&self, uid: DeviceUid) -> Option<V2ipVlan> {

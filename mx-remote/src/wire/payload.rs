@@ -10,11 +10,12 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipPtpMessages,
-    V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix,
+    V2ipPtpMessages, V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+    VIDEO_WALL_CLEARED,
 };
 
-use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN};
+use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX};
 use super::enums::{
     EdidProfile, MxrSignalType, RcAction, RcKey, UnitCommandFlag, UnitCommandKind,
     V2ipDeviceSetting,
@@ -577,6 +578,25 @@ fn build_ptp_messages_block(valid: V2ipDeviceSetting, m: &V2ipPtpMessages) -> Ve
         block[10..12].copy_from_slice(&m.sink_rotation.to_le_bytes());
     }
     block
+}
+
+/// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes how a device's
+/// output mixes down to stereo, leaving every other setting alone.
+///
+/// 248 bytes: the frame [`build_v2ip_device_settings`] builds, with a settings
+/// block that carries no setting, zeroed to 216, then the whole settings block
+/// with no bit of `valid` set, the second valid word at 232 carrying the
+/// downmix, and its mode, level and LFE percent at 236, 237 and 238. The
+/// state and channels at 239 and 240 are the device's to report, and are
+/// left 0.
+pub(crate) fn build_v2ip_downmix(target: DeviceUid, downmix: &V2ipDownmix) -> Vec<u8> {
+    let mut p = build_v2ip_device_settings(target, &V2ipDeviceSettings::default());
+    p.resize(248, 0);
+    p[232..236].copy_from_slice(&V2IP_SETTING_EXT_DOWNMIX.to_le_bytes());
+    p[236] = downmix.mode.to_wire();
+    p[237] = downmix.level.to_wire();
+    p[238] = downmix.lfe;
+    p
 }
 
 /// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's VLAN

@@ -37,10 +37,10 @@ pub use enums::{
     MultiviewerSource, MultiviewerViewMode, MxrSignalType, OsdCaptionAlign, OsdCaptionField,
     OsdCaptionFormat, OsdLogoField, OsdMessageFlag, OsdMessagePriority, OsdSyncSize, OsdSyncState,
     OsdSyncWhat, RcAction, RcKey, RcType, UnitCommandFlag, UnitCommandKind, UnitFlag,
-    UnitPowerSave, UtpLinkSpeed, V2ipColourSpace, V2ipDeviceSetting, V2ipFpgaFeature,
-    V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipSdpClockMode, V2ipSdpClockState,
-    V2ipSdpEncoding, V2ipSdpFlag, V2ipSdpMediaClock, V2ipSdpRefClock, V2ipTestPattern,
-    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
+    UnitPowerSave, UtpLinkSpeed, V2ipColourSpace, V2ipDeviceSetting, V2ipDownmixLevel,
+    V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode,
+    V2ipSdpClockMode, V2ipSdpClockState, V2ipSdpEncoding, V2ipSdpFlag, V2ipSdpMediaClock,
+    V2ipSdpRefClock, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
 };
 pub use netif::valid_addresses;
 pub use tx::SendError;

@@ -788,6 +788,23 @@ pub const MXR_V2IP_STREAM_TTL_DEFAULT: u8 = 64;
 /// The largest angle a OneIP device's HDMI output is turned by, in degrees.
 pub const MXR_V2IP_SINK_ROTATION_MAX: u16 = 359;
 
+// ---- how a OneIP output mixes down to stereo, in `mxr_v2ip_downmix_t` ----
+
+/// `mode`: never.
+pub const MXR_V2IP_DOWNMIX_OFF: u8 = 0;
+/// `mode`: when the display's EDID lists two PCM channels or fewer.
+pub const MXR_V2IP_DOWNMIX_AUTO: u8 = 1;
+/// `mode`: always.
+pub const MXR_V2IP_DOWNMIX_ALWAYS: u8 = 2;
+
+/// `level`: scaled so the mix never clips.
+pub const MXR_V2IP_DOWNMIX_LEVEL_NORMALISED: u8 = 0;
+/// `level`: unscaled, with dialogue at the level it has in stereo.
+pub const MXR_V2IP_DOWNMIX_LEVEL_UNSCALED: u8 = 1;
+
+/// The largest percent a OneIP output mixes its LFE channel in at.
+pub const MXR_V2IP_DOWNMIX_LFE_MAX: u8 = 100;
+
 // ---- what a OneIP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
 
 /// The output plays a stream from a description.

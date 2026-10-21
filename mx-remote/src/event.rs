@@ -237,6 +237,9 @@ events! {
         /// The device reported a different PTP state, or stopped reporting
         /// one.
         V2ipPtpChanged => on_v2ip_ptp_changed(ptp: Option<V2ipPtpState>);
+        /// The device reported a different downmix, or stopped reporting
+        /// one.
+        V2ipDownmixChanged => on_v2ip_downmix_changed(downmix: Option<V2ipDownmix>);
         /// The sink reported its test card.
         V2ipTestcardChanged => on_v2ip_testcard_changed(testcard: V2ipTestcard);
         /// The device announced a different time zone for its mesh.

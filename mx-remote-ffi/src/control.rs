@@ -40,7 +40,7 @@ use crate::bits::{
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
 use crate::subsystems::{
-    mxr_v2ip_device_settings_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t,
+    mxr_v2ip_device_settings_t, mxr_v2ip_downmix_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t,
     mxr_v2ip_ptp_settings_t, mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t,
     MXR_OSD_SYNC_SLOTS,
 };
@@ -1301,6 +1301,37 @@ pub unsafe extern "C" fn mxr_set_v2ip_ptp_messages(
             V2ipDeviceSetting::from_bits(valid),
             (*messages).into(),
         ))
+    })
+}
+
+/// Sets how a OneIP device's output mixes 5.1 and 7.1 PCM down to stereo: the
+/// `mode`, `level` and `lfe` of `downmix`, which the device applies together;
+/// `state` and `channels` are ignored. `MXR_ERR_INVALID_ARGUMENT`, sending
+/// nothing, for a null `downmix` or a mode, level or LFE percent out of range,
+/// and `MXR_ERR_UNSUPPORTED` for a device that reports no downmix, as
+/// `mxr_v2ip_downmix()` reads it. Otherwise as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `downmix`
+/// is null or points at an initialised `mxr_v2ip_downmix_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_downmix(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    downmix: *const mxr_v2ip_downmix_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(downmix) = (unsafe { downmix.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the downmix pointer is null",
+            );
+        };
+        from_control(r.remote.set_v2ip_downmix(device.into(), (*downmix).into()))
     })
 }
 

@@ -7,11 +7,12 @@ use core::fmt;
 use std::net::Ipv4Addr;
 
 use crate::wire::{
-    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipPowerSaveLevel, V2ipPtpFlag,
-    V2ipPtpLock, V2ipPtpMode, V2ipSdpClockMode, V2ipSdpClockState, V2ipSdpEncoding, V2ipSdpFlag,
-    V2ipSdpMediaClock, V2ipSdpRefClock, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode,
-    V2ipVlanFlag, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX,
-    V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
+    DeviceUid, MxrSignalType, V2ipColourSpace, V2ipDeviceSetting, V2ipDownmixLevel,
+    V2ipDownmixMode, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipSdpClockMode,
+    V2ipSdpClockState, V2ipSdpEncoding, V2ipSdpFlag, V2ipSdpMediaClock, V2ipSdpRefClock,
+    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_MAX, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX,
+    V2IP_IR_PROFILE_NOT_SET,
 };
 
 /// Which of a OneIP device's streams an address describes.
@@ -672,6 +673,52 @@ pub struct V2ipDeviceSettings {
     pub power_save_level: V2ipPowerSaveLevel,
     /// The device's PTP message settings.
     pub ptp_messages: V2ipPtpMessages,
+}
+
+/// How a OneIP output mixes 5.1 and 7.1 PCM down to stereo, and whether it
+/// does now.
+///
+/// A device reports it once its video processor has answered for it, so
+/// never one whose output cannot mix down.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipDownmix {
+    /// When the output mixes down.
+    pub mode: V2ipDownmixMode,
+    /// How loud the mix is.
+    pub level: V2ipDownmixLevel,
+    /// The percent the LFE channel is mixed in at, at most
+    /// [`V2IP_DOWNMIX_LFE_MAX`]; 0 leaves it out.
+    pub lfe: u8,
+    /// Why the stream is or is not mixed down, as the device's own code. Only
+    /// the device reports it.
+    pub state: u8,
+    /// The stream's channels while it is mixed down, else 0. Only the device
+    /// reports it.
+    pub channels: u8,
+}
+
+/// The largest percent a OneIP output mixes its LFE channel in at.
+pub const V2IP_DOWNMIX_LFE_MAX: u8 = 100;
+
+impl V2ipDownmix {
+    /// Whether the settings a write carries are in range.
+    pub(crate) fn is_valid(&self) -> bool {
+        self.mode <= V2ipDownmixMode::ALWAYS
+            && self.level <= V2ipDownmixLevel::UNSCALED
+            && self.lfe <= V2IP_DOWNMIX_LFE_MAX
+    }
+
+    /// The settings of `write` applied to this report, which keeps what only
+    /// the device reports.
+    #[must_use]
+    pub(crate) fn written(self, write: Self) -> Self {
+        Self {
+            mode: write.mode,
+            level: write.level,
+            lfe: write.lfe,
+            ..self
+        }
+    }
 }
 
 /// How a OneIP device paces its PTP messages, its SAP timings, its streams'

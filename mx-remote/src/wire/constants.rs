@@ -86,3 +86,7 @@ pub const TIME_ZONE_NAME_LEN: usize = 48;
 /// Bytes a time zone's POSIX rule takes on the wire, its terminating NUL
 /// included.
 pub const TIME_ZONE_RULE_LEN: usize = 64;
+
+/// The bit of a OneIP settings block's second valid word that carries the
+/// downmix.
+pub(crate) const V2IP_SETTING_EXT_DOWNMIX: u32 = 1 << 0;

@@ -10,16 +10,17 @@ use crate::state::{Device, HelloInfo, MeshBayChange, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
-    V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState, V2ipScalingSettings,
-    V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
-    V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
+    V2ipDownmix, V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState,
+    V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
+    V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
     SCALING_FLAG_OPTIONS_VALID, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel,
-    V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode,
-    V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
+    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode,
+    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern,
+    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
+    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX,
 };
 
 use super::Rx;
@@ -550,6 +551,13 @@ const V2IP_STREAM_TTL_AT: usize = 8;
 const V2IP_SINK_ROTATION_AT: usize = 10;
 const V2IP_SINK_ROTATION_STEP_AT: usize = 12;
 
+/// The valid word of the settings past `valid`'s 32 bits, then the downmix's
+/// mode, level, LFE percent, state and channels, at the end of the settings
+/// block.
+const V2IP_VALID_EXT_AT: usize = V2IP_PTP_MESSAGES_AT + 16;
+const V2IP_DOWNMIX_AT: usize = V2IP_VALID_EXT_AT + 4;
+const V2IP_DOWNMIX_SIZE: usize = 5;
+
 /// Reads a settings block, the last block of its frame, and clears the bits
 /// of `valid` whose values it is too short to hold: the three PTP intervals as
 /// signed bytes, the announce timeout and the DSCP, then the SAP expiry in
@@ -767,6 +775,28 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
                 frame.as_applied_to(&device.v2ip_settings.unwrap_or_default())
             };
             device.merge_v2ip_settings(frame, ev);
+        }
+    }
+
+    // The downmix ends the settings block, behind a valid word of its own. A
+    // device reporting itself in a block that holds it says whether it has
+    // one. A write is applied as the device applies it: only to one that
+    // reports a downmix, and never to what only the device reports.
+    if let Some(d) = p.get(V2IP_DOWNMIX_AT..V2IP_DOWNMIX_AT + V2IP_DOWNMIX_SIZE) {
+        let carried = u32_at(p, V2IP_VALID_EXT_AT) & V2IP_SETTING_EXT_DOWNMIX != 0;
+        let frame = V2ipDownmix {
+            mode: V2ipDownmixMode::from_wire(d[0]),
+            level: V2ipDownmixLevel::from_wire(d[1]),
+            lfe: d[2],
+            state: d[3],
+            channels: d[4],
+        };
+        if let Some(device) = state.device_mut(subject) {
+            if subject == rx.sender() {
+                device.set_v2ip_downmix(carried.then_some(frame), ev);
+            } else if let Some(reported) = device.v2ip_downmix.filter(|_| carried) {
+                device.set_v2ip_downmix(Some(reported.written(frame)), ev);
+            }
         }
     }
 
