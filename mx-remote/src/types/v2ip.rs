@@ -921,12 +921,6 @@ impl V2ipDeviceSettings {
         let mut out = previous;
         out.valid |= valid;
         out.flags = previous.flags.without(valid) | (self.flags & valid);
-        // A device takes a power save level as leaving power save enabled.
-        if valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL)
-            && !valid.has(V2ipDeviceSetting::POWER_SAVE_DISABLED)
-        {
-            out.flags = out.flags.without(V2ipDeviceSetting::POWER_SAVE_DISABLED);
-        }
         if valid.has(V2ipDeviceSetting::IR_PROFILE) {
             out.ir_profile = self.ir_profile;
         }
