@@ -98,6 +98,9 @@ pub(crate) mod op {
     pub(crate) const V2IP_SINK_SDP: Opcode = Opcode(0x52);
     pub(crate) const V2IP_OSD_SYNC: Opcode = Opcode(0x53);
     pub(crate) const V2IP_PRIVACY: Opcode = Opcode(0x54);
+    /// An application's own message: a 4-byte vendor id, then bytes only that
+    /// application reads.
+    pub(crate) const THIRD_PARTY: Opcode = Opcode(0x55);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -198,6 +201,10 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::V2IP_SINK_SDP => 0x2E,
         op::V2IP_OSD_SYNC => 0x2F,
         op::V2IP_PRIVACY => 0x30,
+        // The lowest stamp, so that every receiver's ceiling passes it. No
+        // device decodes the payload, so there is no layout for a stamp to
+        // announce.
+        op::THIRD_PARTY => 0x01,
         Opcode(_) => return None,
     })
 }

@@ -11,6 +11,7 @@ mod privacy;
 mod proto28;
 mod state;
 mod subsystems;
+mod third_party;
 
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};

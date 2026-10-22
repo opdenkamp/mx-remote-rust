@@ -19,6 +19,7 @@ mod privacy;
 mod sdp;
 mod stats;
 mod svd;
+mod third_party;
 mod unit;
 
 #[cfg(test)]
@@ -238,6 +239,7 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::TIME_ZONE => handlers::time_zone(state, rx, ev),
         op::TIME => handlers::time(state, rx, ev),
         op::V2IP_TESTCARD => handlers::v2ip_testcard(state, rx, ev),
+        op::THIRD_PARTY => third_party::third_party(rx, ev),
         Opcode(_) => {}
     }
 }

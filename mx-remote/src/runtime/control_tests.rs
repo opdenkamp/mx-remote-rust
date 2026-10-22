@@ -4858,3 +4858,50 @@ fn another_senders_downmix_keeps_the_devices_state() {
         })
     );
 }
+
+/// A third-party message goes to every device at the lowest stamp, with the
+/// flag byte, the three identifying bytes and the payload as given.
+#[test]
+fn a_third_party_message_goes_out_as_given() {
+    use crate::types::{ThirdPartyVendor, THIRD_PARTY_PAYLOAD_MAX};
+    use crate::wire::ThirdPartyVendorFlag;
+
+    let f = Fixture::new();
+    f.tap.clear();
+    let body = crate::testing::poisoned(41);
+    let mut vendor = ThirdPartyVendor::private(*b"ODK");
+    vendor.flags |= ThirdPartyVendorFlag::from_bits(0x40);
+    let _ = f.remote.send_third_party(vendor, &body);
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &[0x55, 0x00], "the opcode");
+    assert_eq!(&frame[2..4], &[0x01, 0x00], "the stamp");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..4], &[0x41, b'O', b'D', b'K']);
+    assert_eq!(&p[4..], &body[..]);
+
+    f.tap.clear();
+    let _ = f
+        .remote
+        .send_third_party(ThirdPartyVendor::oui([0, 0x1A, 0x2B]), &[]);
+    let frame = f.tap.frames().pop().expect("an empty payload was refused");
+    assert_eq!(&frame[HEADER_LEN..], &[0, 0, 0x1A, 0x2B]);
+
+    f.tap.clear();
+    let _ = f
+        .remote
+        .send_third_party(vendor, &vec![0; THIRD_PARTY_PAYLOAD_MAX]);
+    let frame = f
+        .tap
+        .frames()
+        .pop()
+        .expect("the largest payload was refused");
+    assert_eq!(frame.len() + 28, 1500, "the largest frame fills the MTU");
+
+    f.tap.clear();
+    assert!(matches!(
+        f.remote
+            .send_third_party(vendor, &vec![0; THIRD_PARTY_PAYLOAD_MAX + 1]),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "an oversized message was sent");
+}

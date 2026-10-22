@@ -301,6 +301,13 @@ events! {
         BlacklistChanged => on_blacklist_changed(change: V2ipBlacklistChange);
         /// A video wall command arrived.
         VideoWallCommand => on_video_wall_command(command: VideoWallCommand);
+        /// An application sent a message under its own vendor id. `device`
+        /// is the sender.
+        ///
+        /// A message from a sender this client has not yet heard announce
+        /// itself is dropped, as every frame is, and this client never
+        /// receives its own.
+        ThirdPartyMessage => on_third_party_message(message: ThirdPartyMessage);
     }
     bay {
         /// A bay was seen for the first time.

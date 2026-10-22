@@ -10,9 +10,9 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix,
-    V2ipPtpMessages, V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
-    VIDEO_WALL_CLEARED,
+    AmpZoneSettings, ThirdPartyVendor, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings,
+    V2ipDownmix, V2ipPtpMessages, V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow,
+    VolumeMuteStatus, VIDEO_WALL_CLEARED,
 };
 
 use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX};
@@ -260,6 +260,15 @@ pub(crate) fn build_privacy_request(target: DeviceUid) -> Vec<u8> {
     let mut p = Vec::with_capacity(20);
     p.extend_from_slice(target.as_bytes());
     p.extend_from_slice(&[1, 0, 0, 0]);
+    p
+}
+
+/// Builds a `THIRD_PARTY` (0x55) message: the vendor's flag byte and three
+/// identifying bytes, then the application's payload as it was given.
+pub(crate) fn build_third_party(vendor: ThirdPartyVendor, payload: &[u8]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(4 + payload.len());
+    p.extend_from_slice(&vendor.to_wire());
+    p.extend_from_slice(payload);
     p
 }
 

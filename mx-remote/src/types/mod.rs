@@ -10,6 +10,7 @@ mod multiviewer;
 mod network;
 mod osd;
 mod status;
+mod third_party;
 mod unit;
 mod v2ip;
 
@@ -39,6 +40,7 @@ pub use status::{
     DeviceStatus, FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TimeZone, TopologyEntry,
     VolumeMuteStatus, BAY_CONTENT_KEY_MAX, BAY_CONTENT_VALUE_MAX, VOLUME_UNCHANGED,
 };
+pub use third_party::{ThirdPartyMessage, ThirdPartyVendor, THIRD_PARTY_PAYLOAD_MAX};
 pub use unit::{
     UnitCommand, UnitNetConfig, UnitStatus, UNIT_MAX_TEMPERATURES, UNIT_POWER_SAVE_LEVELS,
 };

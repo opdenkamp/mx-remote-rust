@@ -31,24 +31,25 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, UnitNetConfig,
-    V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipOutputMode, V2ipPowerSaveSchedule,
-    V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources,
-    V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow,
-    VolumeMuteStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX,
-    V2IP_SINK_ROTATION_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, ThirdPartyVendor,
+    UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipOutputMode,
+    V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings,
+    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan, VideoWallOp,
+    VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
+    THIRD_PARTY_PAYLOAD_MAX, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX,
+    V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
     build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation,
     build_osd_message, build_privacy_request, build_rc_action, build_rc_key, build_set_bay_name,
     build_set_volume, build_sink_sdp_command, build_sink_sdp_pages, build_stats_request,
-    build_target_only, build_time_zone, build_unit_command, build_v2ip_device_settings,
-    build_v2ip_downmix, build_v2ip_manual_source_switch, build_v2ip_scaling,
-    build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan,
-    build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, osd_kind, sdp_type, testcard_part,
-    testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
+    build_target_only, build_third_party, build_time_zone, build_unit_command,
+    build_v2ip_device_settings, build_v2ip_downmix, build_v2ip_manual_source_switch,
+    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard,
+    build_v2ip_vlan, build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, osd_kind, sdp_type,
+    testcard_part, testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, MxrSignalType, Opcode, OsdMessageFlag, OsdMessagePriority, RcAction,
@@ -1363,6 +1364,33 @@ impl Remote {
     pub fn send_monitoring_pulse(&self) -> Result<(), ControlError> {
         self.shared
             .send(&Addressee::Broadcast, op::SYS_MONITORING_PULSE, &[])?;
+        Ok(())
+    }
+
+    /// Sends an application's own message to every device, under `vendor`.
+    ///
+    /// Every other client of this library that has heard this one announce
+    /// itself receives it at [`crate::EventHandler::on_third_party_message`];
+    /// this client does not, and neither does one sharing its identifier. No
+    /// unit is meant to read it. Nothing acknowledges it, so an application
+    /// that needs to know it arrived has to have its peers answer.
+    ///
+    /// A payload over [`crate::THIRD_PARTY_PAYLOAD_MAX`] bytes is refused.
+    pub fn send_third_party(
+        &self,
+        vendor: ThirdPartyVendor,
+        payload: &[u8],
+    ) -> Result<(), ControlError> {
+        if payload.len() > THIRD_PARTY_PAYLOAD_MAX {
+            return Err(ControlError::InvalidRequest(
+                "a third-party payload is at most 1444 bytes",
+            ));
+        }
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::THIRD_PARTY,
+            &build_third_party(vendor, payload),
+        )?;
         Ok(())
     }
 

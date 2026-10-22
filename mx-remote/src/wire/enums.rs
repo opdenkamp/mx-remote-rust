@@ -1605,3 +1605,15 @@ bitmask! {
         Y = 1 << 2;
     }
 }
+
+bitmask! {
+    /// The first byte of a third-party vendor id, ahead of its three
+    /// identifying bytes.
+    ///
+    /// Bits without a name are passed through as they arrived.
+    ThirdPartyVendorFlag: u8 {
+        /// The three bytes are an identifier the vendor chose, rather than its
+        /// IEEE OUI.
+        NOT_OUI = 1 << 0;
+    }
+}
