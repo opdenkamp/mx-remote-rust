@@ -1664,11 +1664,42 @@ impl Remote {
         )
     }
 
-    /// Sets the level a OneIP device powers down to in power save. A level the
-    /// unit does not offer is one its [`UnitStatus`](crate::UnitStatus)
-    /// reports without [`SUPPORTED`](crate::UnitPowerSave::SUPPORTED). It also
-    /// switches [`POWER_SAVE_DISABLED`](V2ipDeviceSetting::POWER_SAVE_DISABLED)
-    /// off. The terms of [`Remote::set_v2ip_device_setting`] apply.
+    /// Switches a OneIP device's power save on, so it powers down by itself
+    /// to the level it picks, or off, so it powers down only when asked.
+    ///
+    /// On is written as a mesh controller writes it: both
+    /// [`POWER_SAVE_DISABLED`](V2ipDeviceSetting::POWER_SAVE_DISABLED), clear,
+    /// and [`POWER_SAVE_LEVEL`](V2ipDeviceSetting::POWER_SAVE_LEVEL), at 0, so
+    /// a device whose firmware takes the level as its setting returns to its
+    /// own default. The terms of [`Remote::set_v2ip_device_setting`] apply.
+    pub fn set_v2ip_power_save(
+        &self,
+        device: DeviceUid,
+        enabled: bool,
+    ) -> Result<(), ControlError> {
+        self.set_v2ip_device_settings(device, power_save_switch(enabled))
+    }
+
+    /// Switches power save on or off on every OneIP device of the mesh with
+    /// one frame, written as [`Remote::set_v2ip_power_save`] writes it. As
+    /// [`Remote::set_all_v2ip_device_settings`], which carries the other
+    /// settings.
+    pub fn set_all_v2ip_power_save(&self, enabled: bool) -> Result<(), ControlError> {
+        self.set_all_v2ip_device_settings(power_save_switch(enabled))
+    }
+
+    /// Writes the level a OneIP device powers down to in power save, which
+    /// switches power save on.
+    ///
+    /// A device picks its level itself and ignores the one written, except
+    /// one whose firmware predates picking it, which takes the level as its
+    /// setting. A level that unit does not offer is one its
+    /// [`UnitStatus`](crate::UnitStatus) reports without
+    /// [`SUPPORTED`](crate::UnitPowerSave::SUPPORTED). The level is not
+    /// cached: [`V2ipDeviceSettings::power_save_level`] reads what the device
+    /// reports. [`Remote::set_v2ip_power_save`] switches power save on or off
+    /// without naming a level. The terms of
+    /// [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_power_save_level(
         &self,
         device: DeviceUid,
@@ -1915,9 +1946,7 @@ impl Remote {
                     "the device does not turn its output by this angle",
                 ));
             }
-            // The step is the device's own, which a write leaves as it was.
-            let mut settings = settings;
-            settings.ptp_messages.sink_rotation_step = reported.ptp_messages.sink_rotation_step;
+            let cached = settings.as_applied_to(&reported);
             Ok(Command::new(
                 Addressee::device(d),
                 op::V2IP_DEVICE_CFG,
@@ -1925,7 +1954,7 @@ impl Remote {
             )
             .then(move |state, ev| {
                 if let Some(d) = state.device_mut(device) {
-                    d.merge_v2ip_settings(settings, ev);
+                    d.merge_v2ip_settings(cached, ev);
                 }
             }))
         })
@@ -2423,5 +2452,25 @@ impl Remote {
     fn multiviewer(&self, device: DeviceUid, sub: u8, args: &[u8]) -> Result<(), ControlError> {
         self.shared
             .command(|state| Ok(mv_command(multiviewer_of(state, device)?, sub, args)))
+    }
+}
+
+/// The settings that switch a OneIP device's power save on or off. On is both
+/// [`POWER_SAVE_DISABLED`](V2ipDeviceSetting::POWER_SAVE_DISABLED), clear, and
+/// [`POWER_SAVE_LEVEL`](V2ipDeviceSetting::POWER_SAVE_LEVEL), at 0.
+fn power_save_switch(enabled: bool) -> V2ipDeviceSettings {
+    let disabled = V2ipDeviceSetting::POWER_SAVE_DISABLED;
+    if enabled {
+        V2ipDeviceSettings {
+            valid: disabled | V2ipDeviceSetting::POWER_SAVE_LEVEL,
+            power_save_level: V2ipPowerSaveLevel::NONE,
+            ..V2ipDeviceSettings::default()
+        }
+    } else {
+        V2ipDeviceSettings {
+            valid: disabled,
+            flags: disabled,
+            ..V2ipDeviceSettings::default()
+        }
     }
 }

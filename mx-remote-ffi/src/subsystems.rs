@@ -1362,7 +1362,7 @@ pub unsafe extern "C" fn mxr_unit_status(
 }
 
 /// Fills `out` with the level a OneIP device powers down to in power save,
-/// `MXR_V2IP_POWER_SAVE_LEVEL_*`.
+/// `MXR_V2IP_POWER_SAVE_LEVEL_*`, which the device picks itself.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` until the device has reported any settings;
 /// `mxr_v2ip_device_settings()` says whether it has this one.

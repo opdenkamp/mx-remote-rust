@@ -894,7 +894,8 @@ impl V2ipDeviceSettings {
         Some(self.ptp_priority1)
     }
 
-    /// The power save level, `None` while it is not reported.
+    /// The level the device powers down to in power save, which it picks
+    /// itself, `None` while it is not reported.
     pub const fn power_save_level(&self) -> Option<V2ipPowerSaveLevel> {
         if !self.valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL) {
             return None;
@@ -961,7 +962,10 @@ impl V2ipDeviceSettings {
     ///
     /// A device applies a setting only if it has it, a profile only within
     /// its range, a rotation only by its own step, and never what only it can
-    /// report about itself.
+    /// report about itself. It picks its power save level itself, and takes
+    /// a level it is written, without
+    /// [`POWER_SAVE_DISABLED`](V2ipDeviceSetting::POWER_SAVE_DISABLED), as
+    /// switching power save on.
     #[must_use]
     pub(crate) fn as_applied_to(self, reported: &Self) -> Self {
         let mut valid = (self.valid & reported.valid).without(V2ipDeviceSetting::REPORTED_ONLY);
@@ -977,9 +981,6 @@ impl V2ipDeviceSettings {
         if self.ptp_domain > V2IP_PTP_DOMAIN_MAX {
             valid = valid.without(V2ipDeviceSetting::PTP_DOMAIN);
         }
-        if self.power_save_level > V2ipPowerSaveLevel::OFF {
-            valid = valid.without(V2ipDeviceSetting::POWER_SAVE_LEVEL);
-        }
         if self.ptp_messages.dscp > V2IP_DSCP_MAX {
             valid = valid.without(V2ipDeviceSetting::PTP_DSCP);
         }
@@ -992,12 +993,23 @@ impl V2ipDeviceSettings {
         {
             valid = valid.without(V2ipDeviceSetting::SINK_ROTATION);
         }
+        let mut flags = self.flags;
+        if valid.has(V2ipDeviceSetting::POWER_SAVE_LEVEL) {
+            valid = valid.without(V2ipDeviceSetting::POWER_SAVE_LEVEL);
+            if !valid.has(V2ipDeviceSetting::POWER_SAVE_DISABLED)
+                && reported.valid.has(V2ipDeviceSetting::POWER_SAVE_DISABLED)
+            {
+                valid |= V2ipDeviceSetting::POWER_SAVE_DISABLED;
+                flags = flags.without(V2ipDeviceSetting::POWER_SAVE_DISABLED);
+            }
+        }
         let ptp_messages = V2ipPtpMessages {
             sink_rotation_step: reported.ptp_messages.sink_rotation_step,
             ..self.ptp_messages
         };
         Self {
             valid,
+            flags,
             ptp_messages,
             ..self
         }

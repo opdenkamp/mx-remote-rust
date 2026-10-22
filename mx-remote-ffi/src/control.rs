@@ -1214,10 +1214,54 @@ pub unsafe extern "C" fn mxr_set_all_v2ip_device_settings(
     })
 }
 
-/// Sets the level a OneIP device powers down to in power save,
-/// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT` for a level with no
-/// name. `mxr_unit_power_save()` says which levels the unit offers. It also
-/// switches `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
+/// Switches a OneIP device's power save on, so it powers down by itself to the
+/// level it picks, or off, so it powers down only when asked. On is written as
+/// a mesh controller writes it, with `MXR_V2IP_SETTING_POWER_SAVE_DISABLED`
+/// clear and `MXR_V2IP_SETTING_POWER_SAVE_LEVEL` at 0. Otherwise as
+/// `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_power_save(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    enabled: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_power_save(device.into(), enabled))
+    })
+}
+
+/// Switches power save on or off on every OneIP device of the mesh with one
+/// frame, as `mxr_set_v2ip_power_save()` writes it. Otherwise as
+/// `mxr_set_all_v2ip_device_settings()`, which carries the other settings.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_all_v2ip_power_save(
+    remote: *const mxr_remote_t,
+    enabled: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_all_v2ip_power_save(enabled))
+    })
+}
+
+/// Writes the level a OneIP device powers down to in power save,
+/// `MXR_V2IP_POWER_SAVE_LEVEL_*`, which switches power save on. A device picks
+/// its level itself and ignores the one written, except one whose firmware
+/// predates picking it, which takes the level as its setting;
+/// `mxr_unit_power_save()` says which levels that unit offers. The level is
+/// not cached: `mxr_v2ip_power_save_level()` reads what the device reports.
+/// `MXR_ERR_INVALID_ARGUMENT` for a level with no name. Otherwise as
 /// `mxr_set_v2ip_device_setting()`.
 ///
 /// # Safety
@@ -1239,10 +1283,11 @@ pub unsafe extern "C" fn mxr_set_v2ip_power_save_level(
     })
 }
 
-/// Sets the power save level of every OneIP device of the mesh with one frame,
-/// `MXR_V2IP_POWER_SAVE_LEVEL_*`. `MXR_ERR_INVALID_ARGUMENT`, sending nothing,
-/// for a level with no name. Each device that takes the level also switches
-/// `MXR_V2IP_SETTING_POWER_SAVE_DISABLED` off. Otherwise as
+/// Writes the power save level of every OneIP device of the mesh with one
+/// frame, `MXR_V2IP_POWER_SAVE_LEVEL_*`, which switches power save on. Each
+/// device takes the level as `mxr_set_v2ip_power_save_level()` describes.
+/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a level with no name.
+/// Otherwise as
 /// `mxr_set_all_v2ip_device_settings()`,
 /// which carries the other settings.
 ///

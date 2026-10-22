@@ -280,7 +280,13 @@ bitmask! {
         PTP_PRIORITY1 = 1 << 16;
         /// Sends the source's audio as an AES67 flow, where the source allows.
         AES67 = 1 << 17;
-        /// The power save level the device powers down to.
+        /// The level the device powers down to in power save. A device picks
+        /// it itself: the level that saves the most while its input and
+        /// display can still wake it. Written without
+        /// [`POWER_SAVE_DISABLED`](Self::POWER_SAVE_DISABLED), it switches
+        /// power save on, and the level written is ignored, except by a
+        /// device whose firmware predates picking it, which takes the level
+        /// as its setting.
         POWER_SAVE_LEVEL = 1 << 18;
         /// The interval between the device's PTP announce messages.
         PTP_ANNOUNCE = 1 << 19;

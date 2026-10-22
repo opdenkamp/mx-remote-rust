@@ -1135,6 +1135,23 @@ fn the_message_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// The power save switch answers a device never heard from as not found, and
+/// goes out to the whole mesh as soon as there is a socket to send it on.
+#[test]
+fn the_power_save_switch_checks_the_device_first() {
+    let remote = client(c"abi-power-save", c"00000022.00000000.00000000.000000b0");
+
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_power_save(remote, uid_n(9), true) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_all_v2ip_power_save(remote, false) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// The downmix calls answer a caller's mistake as an argument error and a
 /// device never heard from as not found, before anything is sent.
 #[test]

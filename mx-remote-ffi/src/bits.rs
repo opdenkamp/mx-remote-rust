@@ -732,7 +732,8 @@ pub const MXR_V2IP_SETTING_PTP_PRIORITY1: u32 = 1 << 16;
 /// on/off setting.
 pub const MXR_V2IP_SETTING_AES67: u32 = 1 << 17;
 
-/// The power save level, read with `mxr_v2ip_power_save_level()`.
+/// The level the device powers down to in power save, which it picks itself,
+/// read with `mxr_v2ip_power_save_level()`. Writing it switches power save on.
 pub const MXR_V2IP_SETTING_POWER_SAVE_LEVEL: u32 = 1 << 18;
 
 /// The interval between PTP announce messages, carried in

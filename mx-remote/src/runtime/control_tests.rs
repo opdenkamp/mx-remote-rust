@@ -2911,6 +2911,13 @@ fn a_power_save_level_and_aes67_write_carry_their_bits() {
     assert_eq!(block.len(), 48);
     assert_eq!(&block[..4], &(1u32 << 18).to_le_bytes(), "valid");
     assert_eq!(block[47], 3, "the level");
+    assert_eq!(
+        f.remote
+            .v2ip_device_settings(uid)
+            .map(|s| s.get(V2ipDeviceSetting::POWER_SAVE_DISABLED)),
+        Some(None),
+        "a switch the device does not have"
+    );
     assert!(matches!(
         f.remote
             .set_v2ip_power_save_level(uid, V2ipPowerSaveLevel::from_wire(4)),
@@ -3985,6 +3992,103 @@ fn a_power_save_level_switches_power_save_disabled_off() {
         .set_v2ip_power_save_level(uid, V2ipPowerSaveLevel::default())
         .expect("a level the device has reported");
     assert_eq!(disabled(), Some(false));
+}
+
+/// Power save is switched on as a mesh controller switches it, with both
+/// bits and a level of 0, and off with the switch alone. A device picks its
+/// level itself, so a written level, from this client or another sender, is
+/// never cached, and only switches power save on.
+#[test]
+fn power_save_is_switched_and_its_level_is_the_devices() {
+    let f = Fixture::new();
+    let (uid, controller) = (uid_n(239), uid_n(240));
+    f.everything(uid, 0x30, "PD0002");
+    f.feed(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x30, "Ctrl", "PD0003", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let both = V2ipDeviceSetting::POWER_SAVE_LEVEL | V2ipDeviceSetting::POWER_SAVE_DISABLED;
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let mut p = cfg.bytes_with_power_save(
+        both.bits(),
+        V2ipDeviceSetting::POWER_SAVE_DISABLED.bits(),
+        0,
+        &V2ipPowerSaveSchedule::default(),
+    );
+    p.resize(224, 0);
+    p[175] = V2ipPowerSaveLevel::LOW.to_wire();
+    f.feed(uid, op::V2IP_DEVICE_CFG, &p);
+    f.connect();
+    let cached = || {
+        f.remote.v2ip_device_settings(uid).map(|s| {
+            (
+                s.get(V2ipDeviceSetting::POWER_SAVE_DISABLED),
+                s.power_save_level(),
+            )
+        })
+    };
+    let low = Some(V2ipPowerSaveLevel::LOW);
+
+    f.tap.clear();
+    f.remote.set_v2ip_power_save(uid, true).expect("on");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let block = &frame[HEADER_LEN + 128..];
+    assert_eq!(&block[..4], &both.bits().to_le_bytes(), "valid");
+    assert_eq!(&block[4..8], &[0; 4], "flags");
+    assert_eq!(block[47], 0, "the level");
+    assert_eq!(cached(), Some((Some(false), low)));
+
+    f.tap.clear();
+    f.remote.set_v2ip_power_save(uid, false).expect("off");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let block = &frame[HEADER_LEN + 128..];
+    let disabled = V2ipDeviceSetting::POWER_SAVE_DISABLED.bits().to_le_bytes();
+    assert_eq!((&block[..4], &block[4..8]), (&disabled[..], &disabled[..]));
+    assert_eq!(cached(), Some((Some(true), low)));
+
+    f.remote
+        .set_v2ip_power_save_level(uid, V2ipPowerSaveLevel::OFF)
+        .expect("a level the device has reported");
+    assert_eq!(cached(), Some((Some(false), low)), "this client's level");
+
+    // Another sender's level: a flag outside `valid` says nothing, and one
+    // behind its own bit decides.
+    let write = |valid: V2ipDeviceSetting| {
+        let disabled = V2ipDeviceSetting::POWER_SAVE_DISABLED.bits();
+        let mut p =
+            cfg.bytes_with_power_save(valid.bits(), disabled, 0, &V2ipPowerSaveSchedule::default());
+        p[175] = V2ipPowerSaveLevel::OFF.to_wire();
+        p
+    };
+    f.remote.set_v2ip_power_save(uid, false).expect("off");
+    f.feed(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &write(V2ipDeviceSetting::POWER_SAVE_LEVEL),
+    );
+    assert_eq!(cached(), Some((Some(false), low)), "another sender's level");
+    f.feed(controller, op::V2IP_DEVICE_CFG, &write(both));
+    assert_eq!(cached(), Some((Some(true), low)), "and its switch");
+}
+
+/// The mesh-wide switch writes what the per-device one does, in the frame
+/// every device of the mesh applies.
+#[test]
+fn power_save_is_switched_on_the_whole_mesh_as_on_one_device() {
+    let f = Fixture::new();
+    let both = V2ipDeviceSetting::POWER_SAVE_LEVEL | V2ipDeviceSetting::POWER_SAVE_DISABLED;
+    let disabled = V2ipDeviceSetting::POWER_SAVE_DISABLED;
+    for (enabled, valid, flags) in [(true, both, 0), (false, disabled, disabled.bits())] {
+        f.tap.clear();
+        let _ = f.remote.set_all_v2ip_power_save(enabled);
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(p.len(), 48, "{enabled}");
+        assert_eq!(&p[..4], &valid.bits().to_le_bytes(), "{enabled}");
+        assert_eq!(&p[4..8], &flags.to_le_bytes(), "{enabled}");
+        assert_eq!(p[47], 0, "{enabled}");
+    }
 }
 
 /// The cloud connection is a switch, written to a device that reports it.
