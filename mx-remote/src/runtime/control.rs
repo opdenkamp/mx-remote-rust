@@ -1020,7 +1020,7 @@ impl Remote {
     pub fn play_v2ip_sdp(&self, device: DeviceUid, sdp: &str) -> Result<(), ControlError> {
         if sdp.is_empty() || sdp.len() > V2IP_SDP_MAX {
             return Err(ControlError::InvalidRequest(
-                "a session description of 1 to 65535 bytes",
+                "a session description of 1 to 2048 bytes",
             ));
         }
         let (to, pages) = self.shared.read(|state| {
