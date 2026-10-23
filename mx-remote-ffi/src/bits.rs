@@ -927,6 +927,11 @@ pub const MXR_UNIT_POWER_CHECK: u32 = 1 << 13;
 pub const MXR_UNIT_BOOT_COUNT: u32 = 1 << 14;
 /// `fan_rpm` is reported.
 pub const MXR_UNIT_FAN_SPEED: u32 = 1 << 15;
+/// The unit can be located with `mxr_locate_unit()`.
+pub const MXR_UNIT_LOCATE_SUPPORTED: u32 = 1 << 16;
+/// The unit is being located: its board-ID LED flashes, and an output shows
+/// "Locate Device".
+pub const MXR_UNIT_LOCATE: u32 = 1 << 17;
 
 // ---- OneIP PTP state, in `mxr_v2ip_ptp_t` ----
 

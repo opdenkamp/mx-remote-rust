@@ -1615,6 +1615,26 @@ pub unsafe extern "C" fn mxr_request_v2ip_sink_sdp(
     })
 }
 
+/// Asks a OneIP output what it plays from a session description and for the
+/// description itself, which `mxr_v2ip_sink_description()` then reads.
+/// `MXR_ERR_PROTOCOL_TOO_OLD` below protocol 0x31, where an output ignores
+/// the ask for the description. Otherwise as `mxr_play_v2ip_sdp()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_v2ip_sink_description(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_v2ip_sink_description(device.into()))
+    })
+}
+
 /// Asks a OneIP source unit how its streams are encrypted now, rather than at
 /// its next report; `mxr_v2ip_privacy()` reads the answer.
 /// `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP source, and
@@ -1768,6 +1788,49 @@ pub unsafe extern "C" fn mxr_upgrade_unit_fpga(
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
         from_control(r.remote.upgrade_unit_fpga(device.into(), force))
+    })
+}
+
+/// Locates a unit: its board-ID LED flashes, and an output shows "Locate
+/// Device" on its display. For 30 s when `timed` is set, until
+/// `mxr_stop_locating_unit()` otherwise.
+///
+/// `MXR_ERR_NOT_REPORTED` until the unit has reported its status, and
+/// `MXR_ERR_UNSUPPORTED` for one whose report lacks
+/// `MXR_UNIT_LOCATE_SUPPORTED`. The cached status takes `MXR_UNIT_LOCATE` at
+/// once; the unit reports its own within 2 s, and again when a timed locate
+/// ends. Otherwise as `mxr_upgrade_unit_fpga()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_locate_unit(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    timed: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.locate_unit(device.into(), timed))
+    })
+}
+
+/// Stops locating a unit. As `mxr_locate_unit()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_stop_locating_unit(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.stop_locating_unit(device.into()))
     })
 }
 

@@ -28,7 +28,7 @@ use crate::wire::{
     Addressee, BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile,
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, V2ipColourSpace,
+    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, UnitFlag, V2ipColourSpace,
     V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel,
     V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, HEADER_LEN,
     PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET,
@@ -4904,4 +4904,80 @@ fn a_third_party_message_goes_out_as_given() {
         Err(ControlError::InvalidRequest(_))
     ));
     assert!(f.tap.frames().is_empty(), "an oversized message was sent");
+}
+
+/// Asking an output for its description sets bit 0 of the request's value,
+/// and is refused below 0x31, where an output ignores the bit.
+#[test]
+fn asking_for_the_description_sets_the_request_bit() {
+    let f = Fixture::new();
+    let uid = uid_n(241);
+    f.everything(uid, 0x31, "SD0005");
+    f.connect();
+    f.tap.clear();
+    f.remote.request_v2ip_sink_description(uid).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::V2IP_SINK_SDP.0.to_le_bytes());
+    assert_eq!(&frame[2..4], &0x2Eu16.to_le_bytes(), "the stamp");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..16], uid.as_bytes());
+    assert_eq!(&p[16..20], &[4, 1, 0, 0], "a request for the description");
+
+    let old = uid_n(242);
+    f.everything(old, 0x30, "SD0006");
+    f.tap.clear();
+    assert!(refused(&f.remote.request_v2ip_sink_description(old)));
+    assert!(f.tap.frames().is_empty(), "a refused request was sent");
+}
+
+/// A unit is located for 30 s or until stopped, only once it has reported
+/// that it can be, and the cached status says so at once.
+#[test]
+fn a_unit_is_located_only_once_it_says_it_can_be() {
+    let f = Fixture::new();
+    let uid = uid_n(243);
+    f.everything(uid, 0x31, "LC0001");
+    f.connect();
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.locate_unit(uid, true),
+        Err(ControlError::NotReported(_))
+    ));
+    let report = |flags: u32| {
+        let mut p = flags.to_le_bytes().to_vec();
+        p.resize(104, 0);
+        f.feed(uid, op::SYS_UNIT_STATUS, &p);
+    };
+    report(UnitFlag::FAN_SPEED.bits());
+    assert!(matches!(
+        f.remote.locate_unit(uid, true),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.stop_locating_unit(uid),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused locate was sent");
+
+    report((UnitFlag::LOCATE_SUPPORTED | UnitFlag::FAN_SPEED).bits());
+    let flags = |f: &Fixture| f.remote.unit_status(uid).expect("reported").flags;
+    let sent = |f: &Fixture| {
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[20..22], &op::SYS_UNIT_COMMAND.0.to_le_bytes());
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(&p[..16], uid.as_bytes());
+        [p[16], p[17]]
+    };
+    f.remote.locate_unit(uid, true).expect("sent");
+    assert_eq!(sent(&f), [4, 0x08], "timed");
+    assert!(flags(&f).has(UnitFlag::LOCATE));
+    f.remote.locate_unit(uid, false).expect("sent");
+    assert_eq!(sent(&f), [4, 0x04], "until stopped");
+    f.remote.stop_locating_unit(uid).expect("sent");
+    assert_eq!(sent(&f), [4, 0x00], "stop");
+    assert_eq!(
+        flags(&f),
+        UnitFlag::LOCATE_SUPPORTED | UnitFlag::FAN_SPEED,
+        "a stop clears the flag and nothing else"
+    );
 }

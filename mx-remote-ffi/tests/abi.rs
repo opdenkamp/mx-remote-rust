@@ -847,9 +847,11 @@ fn the_unit_calls_check_their_arguments_first() {
             mxr_upgrade_unit_fpga(remote, uid_n(9), true),
             mxr_set_unit_dhcp(remote, uid_n(9)),
             mxr_confirm_unit_network(remote, uid_n(9)),
+            mxr_locate_unit(remote, uid_n(9), true),
+            mxr_stop_locating_unit(remote, uid_n(9)),
         ]
     };
-    assert_eq!(calls, [mxr_result_t::MXR_ERR_NOT_FOUND; 4]);
+    assert_eq!(calls, [mxr_result_t::MXR_ERR_NOT_FOUND; 6]);
 
     let net = |ip: &CStr, mask: &CStr, gw: *const c_char| {
         // SAFETY: a live handle and NUL-terminated strings or null.
@@ -1232,9 +1234,16 @@ fn the_sdp_calls_check_their_arguments_first() {
             mxr_stop_v2ip_sdp(remote, uid_n(9)),
             mxr_set_v2ip_sdp_screen(remote, uid_n(9), 1),
             mxr_request_v2ip_sink_sdp(remote, uid_n(9)),
+            mxr_request_v2ip_sink_description(remote, uid_n(9)),
         ]
     };
-    assert_eq!(calls, [mxr_result_t::MXR_ERR_NOT_FOUND; 4]);
+    assert_eq!(calls, [mxr_result_t::MXR_ERR_NOT_FOUND; 5]);
+
+    let mut text = [0 as c_char; 8];
+    // SAFETY: a live handle and eight writable bytes.
+    let len = unsafe { mxr_v2ip_sink_description(remote, uid_n(9), text.as_mut_ptr(), text.len()) };
+    assert_eq!(len, 0);
+    assert!(!last_error().is_empty(), "the failure said nothing");
 
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };

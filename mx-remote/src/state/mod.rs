@@ -25,7 +25,7 @@ use crate::types::OsdSyncRequest;
 use crate::wire::{BayFeatures, BayUid, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
-pub(crate) use device::{Device, HelloInfo, MeshBayChange, CONFIG_GRACE};
+pub(crate) use device::{Device, HelloInfo, MeshBayChange, SdpPages, CONFIG_GRACE};
 pub(crate) use links::{BayLink, BayLinks};
 
 /// Every device this client has heard from, and the links between their bays.

@@ -416,6 +416,17 @@ impl Remote {
             .read(|state| state.device(uid)?.v2ip_sink_sdp.clone())
     }
 
+    /// The session description a OneIP output last reported playing, `None`
+    /// until it has and once it reports playing none.
+    ///
+    /// An output reports one when it starts a stream other than by its mesh
+    /// controller's command, and when asked with
+    /// [`Remote::request_v2ip_sink_description`].
+    pub fn v2ip_sink_description(&self, uid: DeviceUid) -> Option<String> {
+        self.shared
+            .read(|state| state.device(uid)?.v2ip_sink_description.clone())
+    }
+
     /// How a OneIP source unit's streams are encrypted, as it last reported
     /// it, `None` until it has reported.
     pub fn v2ip_privacy(&self, uid: DeviceUid) -> Option<V2ipPrivacy> {

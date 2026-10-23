@@ -1514,6 +1514,17 @@
 #define MXR_UNIT_FAN_SPEED (1 << 15)
 
 /**
+ * The unit can be located with `mxr_locate_unit()`.
+ */
+#define MXR_UNIT_LOCATE_SUPPORTED (1 << 16)
+
+/**
+ * The unit is being located: its board-ID LED flashes, and an output shows
+ * "Locate Device".
+ */
+#define MXR_UNIT_LOCATE (1 << 17)
+
+/**
  * The device runs PTP and the block holds its state.
  */
 #define MXR_V2IP_PTP_VALID (1 << 0)
@@ -6360,6 +6371,18 @@ mxr_result_t mxr_set_v2ip_sdp_screen(const mxr_remote_t *remote, mxr_uid_t devic
 mxr_result_t mxr_request_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
+ * Asks a OneIP output what it plays from a session description and for the
+ * description itself, which `mxr_v2ip_sink_description()` then reads.
+ * `MXR_ERR_PROTOCOL_TOO_OLD` below protocol 0x31, where an output ignores
+ * the ask for the description. Otherwise as `mxr_play_v2ip_sdp()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_v2ip_sink_description(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
  * Asks a OneIP source unit how its streams are encrypted now, rather than at
  * its next report; `mxr_v2ip_privacy()` reads the answer.
  * `MXR_ERR_UNSUPPORTED` for a device that is not a OneIP source, and
@@ -6451,6 +6474,32 @@ mxr_result_t mxr_clear_unit_status(const mxr_remote_t *remote, mxr_uid_t device)
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_upgrade_unit_fpga(const mxr_remote_t *remote, mxr_uid_t device, bool force);
+
+/**
+ * Locates a unit: its board-ID LED flashes, and an output shows "Locate
+ * Device" on its display. For 30 s when `timed` is set, until
+ * `mxr_stop_locating_unit()` otherwise.
+ *
+ * `MXR_ERR_NOT_REPORTED` until the unit has reported its status, and
+ * `MXR_ERR_UNSUPPORTED` for one whose report lacks
+ * `MXR_UNIT_LOCATE_SUPPORTED`. The cached status takes `MXR_UNIT_LOCATE` at
+ * once; the unit reports its own within 2 s, and again when a timed locate
+ * ends. Otherwise as `mxr_upgrade_unit_fpga()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_locate_unit(const mxr_remote_t *remote, mxr_uid_t device, bool timed);
+
+/**
+ * Stops locating a unit. As `mxr_locate_unit()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_stop_locating_unit(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
  * Switches a unit to an IP configuration from DHCP. As
@@ -7557,6 +7606,25 @@ mxr_result_t mxr_v2ip_downmix(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2i
  * `mxr_v2ip_sink_sdp_t`.
  */
 mxr_result_t mxr_v2ip_sink_sdp(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_sink_sdp_t *out);
+
+/**
+ * Writes the session description a OneIP output last reported playing, and
+ * returns its length in bytes.
+ *
+ * The text carries no terminator. Returns the full length even when it
+ * exceeds `cap`, so calling with `cap` zero sizes the buffer. Reports
+ * `MXR_ERR_NOT_REPORTED` and returns 0 until the output has reported one,
+ * and once it reports playing none. An output reports one when it starts a
+ * stream other than by its mesh controller's command, and when asked with
+ * `mxr_request_v2ip_sink_description()`. A change is announced through
+ * `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable bytes.
+ */
+size_t mxr_v2ip_sink_description(const mxr_remote_t *remote, mxr_uid_t uid, char *out, size_t cap);
 
 /**
  * Fills `out` with how a OneIP source unit's streams are encrypted, as it

@@ -1655,6 +1655,43 @@ pub unsafe extern "C" fn mxr_v2ip_sink_sdp(
     })
 }
 
+/// Writes the session description a OneIP output last reported playing, and
+/// returns its length in bytes.
+///
+/// The text carries no terminator. Returns the full length even when it
+/// exceeds `cap`, so calling with `cap` zero sizes the buffer. Reports
+/// `MXR_ERR_NOT_REPORTED` and returns 0 until the output has reported one,
+/// and once it reports playing none. An output reports one when it starts a
+/// stream other than by its mesh controller's command, and when asked with
+/// `mxr_request_v2ip_sink_description()`. A change is announced through
+/// `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` is null or points at `cap`
+/// writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_sink_description(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut c_char,
+    cap: usize,
+) -> usize {
+    guard(0, || {
+        // SAFETY: the caller guarantees a live handle or null.
+        let Some(r) = (unsafe { remote.as_ref() }) else {
+            return no_handle();
+        };
+        let Some(description) = r.remote.v2ip_sink_description(uid.into()) else {
+            not_reported(r, uid, "session description");
+            return 0;
+        };
+        let bytes: Vec<c_char> = description.bytes().map(|b| b as c_char).collect();
+        // SAFETY: the caller guarantees cap writable bytes at out.
+        unsafe { copy_into(&bytes, out, cap) }
+    })
+}
+
 /// How one of a OneIP source unit's streams is encrypted: the values of its
 /// session description's `a=privacy` and `a=extmap` attributes. The key
 /// itself never travels: every unit of a mesh holds the same one. This

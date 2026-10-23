@@ -563,6 +563,11 @@ bitmask! {
         BOOT_COUNT = 1 << 14;
         /// The fan speed is reported.
         FAN_SPEED = 1 << 15;
+        /// The unit takes [`UnitCommandKind::LOCATE`].
+        LOCATE_SUPPORTED = 1 << 16;
+        /// The unit is being located: its board-ID LED flashes, and an output
+        /// shows "Locate Device".
+        LOCATE = 1 << 17;
     }
 }
 
@@ -577,6 +582,8 @@ wire_enum! {
         NET_CONFIG = 2;
         /// Keep a pending IP configuration.
         NET_CONFIRM = 3;
+        /// Start or stop locating the unit.
+        LOCATE = 4;
     }
 }
 
@@ -589,6 +596,11 @@ bitmask! {
         /// With [`UnitCommandKind::NET_CONFIG`]: use DHCP, ignoring the
         /// addresses.
         DHCP = 1 << 1;
+        /// With [`UnitCommandKind::LOCATE`]: locate it until stopped. Neither
+        /// this nor [`LOCATE_TIMED`](Self::LOCATE_TIMED) stops it.
+        LOCATE_ON = 1 << 2;
+        /// With [`UnitCommandKind::LOCATE`]: locate it for 30 s.
+        LOCATE_TIMED = 1 << 3;
     }
 }
 

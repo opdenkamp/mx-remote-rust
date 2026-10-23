@@ -53,7 +53,7 @@ use crate::wire::{
     MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
     MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
     MultiviewerViewMode, MxrSignalType, Opcode, OsdMessageFlag, OsdMessagePriority, RcAction,
-    RcKey, SendError, StreamAddr, UnitCommandFlag, UnitCommandKind, V2ipDeviceSetting,
+    RcKey, SendError, StreamAddr, UnitCommandFlag, UnitCommandKind, UnitFlag, V2ipDeviceSetting,
     V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
     V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX,
     V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
@@ -175,6 +175,17 @@ impl Shared {
 /// every device on this version has it either, but none below it does.
 const AUTO_ADDRESSES_PROTOCOL: u16 = 0x2B;
 
+/// The first protocol version whose outputs report the session description
+/// they play.
+///
+/// Not the stamp: that is the session description opcode's, and an output
+/// between the two answers the request with its status alone.
+const SDP_DESCRIPTION_PROTOCOL: u16 = 0x31;
+
+/// The bit of a session description request's value that asks for the
+/// description too.
+const SDP_REQUEST_DESCRIPTION: u8 = 1 << 0;
+
 fn device_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
     state.device(uid).ok_or(ControlError::UnknownDevice(uid))
 }
@@ -188,6 +199,26 @@ fn sdp_sink_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
         ));
     }
     Ok(device)
+}
+
+/// A unit command for the unit behind `uid`, once it is known to be a OneIP
+/// unit.
+fn unit_command_of(
+    state: &State,
+    uid: DeviceUid,
+    command: UnitCommandKind,
+    flags: UnitCommandFlag,
+    network: Option<UnitNetConfig>,
+) -> Result<Command, ControlError> {
+    let d = device_of(state, uid)?;
+    if !d.is_v2ip() {
+        return Err(ControlError::Unsupported("the device is not a OneIP unit"));
+    }
+    Ok(Command::new(
+        Addressee::device(d),
+        op::SYS_UNIT_COMMAND,
+        build_unit_command(d.uid, command, flags, network.as_ref()),
+    ))
 }
 
 /// The device behind `uid`, once it is known to be a multiviewer.
@@ -1055,6 +1086,33 @@ impl Remote {
         self.sink_sdp_command(device, sdp_type::REQUEST, 0)
     }
 
+    /// Asks a OneIP output for what it plays from a session description and
+    /// for the description itself, which
+    /// [`Remote::v2ip_sink_description`] then reads. An output that plays
+    /// none sends its status alone.
+    ///
+    /// Refused below protocol 0x31, where an output ignores the ask for the
+    /// description. Otherwise as [`Remote::play_v2ip_sdp`].
+    pub fn request_v2ip_sink_description(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = sdp_sink_of(state, device)?;
+            let have = d.hello.supported_protocol;
+            if have != 0 && have < SDP_DESCRIPTION_PROTOCOL {
+                return Err(ControlError::Send(SendError::ProtocolTooOld {
+                    serial: d.serial().to_owned(),
+                    opcode: op::V2IP_SINK_SDP.0,
+                    have,
+                    need: SDP_DESCRIPTION_PROTOCOL,
+                }));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_SINK_SDP,
+                build_sink_sdp_command(d.uid, sdp_type::REQUEST, SDP_REQUEST_DESCRIPTION),
+            ))
+        })
+    }
+
     /// Asks a OneIP source unit how its streams are encrypted now, rather than
     /// at its next report, which comes at least once a minute and whenever
     /// they change. [`Remote::v2ip_privacy`] reads the answer.
@@ -1281,6 +1339,59 @@ impl Remote {
         )
     }
 
+    /// Locates a unit: its board-ID LED flashes, and an output shows "Locate
+    /// Device" on its display. For 30 s when `timed` is set, until
+    /// [`Remote::stop_locating_unit`] otherwise.
+    ///
+    /// Refused until the unit has reported its status, and for one whose
+    /// report lacks [`UnitFlag::LOCATE_SUPPORTED`](crate::UnitFlag::LOCATE_SUPPORTED).
+    /// The cached status takes [`UnitFlag::LOCATE`](crate::UnitFlag::LOCATE)
+    /// at once, as the mesh controller's copy does; the unit reports its own
+    /// within 2 s, and again when a timed locate ends. Otherwise as
+    /// [`Remote::upgrade_unit_fpga`].
+    pub fn locate_unit(&self, device: DeviceUid, timed: bool) -> Result<(), ControlError> {
+        let flags = if timed {
+            UnitCommandFlag::LOCATE_TIMED
+        } else {
+            UnitCommandFlag::LOCATE_ON
+        };
+        self.locate(device, flags)
+    }
+
+    /// Stops locating a unit. As [`Remote::locate_unit`].
+    pub fn stop_locating_unit(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.locate(device, UnitCommandFlag::NONE)
+    }
+
+    /// The one send behind the locate methods.
+    fn locate(&self, device: DeviceUid, flags: UnitCommandFlag) -> Result<(), ControlError> {
+        let locating = !flags.is_empty();
+        self.shared.command(move |state| {
+            let command = unit_command_of(state, device, UnitCommandKind::LOCATE, flags, None)?;
+            let status = device_of(state, device)?
+                .unit_status
+                .as_ref()
+                .ok_or(ControlError::NotReported("the unit's status"))?;
+            if !status.flags.has(UnitFlag::LOCATE_SUPPORTED) {
+                return Err(ControlError::Unsupported("the unit cannot be located"));
+            }
+            Ok(command.then(move |state, ev| {
+                let Some(d) = state.device_mut(device) else {
+                    return;
+                };
+                let Some(mut status) = d.unit_status.clone() else {
+                    return;
+                };
+                let bits = status.flags.bits() & !UnitFlag::LOCATE.bits();
+                status.flags = UnitFlag::from_bits(bits);
+                if locating {
+                    status.flags |= UnitFlag::LOCATE;
+                }
+                d.set_unit_status(status, ev);
+            }))
+        })
+    }
+
     /// The one send behind the unit command methods.
     fn unit_command(
         &self,
@@ -1289,17 +1400,8 @@ impl Remote {
         flags: UnitCommandFlag,
         network: Option<UnitNetConfig>,
     ) -> Result<(), ControlError> {
-        self.shared.command(move |state| {
-            let d = device_of(state, device)?;
-            if !d.is_v2ip() {
-                return Err(ControlError::Unsupported("the device is not a OneIP unit"));
-            }
-            Ok(Command::new(
-                Addressee::device(d),
-                op::SYS_UNIT_COMMAND,
-                build_unit_command(d.uid, command, flags, network.as_ref()),
-            ))
-        })
+        self.shared
+            .command(move |state| unit_command_of(state, device, command, flags, network))
     }
 
     /// Sets the time zone of every device that hears it.

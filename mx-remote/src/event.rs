@@ -218,6 +218,9 @@ events! {
         /// The output reported something different about what it plays from
         /// a session description.
         V2ipSinkSdpChanged => on_v2ip_sink_sdp_changed(sdp: V2ipSinkSdp);
+        /// The output reported a different session description it plays, or
+        /// that it plays none.
+        V2ipSinkDescriptionChanged => on_v2ip_sink_description_changed(description: Option<String>);
         /// The source unit reported its streams encrypted differently.
         V2ipPrivacyChanged => on_v2ip_privacy_changed(privacy: V2ipPrivacy);
         /// The management unit sent a new overlay sync.

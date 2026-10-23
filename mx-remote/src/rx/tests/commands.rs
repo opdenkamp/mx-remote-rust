@@ -9,6 +9,7 @@
 //! zero. The fixtures here are poisoned wherever that padding is in reach.
 
 use std::net::Ipv4Addr;
+use std::time::{Duration, Instant};
 
 use crate::event::Event;
 use crate::types::{
@@ -3749,4 +3750,156 @@ fn a_blacklist_change_names_its_groups() {
     h.feed(op::V2IP_BLIST_REGISTER, &[]);
     h.feed(op::V2IP_BLIST_REGISTER, &[239, 1, 1, 1, 239]);
     assert!(!h.saw(|e| matches!(e, Event::BlacklistChanged { .. })));
+}
+
+/// One page of the description an output reports playing: the header naming
+/// `uid` with type 5, then the whole length, the page's offset and length,
+/// two reserved bytes, and the text.
+fn description_page(uid: DeviceUid, total: u16, offset: u16, text: &[u8]) -> Vec<u8> {
+    let mut p = uid.as_bytes().to_vec();
+    p.extend_from_slice(&[5, 0xA5, 0x5A, 0xC3]);
+    p.extend_from_slice(&total.to_le_bytes());
+    p.extend_from_slice(&offset.to_le_bytes());
+    p.extend_from_slice(&(text.len() as u16).to_le_bytes());
+    p.extend_from_slice(&[0x96, 0x69]);
+    p.extend_from_slice(text);
+    p
+}
+
+fn descriptions(h: &Harness) -> Vec<Option<String>> {
+    h.events
+        .iter()
+        .filter_map(|e| match e {
+            Event::V2ipSinkDescriptionChanged { description, .. } => Some(description.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The description an output reports is put together from its pages and
+/// reported once its last byte is in, and a status playing nothing clears it.
+#[test]
+fn an_output_reports_the_description_it_plays_in_pages() {
+    let mut h = command_device(141);
+    let uid = h.sender;
+    let sdp: Vec<u8> = (0..1500).map(|i| b'a' + (i % 26) as u8).collect();
+    h.feed_proto(
+        op::V2IP_SINK_SDP,
+        0x2E,
+        &description_page(uid, 1500, 0, &sdp[..1024]),
+    );
+    assert!(h.device().v2ip_sink_description.is_none(), "reported early");
+    h.feed_proto(
+        op::V2IP_SINK_SDP,
+        0x2E,
+        &description_page(uid, 1500, 1024, &sdp[1024..]),
+    );
+    let want = String::from_utf8(sdp).expect("ascii");
+    assert_eq!(h.device().v2ip_sink_description.as_deref(), Some(&*want));
+    assert_eq!(descriptions(&h), [Some(want.clone())]);
+
+    let mut playing = sink_sdp_report(uid);
+    h.feed_proto(op::V2IP_SINK_SDP, 0x2E, &playing);
+    assert_eq!(h.device().v2ip_sink_description.as_deref(), Some(&*want));
+    playing[20] &= !V2ipSdpFlag::ACTIVE.bits();
+    h.feed_proto(op::V2IP_SINK_SDP, 0x2E, &playing);
+    assert_eq!(h.device().v2ip_sink_description, None);
+    assert_eq!(descriptions(&h), [Some(want), None]);
+}
+
+/// A page that does not continue the description drops the pages received,
+/// and a description is started only at offset 0, by the output itself, for
+/// 1 to 2048 bytes.
+#[test]
+fn a_description_page_out_of_turn_drops_the_pages() {
+    let feed = |h: &mut Harness, p: &[u8]| h.feed_proto(op::V2IP_SINK_SDP, 0x2E, p);
+    let mut h = command_device(142);
+    let uid = h.sender;
+
+    // Each case below would complete a description if the rule it breaks
+    // were not checked, so none can pass on the back of another's drop.
+    //
+    // Out of order, then a page that would have continued it.
+    feed(&mut h, &description_page(uid, 6, 0, b"ab"));
+    feed(&mut h, &description_page(uid, 6, 4, b"cdef"));
+    feed(&mut h, &description_page(uid, 6, 2, b"cdef"));
+    // Another length.
+    feed(&mut h, &description_page(uid, 6, 0, b"ab"));
+    feed(&mut h, &description_page(uid, 4, 2, b"cd"));
+    // Past the end of the description.
+    feed(&mut h, &description_page(uid, 4, 0, b"ab"));
+    feed(&mut h, &description_page(uid, 4, 2, b"cde"));
+    // Started anywhere but 0, or with no room in the frame for its text.
+    feed(&mut h, &description_page(uid, 1, 1, b"b"));
+    let mut short = description_page(uid, 1, 0, b"ab");
+    short.pop();
+    feed(&mut h, &short);
+    // Too long or empty a description, and a page naming someone else.
+    feed(&mut h, &description_page(uid, 2049, 0, b"ab"));
+    feed(&mut h, &description_page(uid, 0, 0, b""));
+    feed(&mut h, &description_page(uid_n(0x77), 2, 0, b"ab"));
+    // A page header cut short.
+    feed(&mut h, &description_page(uid, 2, 0, b"ab")[..27]);
+    assert!(descriptions(&h).is_empty(), "{:?}", h.events);
+
+    // Restarting at 0 starts afresh.
+    feed(&mut h, &description_page(uid, 4, 0, b"xx"));
+    feed(&mut h, &description_page(uid, 4, 0, b"ab"));
+    feed(&mut h, &description_page(uid, 4, 2, b"cd"));
+    assert_eq!(descriptions(&h), [Some("abcd".to_owned())]);
+
+    let mut h = command_device(143);
+    let uid = h.sender;
+    feed(&mut h, &description_page(uid, 2048, 0, &[b'z'; 1024]));
+    feed(&mut h, &description_page(uid, 2048, 1024, &[b'z'; 1024]));
+    assert_eq!(descriptions(&h), [Some("z".repeat(2048))]);
+}
+
+/// A description whose pages come more than 5 s apart is dropped.
+#[test]
+fn a_description_page_after_5s_drops_the_pages() {
+    let mut h = command_device(144);
+    let uid = h.sender;
+    let start = Instant::now();
+    let page = |offset, text: &[u8]| description_page(uid, 4, offset, text);
+    h.feed_full(uid, op::V2IP_SINK_SDP, 0x2E, &page(0, b"ab"), start);
+    h.feed_full(
+        uid,
+        op::V2IP_SINK_SDP,
+        0x2E,
+        &page(2, b"cd"),
+        start + Duration::from_millis(5001),
+    );
+    assert!(descriptions(&h).is_empty());
+
+    h.feed_full(uid, op::V2IP_SINK_SDP, 0x2E, &page(0, b"ab"), start);
+    h.feed_full(
+        uid,
+        op::V2IP_SINK_SDP,
+        0x2E,
+        &page(2, b"cd"),
+        start + Duration::from_secs(5),
+    );
+    assert_eq!(descriptions(&h), [Some("abcd".to_owned())]);
+}
+
+/// A unit says it can be located in bit 16 of its status flags, and that it
+/// is being located in bit 17.
+#[test]
+fn a_unit_reports_whether_it_is_located() {
+    let mut h = command_device(145);
+    let report = |h: &mut Harness, flags: u32| {
+        let mut p = flags.to_le_bytes().to_vec();
+        p.resize(104, 0);
+        h.feed_proto(op::SYS_UNIT_STATUS, 0x2C, &p);
+        h.device()
+            .unit_status
+            .clone()
+            .expect("no unit status")
+            .flags
+    };
+    let f = report(&mut h, 1 << 16);
+    assert!(f.has(UnitFlag::LOCATE_SUPPORTED) && !f.has(UnitFlag::LOCATE));
+    let f = report(&mut h, 1 << 17);
+    assert!(f.has(UnitFlag::LOCATE) && !f.has(UnitFlag::LOCATE_SUPPORTED));
 }

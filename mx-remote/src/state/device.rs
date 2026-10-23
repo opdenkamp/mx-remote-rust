@@ -22,6 +22,17 @@ use crate::wire::{
 
 use super::bay::Bay;
 
+/// A session description arriving in pages, as far as it has got.
+#[derive(Clone, Debug)]
+pub(crate) struct SdpPages {
+    /// The length of the whole description.
+    pub(crate) total: u16,
+    /// The bytes received so far, from offset 0.
+    pub(crate) data: Vec<u8>,
+    /// When the last page arrived.
+    pub(crate) at: Instant,
+}
+
 /// How long a device below [`MODERN_PROTOCOL`] may stay silent before it
 /// counts as offline.
 const SILENCE_LIMIT: Duration = Duration::from_secs(180);
@@ -132,6 +143,11 @@ pub(crate) struct Device {
     pub(crate) unit_status: Option<UnitStatus>,
     /// What the output last reported playing from a session description.
     pub(crate) v2ip_sink_sdp: Option<V2ipSinkSdp>,
+    /// The session description the output last reported playing, `None`
+    /// until it has, and once it reports playing none.
+    pub(crate) v2ip_sink_description: Option<String>,
+    /// The pages of a description the output is still sending.
+    pub(crate) v2ip_sink_description_pages: Option<SdpPages>,
     pub(crate) v2ip_privacy: Option<V2ipPrivacy>,
     pub(crate) osd_sync: Option<OsdSync>,
     pub(crate) osd_sync_report: Option<OsdSyncReport>,
@@ -196,6 +212,8 @@ impl Device {
             v2ip_downmix: None,
             unit_status: None,
             v2ip_sink_sdp: None,
+            v2ip_sink_description: None,
+            v2ip_sink_description_pages: None,
             v2ip_privacy: None,
             osd_sync: None,
             osd_sync_report: None,
@@ -1176,6 +1194,21 @@ impl Device {
         ev.push(Event::V2ipSinkSdpChanged {
             device: self.uid,
             sdp,
+        });
+    }
+
+    pub(crate) fn set_v2ip_sink_description(
+        &mut self,
+        description: Option<String>,
+        ev: &mut Vec<Event>,
+    ) {
+        if self.v2ip_sink_description == description {
+            return;
+        }
+        self.v2ip_sink_description.clone_from(&description);
+        ev.push(Event::V2ipSinkDescriptionChanged {
+            device: self.uid,
+            description,
         });
     }
 
