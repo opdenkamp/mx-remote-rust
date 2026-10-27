@@ -284,6 +284,10 @@ fn a_mesh_write_is_checked_before_it_is_sent() {
             mxr_result_t::MXR_ERR_NOT_FOUND
         );
         assert_eq!(
+            mxr_confirm_v2ip_vlan(handle, unknown),
+            mxr_result_t::MXR_ERR_NOT_FOUND
+        );
+        assert_eq!(
             mxr_set_v2ip_source_filter(handle, unknown, ptr::null(), 1),
             mxr_result_t::MXR_ERR_INVALID_ARGUMENT
         );
@@ -1382,6 +1386,59 @@ fn the_downmix_calls_check_their_arguments_first() {
     // SAFETY: a live handle and an initialised struct.
     let rc = unsafe { mxr_set_v2ip_downmix(remote, uid_n(9), &most) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND, "the most of each");
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// A 4:2:0 write needs a known sink, so one never heard from is not found.
+#[test]
+fn a_skip_420_write_to_an_unknown_sink_is_not_found() {
+    let remote = client(c"abi-skip-420", c"00000024.00000000.00000000.000000af");
+
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_skip_420(remote, uid_n(9), true) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// A marking above 63 is the caller's mistake before the device is looked for.
+#[test]
+fn a_dscp_write_checks_its_values_before_the_device() {
+    let remote = client(c"abi-dscp", c"00000026.00000000.00000000.000000af");
+
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_dscp(remote, uid_n(9), 46, 64, 26) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_dscp(remote, uid_n(9), 46, 34, 26) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
+/// The locale calls refuse a caller's mistake as an argument error before they look for the device.
+#[test]
+fn the_locale_calls_check_their_arguments_first() {
+    let remote = client(c"abi-locale", c"00000023.00000000.00000000.000000af");
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_locale(remote, uid_n(9), ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut out = 0u8;
+    // SAFETY: a live handle and a writable byte.
+    let rc = unsafe { mxr_v2ip_locale(remote, uid_n(9), &mut out) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_locale(remote, uid_n(9), MXR_V2IP_LOCALE_UNKNOWN) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_set_v2ip_locale(remote, uid_n(9), MXR_V2IP_LOCALE_UNKNOWN - 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };

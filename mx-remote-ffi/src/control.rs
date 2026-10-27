@@ -628,6 +628,29 @@ pub unsafe extern "C" fn mxr_set_mesh_setup_completed(
     })
 }
 
+/// Confirms the VLAN configuration a OneIP device runs pending, as its mesh
+/// controller does, echoing what the device last reported.
+///
+/// `MXR_ERR_NOT_FOUND` for a device not heard from, `MXR_ERR_UNSUPPORTED` for
+/// one without VLANs, `MXR_ERR_NOT_REPORTED` before it reports its
+/// configuration, and `MXR_ERR_INVALID_ARGUMENT` while it has no change
+/// pending.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_confirm_v2ip_vlan(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.confirm_v2ip_vlan(device.into()))
+    })
+}
+
 /// Sets the installer id of every unit that hears it.
 ///
 /// # Safety
@@ -1388,6 +1411,20 @@ pub unsafe extern "C" fn mxr_send_v2ip_detect_bays(remote: *const mxr_remote_t) 
     with(handle, |r| from_control(r.remote.send_v2ip_detect_bays()))
 }
 
+/// Tells every unit to flash the latest video processor image it holds, as a
+/// mesh controller's `/v2ip/upgrade/1` does. A unit flashes only when its
+/// running image differs; `mxr_upgrade_unit_fpga()` forces one unit.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_upgrade_all_fpga(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| from_control(r.remote.upgrade_all_fpga()))
+}
+
 /// Tells every unit to check its update server for new firmware now.
 ///
 /// # Safety
@@ -1494,6 +1531,58 @@ pub unsafe extern "C" fn mxr_set_v2ip_auto_scaling(
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
         from_control(r.remote.set_v2ip_auto_scaling(device.into(), enabled))
+    })
+}
+
+/// Has a OneIP sink skip its check that the display lists 4:2:0, or check
+/// again. The write restates the sink's match-source setting as it last
+/// reported it, as one bit marks both valid. Otherwise as
+/// `mxr_set_v2ip_auto_scaling()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_skip_420(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    enabled: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_skip_420(device.into(), enabled))
+    })
+}
+
+/// Marks the video, audio and ancillary streams a OneIP source sends with
+/// these DSCP values, all three at once.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a value above 63 and `MXR_ERR_UNSUPPORTED`
+/// for a device that does not announce a source, sending nothing in either
+/// case. Nothing acknowledges the frame; `mxr_v2ip_details()` reads the
+/// marking written until the device reports its own.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_dscp(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    video: u8,
+    audio: u8,
+    anc: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    let marking = mx_remote::V2ipDscpConfig {
+        video: Some(video),
+        audio: Some(audio),
+        anc: Some(anc),
+    };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_dscp(device.into(), marking))
     })
 }
 
@@ -1856,6 +1945,29 @@ pub unsafe extern "C" fn mxr_set_v2ip_downmix(
             );
         };
         from_control(r.remote.set_v2ip_downmix(device.into(), (*downmix).into()))
+    })
+}
+
+/// Sets the locale a OneIP device runs, by its number: its position in the
+/// list of locales the device's `/system/locale` names. Sent also to a device
+/// that hasn't reported its settings yet, as one takes a locale it knows.
+/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for `MXR_V2IP_LOCALE_UNKNOWN`,
+/// and `MXR_ERR_UNSUPPORTED` for a device whose settings arrived without a
+/// locale. Otherwise as `mxr_set_v2ip_device_setting()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_locale(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    locale: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_locale(device.into(), locale))
     })
 }
 

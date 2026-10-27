@@ -90,3 +90,12 @@ pub const TIME_ZONE_RULE_LEN: usize = 64;
 /// The bit of a OneIP settings block's second valid word that carries the
 /// downmix.
 pub(crate) const V2IP_SETTING_EXT_DOWNMIX: u32 = 1 << 0;
+
+/// The bit of a OneIP settings block's second valid word that carries the
+/// locale.
+pub(crate) const V2IP_SETTING_EXT_LOCALE: u32 = 1 << 1;
+
+/// The locale a OneIP device reports for a stored locale its firmware doesn't
+/// know. Every other value numbers a locale, and keeps its meaning across
+/// firmware versions.
+pub const V2IP_LOCALE_UNKNOWN: u8 = 255;

@@ -19,9 +19,10 @@ use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n,
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
     EdidProfileChange, EdidRequest, KeyTransmitRequest, MeshOperation, StreamKind, UnitNetConfig,
-    V2ipAudioFormat, V2ipDownmix, V2ipOutputMode, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget,
-    V2ipStreamSource, V2ipStreamSources, V2ipVlan, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX,
+    V2ipAudioFormat, V2ipDownmix, V2ipDscpConfig, V2ipOutputMode, V2ipPtpMessages, V2ipRoute,
+    V2ipRouteTarget, V2ipStreamSource, V2ipStreamSources, V2ipVlan, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
+    SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX,
     V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
 use crate::wire::{
@@ -34,7 +35,8 @@ use crate::wire::{
     V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
     V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
     V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
-    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
+    V2IP_LOCALE_UNKNOWN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX,
+    V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -2409,6 +2411,81 @@ fn a_scaling_write_carries_nothing_but_the_scaling_block() {
     );
 }
 
+/// A marking write carries all three streams behind their set bits, and none
+/// of the configuration's other fields.
+#[test]
+fn a_dscp_write_carries_the_three_markings_and_nothing_else() {
+    let f = Fixture::new();
+    let source = uid_n(224);
+    f.everything(source, 0x2F, "DS0001");
+    f.connect();
+
+    f.tap.clear();
+    let marking = V2ipDscpConfig {
+        video: Some(46),
+        audio: Some(34),
+        anc: Some(26),
+    };
+    f.remote
+        .set_v2ip_dscp(source, marking)
+        .expect("a source with every marking in range");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        u16::from_le_bytes([frame[20], frame[21]]),
+        op::V2IP_DEVICE_CFG.0
+    );
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 88);
+    assert_eq!(&p[..16], source.as_bytes());
+    assert!(
+        p[16..40].iter().all(|b| *b == 0),
+        "a source address would repoint the encoder"
+    );
+    assert!(
+        !(V2IP_SOURCE_RATE_MIN..=V2IP_SOURCE_RATE_MAX).contains(&p[40]),
+        "a rate would replace the encoder's"
+    );
+    assert_eq!(
+        &p[41..44],
+        &[V2IP_DSCP_SET | 46, V2IP_DSCP_SET | 34, V2IP_DSCP_SET | 26]
+    );
+    assert!(
+        p[44..88].iter().all(|b| *b == 0),
+        "a scaling or tiling write"
+    );
+    assert_eq!(
+        f.remote.v2ip_details(source).map(|d| d.dscp),
+        Some(marking),
+        "the copy takes the marking once it is sent"
+    );
+
+    f.tap.clear();
+    for refused in [
+        V2ipDscpConfig {
+            video: Some(64),
+            ..marking
+        },
+        V2ipDscpConfig {
+            anc: None,
+            ..marking
+        },
+    ] {
+        assert!(matches!(
+            f.remote.set_v2ip_dscp(source, refused),
+            Err(ControlError::InvalidRequest(_))
+        ));
+    }
+    assert!(f.tap.frames().is_empty(), "a refused write was sent");
+    let sink = uid_n(225);
+    testcard_sink(&f, sink, 0x2F, "DS0002", V2ipFpgaFeature::RTOS.bits());
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.set_v2ip_dscp(sink, marking),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused write was sent");
+}
+
 /// Clearing a mode is spelled one way on a write and the other way in a
 /// report, and the cache has to hold the report's spelling.
 ///
@@ -2472,6 +2549,63 @@ fn clearing_a_mode_is_written_set_and_cached_clear() {
         None,
         "the cache holds a mode the sink will not report"
     );
+}
+
+/// One bit marks both options valid, so a 4:2:0 write restates match-source as the sink reported it.
+#[test]
+fn a_skip_420_write_keeps_the_sinks_match_source() {
+    let f = Fixture::new();
+    let (matching, plain) = (uid_n(224), uid_n(225));
+    for (uid, serial, flags) in [
+        (
+            matching,
+            "SC0010",
+            SCALING_FLAG_OPTIONS2_VALID | SCALING_FLAG_MATCH_SOURCE,
+        ),
+        (
+            plain,
+            "SC0011",
+            SCALING_FLAG_OPTIONS2_VALID | SCALING_FLAG_SKIP_420,
+        ),
+    ] {
+        f.everything(uid, 0x2F, serial);
+        f.feed(
+            uid,
+            op::SYS_HELLO,
+            &hello_payload(
+                0x2F,
+                "OneIP",
+                serial,
+                "4.8.0",
+                DeviceFeature::V2IP_SINK | DeviceFeature::CONFIG_INITIALISED,
+            ),
+        );
+        let mut cfg = Cfg::addresses(uid, "239.1.2.3");
+        cfg.flags = flags;
+        f.feed(uid, op::V2IP_DEVICE_CFG, &cfg.bytes());
+    }
+    f.connect();
+
+    for (uid, skip, written) in [
+        (
+            matching,
+            true,
+            SCALING_FLAG_OPTIONS2_VALID | SCALING_FLAG_SKIP_420 | SCALING_FLAG_MATCH_SOURCE,
+        ),
+        (plain, false, SCALING_FLAG_OPTIONS2_VALID),
+    ] {
+        f.tap.clear();
+        f.remote
+            .set_v2ip_skip_420(uid, skip)
+            .expect("a sink above the floor");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(p[60], written, "{uid}");
+        assert_eq!(u16::from_le_bytes([p[56], p[57]]), 0, "no mode");
+        let scaling = f.remote.v2ip_details(uid).expect("details").scaling;
+        assert_eq!(scaling.skip_420(), Some(skip));
+        assert_eq!(scaling.match_source(), Some(uid == matching));
+    }
 }
 
 /// Turning automatic scaling on leaves a configured mode where it is.
@@ -3723,6 +3857,99 @@ fn a_vlan_write_the_device_would_not_take_is_refused() {
         .set_v2ip_vlan(no_sfp, write(3, V2IP_VLAN_ID_MAX))
         .expect("the highest id and the last port are taken");
     assert_eq!(f.tap.frames().len(), 1);
+}
+
+/// A confirmation echoes the pending configuration the device reported, its
+/// trunk flag included, with CONFIRM in place of what only a device reports.
+#[test]
+fn a_vlan_confirmation_echoes_what_the_device_runs() {
+    let f = Fixture::new();
+    let uid = uid_n(233);
+    let pending =
+        (V2ipVlanFlag::VALID | V2ipVlanFlag::TRUNK | V2ipVlanFlag::PENDING | V2ipVlanFlag::HAS_SFP)
+            .bits();
+    vlan_device(
+        &f,
+        uid,
+        "VL0005",
+        &vlan_block(pending, 0x0123, [0x0456, 0x0789, 0x0ABC], 2, 3, 41),
+    );
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .confirm_v2ip_vlan(uid)
+        .expect("the device runs a change pending");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::V2IP_DEVICE_CFG.0.to_le_bytes());
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 192);
+    assert_eq!(&p[..16], uid.as_bytes());
+    assert_eq!(
+        &p[176..],
+        &[0x0B, 0x00, 0x23, 0x01, 0x56, 0x04, 0x89, 0x07, 0xBC, 0x0A, 2, 0, 0, 0, 0, 0],
+        "the VLAN block"
+    );
+
+    let untrunked = uid_n(234);
+    let pending = (V2ipVlanFlag::VALID | V2ipVlanFlag::PENDING).bits();
+    vlan_device(
+        &f,
+        untrunked,
+        "VL0006",
+        &vlan_block(pending, 7, [0; 3], 0, 1, 50),
+    );
+    f.tap.clear();
+    f.remote
+        .confirm_v2ip_vlan(untrunked)
+        .expect("the device runs a change pending");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        &frame[HEADER_LEN + 176..HEADER_LEN + 178],
+        &[0x09, 0x00],
+        "a trunk the device does not run was confirmed"
+    );
+}
+
+/// Only a pending configuration the device reported is confirmed.
+#[test]
+fn a_vlan_confirmation_needs_a_pending_change() {
+    let f = Fixture::new();
+    let settled = uid_n(235);
+    vlan_device(
+        &f,
+        settled,
+        "VL0007",
+        &vlan_block(V2ipVlanFlag::VALID.bits(), 5, [0; 3], 0, 1, 0),
+    );
+    let unreported = uid_n(236);
+    f.feed(
+        unreported,
+        op::SYS_HELLO,
+        &hello_payload(0x2B, "OneIP", "VL0008", "4.8.0", DeviceFeature::VLAN),
+    );
+    let without = uid_n(237);
+    f.everything(without, 0x2B, "VL0009");
+    f.connect();
+    f.tap.clear();
+
+    assert!(matches!(
+        f.remote.confirm_v2ip_vlan(settled),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        f.remote.confirm_v2ip_vlan(unreported),
+        Err(ControlError::NotReported(_))
+    ));
+    assert!(matches!(
+        f.remote.confirm_v2ip_vlan(without),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        f.remote.confirm_v2ip_vlan(uid_n(238)),
+        Err(ControlError::UnknownDevice(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a refused confirmation was sent");
 }
 
 /// Announces `uid` as a sink on `protocol` whose video processor reports
@@ -5220,6 +5447,139 @@ fn another_senders_downmix_keeps_the_devices_state() {
     );
 }
 
+/// The second valid word's bit for the locale.
+const EXT_LOCALE: u32 = 1 << 1;
+
+/// [`downmix_report`] with `locale` behind the downmix.
+fn locale_report(cfg: &Cfg, valid_ext: u32, locale: u8) -> Vec<u8> {
+    let mut p = downmix_report(cfg, valid_ext);
+    p[241] = locale;
+    p
+}
+
+/// A block too short for the locale says nothing; one without its bit says the device has none.
+#[test]
+fn a_locale_is_read_from_a_block_that_holds_it() {
+    let f = Fixture::new();
+    let uid = uid_n(253);
+    f.everything(uid, 0x30, "LC0001");
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let report = |valid_ext: u32, locale: u8, len: usize| {
+        let mut p = locale_report(&cfg, valid_ext, locale);
+        p.truncate(len);
+        p
+    };
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, 1, 241));
+    assert_eq!(f.remote.v2ip_locale(uid), None);
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, 1, 242));
+    assert_eq!(f.remote.v2ip_locale(uid), Some(1));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, 0, 241));
+    assert_eq!(
+        f.remote.v2ip_locale(uid),
+        Some(1),
+        "a block too short to say"
+    );
+    f.feed(
+        uid,
+        op::V2IP_DEVICE_CFG,
+        &report(EXT_LOCALE, V2IP_LOCALE_UNKNOWN, 242),
+    );
+    assert_eq!(f.remote.v2ip_locale(uid), Some(V2IP_LOCALE_UNKNOWN));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(1, 1, 242));
+    assert_eq!(f.remote.v2ip_locale(uid), None);
+}
+
+/// A device takes a locale before it reports its settings, so the write goes to one that hasn't too.
+#[test]
+fn a_locale_write_carries_the_locale_alone() {
+    let f = Fixture::new();
+    let (reported, pending) = (uid_n(253), uid_n(252));
+    f.everything(reported, 0x30, "LC0002");
+    f.everything(pending, 0x30, "LC0003");
+    f.feed(
+        reported,
+        op::V2IP_DEVICE_CFG,
+        &locale_report(&Cfg::addresses(reported, "239.1.2.3"), EXT_LOCALE | 1, 0),
+    );
+    f.connect();
+
+    for uid in [reported, pending] {
+        f.tap.clear();
+        f.remote.set_v2ip_locale(uid, 1).expect("a known device");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(p.len(), 248);
+        assert_eq!(&p[..16], uid.as_bytes());
+        assert_eq!(&p[128..132], &[0; 4], "a setting of the first valid word");
+        assert_eq!(&p[232..242], &[2, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(f.remote.v2ip_locale(uid), Some(1));
+    }
+}
+
+/// A device ignores a locale it doesn't know, and one whose firmware has none ignores every locale.
+#[test]
+fn a_locale_the_device_would_not_take_is_not_sent() {
+    let f = Fixture::new();
+    let (has, lacks) = (uid_n(253), uid_n(255));
+    f.everything(has, 0x30, "LC0004");
+    f.everything(lacks, 0x30, "LC0005");
+    f.feed(
+        has,
+        op::V2IP_DEVICE_CFG,
+        &locale_report(&Cfg::addresses(has, "239.1.2.3"), EXT_LOCALE, 0),
+    );
+    f.feed(
+        lacks,
+        op::V2IP_DEVICE_CFG,
+        &locale_report(&Cfg::addresses(lacks, "239.1.2.4"), 0, 0),
+    );
+    f.tap.clear();
+
+    assert!(matches!(
+        f.remote.set_v2ip_locale(has, V2IP_LOCALE_UNKNOWN),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        f.remote.set_v2ip_locale(lacks, 0),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty());
+}
+
+/// A device without locales ignores another sender's write, so only one that reports a locale takes it.
+#[test]
+fn another_senders_locale_reaches_a_device_that_has_one() {
+    let f = Fixture::new();
+    let (uid, controller) = (uid_n(253), uid_n(255));
+    f.everything(uid, 0x30, "LC0006");
+    f.feed(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x30, "Ctrl", "LC0007", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let write = locale_report(&cfg, EXT_LOCALE, 1);
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &locale_report(&cfg, 0, 0));
+    f.feed(controller, op::V2IP_DEVICE_CFG, &write);
+    assert_eq!(f.remote.v2ip_locale(uid), None, "a device that has none");
+
+    f.feed(
+        uid,
+        op::V2IP_DEVICE_CFG,
+        &locale_report(&cfg, EXT_LOCALE, 0),
+    );
+    f.feed(controller, op::V2IP_DEVICE_CFG, &locale_report(&cfg, 0, 1));
+    assert_eq!(
+        f.remote.v2ip_locale(uid),
+        Some(0),
+        "a write without the bit"
+    );
+    f.feed(controller, op::V2IP_DEVICE_CFG, &write);
+    assert_eq!(f.remote.v2ip_locale(uid), Some(1));
+}
+
 /// A third-party message goes to every device at the lowest stamp, with the
 /// flag byte, the three identifying bytes and the payload as given.
 #[test]
@@ -5570,6 +5930,26 @@ fn a_bay_detection_goes_to_every_unit() {
     );
 }
 
+/// A mesh-wide video processor upgrade goes to every unit: 0x2C, empty,
+/// stamped 0x06, to both endpoints.
+#[test]
+fn a_video_processor_upgrade_goes_to_every_unit() {
+    let f = Fixture::new();
+    f.connect();
+    f.tap.clear();
+    f.remote
+        .upgrade_all_fpga()
+        .expect("a frame every unit takes");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::V2IP_UPGRADE_FPGA.0.to_le_bytes());
+    assert_eq!(&frame[2..4], &0x06u16.to_le_bytes(), "the stamp");
+    assert_eq!(frame.len(), HEADER_LEN, "a payload");
+    assert_eq!(
+        lock(&f.remote.shared.tx).sent_on.last(),
+        Some(&Endpoints::Both)
+    );
+}
+
 /// An empty name asks the unit to reset the bay to its default. It is sent,
 /// and the bay keeps its name until the unit reports the new one in its next
 /// bay list.
@@ -5679,6 +6059,38 @@ fn a_reboot_or_factory_reset_of_every_unit_goes_to_both_endpoints() {
         .factory_reset_all()
         .expect("a frame every unit takes");
     assert_eq!(sent(&f, op::SYS_FACTORY_RESET, 0x0F), vec![0xFF]);
+}
+
+/// A unit tells the two shapes apart by their exact length: 17 bytes name the unit, 1 byte reaches every one.
+#[test]
+fn a_power_save_request_names_its_unit_or_reaches_every_one() {
+    let f = Fixture::new();
+    let uid = uid_n(226);
+    f.everything(uid, 0x30, "PS0001");
+    f.connect();
+    for (suspend, flag) in [(true, 1u8), (false, 0)] {
+        f.tap.clear();
+        f.remote
+            .request_v2ip_power_save(uid, suspend)
+            .expect("a known unit");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[20..22], &op::V2IP_POWER_SAVE.0.to_le_bytes());
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(p.len(), 17);
+        assert_eq!(&p[..16], uid.as_bytes());
+        assert_eq!(p[16], flag);
+
+        f.tap.clear();
+        f.remote
+            .request_all_v2ip_power_save(suspend)
+            .expect("a frame every unit takes");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[HEADER_LEN..], &[flag]);
+    }
+    assert!(matches!(
+        f.remote.request_v2ip_power_save(uid_n(227), true),
+        Err(ControlError::UnknownDevice(_))
+    ));
 }
 
 /// A mesh reboot is 0x28 with no payload, to both endpoints, as a mesh

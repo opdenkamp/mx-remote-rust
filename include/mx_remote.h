@@ -1308,6 +1308,12 @@
 #define MXR_V2IP_DOWNMIX_LFE_MAX 100
 
 /**
+ * The locale a OneIP device reports for a stored locale its firmware doesn't
+ * know.
+ */
+#define MXR_V2IP_LOCALE_UNKNOWN 255
+
+/**
  * The output plays a stream from a description.
  */
 #define MXR_V2IP_SDP_FLAG_ACTIVE (1 << 0)
@@ -6081,6 +6087,21 @@ mxr_result_t mxr_set_rc_settings(const mxr_remote_t *remote, const mxr_rc_settin
 mxr_result_t mxr_set_mesh_setup_completed(const mxr_remote_t *remote, bool completed);
 
 /**
+ * Confirms the VLAN configuration a OneIP device runs pending, as its mesh
+ * controller does, echoing what the device last reported.
+ *
+ * `MXR_ERR_NOT_FOUND` for a device not heard from, `MXR_ERR_UNSUPPORTED` for
+ * one without VLANs, `MXR_ERR_NOT_REPORTED` before it reports its
+ * configuration, and `MXR_ERR_INVALID_ARGUMENT` while it has no change
+ * pending.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_confirm_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t device);
+
+/**
  * Sets the installer id of every unit that hears it.
  *
  * # Safety
@@ -6525,6 +6546,17 @@ mxr_result_t mxr_send_mesh_operation(const mxr_remote_t *remote,
 mxr_result_t mxr_send_v2ip_detect_bays(const mxr_remote_t *remote);
 
 /**
+ * Tells every unit to flash the latest video processor image it holds, as a
+ * mesh controller's `/v2ip/upgrade/1` does. A unit flashes only when its
+ * running image differs; `mxr_upgrade_unit_fpga()` forces one unit.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_upgrade_all_fpga(const mxr_remote_t *remote);
+
+/**
  * Tells every unit to check its update server for new firmware now.
  *
  * # Safety
@@ -6557,6 +6589,37 @@ mxr_result_t mxr_send_monitoring_pulse(const mxr_remote_t *remote);
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_set_v2ip_auto_scaling(const mxr_remote_t *remote, mxr_uid_t device, bool enabled);
+
+/**
+ * Has a OneIP sink skip its check that the display lists 4:2:0, or check
+ * again. The write restates the sink's match-source setting as it last
+ * reported it, as one bit marks both valid. Otherwise as
+ * `mxr_set_v2ip_auto_scaling()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_skip_420(const mxr_remote_t *remote, mxr_uid_t device, bool enabled);
+
+/**
+ * Marks the video, audio and ancillary streams a OneIP source sends with
+ * these DSCP values, all three at once.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a value above 63 and `MXR_ERR_UNSUPPORTED`
+ * for a device that does not announce a source, sending nothing in either
+ * case. Nothing acknowledges the frame; `mxr_v2ip_details()` reads the
+ * marking written until the device reports its own.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_dscp(const mxr_remote_t *remote,
+                               mxr_uid_t device,
+                               uint8_t video,
+                               uint8_t audio,
+                               uint8_t anc);
 
 /**
  * Switches on/off settings of a OneIP device, all to the same value.
@@ -6739,6 +6802,20 @@ mxr_result_t mxr_set_v2ip_ptp_messages(const mxr_remote_t *remote,
 mxr_result_t mxr_set_v2ip_downmix(const mxr_remote_t *remote,
                                   mxr_uid_t device,
                                   const mxr_v2ip_downmix_t *downmix);
+
+/**
+ * Sets the locale a OneIP device runs, by its number: its position in the
+ * list of locales the device's `/system/locale` names. Sent also to a device
+ * that hasn't reported its settings yet, as one takes a locale it knows.
+ * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for `MXR_V2IP_LOCALE_UNKNOWN`,
+ * and `MXR_ERR_UNSUPPORTED` for a device whose settings arrived without a
+ * locale. Otherwise as `mxr_set_v2ip_device_setting()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_locale(const mxr_remote_t *remote, mxr_uid_t device, uint8_t locale);
 
 /**
  * Changes how every OneIP device of the mesh paces its PTP messages, with one
@@ -8156,6 +8233,20 @@ mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
  * `mxr_v2ip_downmix_t`.
  */
 mxr_result_t mxr_v2ip_downmix(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_downmix_t *out);
+
+/**
+ * Fills `out` with the locale a OneIP device runs, by its number:
+ * `MXR_V2IP_LOCALE_UNKNOWN` for a stored locale its firmware doesn't know.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` while the device reports no locale, and
+ * always for one whose firmware has none. A change is announced through
+ * `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable byte.
+ */
+mxr_result_t mxr_v2ip_locale(const mxr_remote_t *remote, mxr_uid_t uid, uint8_t *out);
 
 /**
  * Fills `out` with what a OneIP output last reported playing from a session

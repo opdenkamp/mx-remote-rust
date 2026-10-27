@@ -12,9 +12,9 @@ use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MeshControllerReport, MultiviewerStatus,
     NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry,
-    UnitStatus, V2ipDeviceSettings, V2ipDeviceStats, V2ipDownmix, V2ipPrivacy, V2ipPtpState,
-    V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
-    VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
+    UnitStatus, V2ipDeviceSettings, V2ipDeviceStats, V2ipDownmix, V2ipDscpConfig, V2ipPrivacy,
+    V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources, V2ipTestcard,
+    V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{
     BayConfig, BayFeatures, BayUid, DeviceFeature, DeviceUid, FirmwareType, Path, V2ipFpgaFeature,
@@ -182,6 +182,9 @@ pub(crate) struct Device {
     /// How the device's output mixes down to stereo, `None` while it reports
     /// no downmix.
     pub(crate) v2ip_downmix: Option<V2ipDownmix>,
+    /// The locale the device runs, by its number, `None` while it reports
+    /// none.
+    pub(crate) v2ip_locale: Option<u8>,
     /// The test card the sink last reported.
     pub(crate) v2ip_testcard: Option<V2ipTestcard>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
@@ -245,6 +248,7 @@ impl Device {
             v2ip_vlan: None,
             v2ip_ptp: None,
             v2ip_downmix: None,
+            v2ip_locale: None,
             unit_status: None,
             v2ip_sink_sdp: None,
             v2ip_sink_description: None,
@@ -1189,6 +1193,21 @@ impl Device {
         });
     }
 
+    /// Replaces the cached marking with the one a write will have left on the
+    /// device.
+    pub(crate) fn set_v2ip_dscp(&mut self, marking: V2ipDscpConfig, ev: &mut Vec<Event>) {
+        let mut details = self.v2ip_details.unwrap_or_default();
+        if details.dscp == marking {
+            return;
+        }
+        details.dscp = marking;
+        self.v2ip_details = Some(details);
+        ev.push(Event::V2ipDetailsChanged {
+            device: self.uid,
+            details,
+        });
+    }
+
     /// Records the processor's feature mask, which only ever gains bits.
     ///
     /// The caller passes a non-empty mask from a frame the device sent about
@@ -1347,6 +1366,17 @@ impl Device {
         ev.push(Event::V2ipDownmixChanged {
             device: self.uid,
             downmix,
+        });
+    }
+
+    pub(crate) fn set_v2ip_locale(&mut self, locale: Option<u8>, ev: &mut Vec<Event>) {
+        if self.v2ip_locale == locale {
+            return;
+        }
+        self.v2ip_locale = locale;
+        ev.push(Event::V2ipLocaleChanged {
+            device: self.uid,
+            locale,
         });
     }
 

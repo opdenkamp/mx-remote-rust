@@ -21,6 +21,7 @@ use crate::wire::{
     V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode,
     V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
     MESH_OPERATION_SIZE, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX,
+    V2IP_SETTING_EXT_LOCALE,
 };
 
 use super::Rx;
@@ -610,6 +611,8 @@ const V2IP_SINK_ROTATION_STEP_AT: usize = 12;
 const V2IP_VALID_EXT_AT: usize = V2IP_PTP_MESSAGES_AT + 16;
 const V2IP_DOWNMIX_AT: usize = V2IP_VALID_EXT_AT + 4;
 const V2IP_DOWNMIX_SIZE: usize = 5;
+/// The locale's number, behind the downmix.
+const V2IP_LOCALE_AT: usize = V2IP_DOWNMIX_AT + V2IP_DOWNMIX_SIZE;
 
 /// Reads a settings block, the last block of its frame, and clears the bits
 /// of `valid` whose values it is too short to hold: the three PTP intervals as
@@ -849,6 +852,18 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
                 device.set_v2ip_downmix(carried.then_some(frame), ev);
             } else if let Some(reported) = device.v2ip_downmix.filter(|_| carried) {
                 device.set_v2ip_downmix(Some(reported.written(frame)), ev);
+            }
+        }
+    }
+
+    // A device without locales ignores a write of one, so only one that reports a locale takes it.
+    if let Some(&locale) = p.get(V2IP_LOCALE_AT) {
+        let carried = u32_at(p, V2IP_VALID_EXT_AT) & V2IP_SETTING_EXT_LOCALE != 0;
+        if let Some(device) = state.device_mut(subject) {
+            if subject == rx.sender() {
+                device.set_v2ip_locale(carried.then_some(locale), ev);
+            } else if carried && device.v2ip_locale.is_some() {
+                device.set_v2ip_locale(Some(locale), ev);
             }
         }
     }

@@ -1560,6 +1560,31 @@ pub unsafe extern "C" fn mxr_v2ip_downmix(
     })
 }
 
+/// Fills `out` with the locale a OneIP device runs, by its number:
+/// `MXR_V2IP_LOCALE_UNKNOWN` for a stored locale its firmware doesn't know.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` while the device reports no locale, and
+/// always for one whose firmware has none. A change is announced through
+/// `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable byte.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_locale(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r.remote.v2ip_locale(uid.into());
+        // SAFETY: the caller guarantees a writable byte or null.
+        unsafe { fill(r, uid, out, "locale", value) }
+    })
+}
+
 /// The longest session description a OneIP output takes, in bytes.
 pub const MXR_V2IP_SDP_MAX: usize = 2048;
 /// Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.

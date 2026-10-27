@@ -16,7 +16,10 @@ use crate::types::{
     VIDEO_WALL_CLEARED,
 };
 
-use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX};
+use super::constants::{
+    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_SET, V2IP_SETTING_EXT_DOWNMIX,
+    V2IP_SETTING_EXT_LOCALE,
+};
 use super::enums::{
     EdidProfile, MxrSignalType, RcAction, RcKey, UnitCommandFlag, UnitCommandKind,
     V2ipDeviceSetting,
@@ -615,6 +618,23 @@ pub(crate) fn build_v2ip_scaling(
     p
 }
 
+/// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that marks a source's three
+/// streams, video, audio and ancillary at 41, 42 and 43, each with
+/// [`V2IP_DSCP_SET`]: a receiver applies a marking only when all three carry
+/// it.
+///
+/// The 88 bytes of [`build_v2ip_scaling`], with the source block zeroed, the
+/// rate out of range and no scaling validity bit, so nothing else applies.
+pub(crate) fn build_v2ip_dscp(target: DeviceUid, marking: [u8; 3]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(88);
+    p.extend_from_slice(target.as_bytes());
+    p.resize(40, 0);
+    p.push(V2IP_RATE_UNSET);
+    p.extend(marking.iter().map(|m| V2IP_DSCP_SET | m));
+    p.resize(88, 0);
+    p
+}
+
 /// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's
 /// settings, leaving every other field of the configuration alone.
 ///
@@ -718,6 +738,19 @@ pub(crate) fn build_v2ip_downmix(target: DeviceUid, downmix: &V2ipDownmix) -> Ve
     p[236] = downmix.mode.to_wire();
     p[237] = downmix.level.to_wire();
     p[238] = downmix.lfe;
+    p
+}
+
+/// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's
+/// locale, leaving every other setting alone.
+///
+/// 248 bytes, as [`build_v2ip_downmix`] builds them, with the second valid
+/// word at 232 carrying the locale alone and its number at 241.
+pub(crate) fn build_v2ip_locale(target: DeviceUid, locale: u8) -> Vec<u8> {
+    let mut p = build_v2ip_device_settings(target, &V2ipDeviceSettings::default());
+    p.resize(248, 0);
+    p[232..236].copy_from_slice(&V2IP_SETTING_EXT_LOCALE.to_le_bytes());
+    p[241] = locale;
     p
 }
 

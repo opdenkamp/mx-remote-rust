@@ -33,13 +33,14 @@ use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, AudioFeatures, BayMirrorStatus, HiddenStatus, MeshOperation,
     MultiviewerStatus, PowerStatus, RcSettings, ThirdPartyVendor, UnitNetConfig, V2ipAudioFormat,
-    V2ipDeviceSettings, V2ipDownmix, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages,
-    V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
-    V2ipTestcard, V2ipTilingConfig, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
-    MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, RC_STATUS_MAX, RC_STATUS_NAME_MAX,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    THIRD_PARTY_PAYLOAD_MAX, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX,
-    V2IP_SOURCE_FILTER_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig, V2ipOutputMode, V2ipPowerSaveSchedule,
+    V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources,
+    V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VideoWallOp,
+    VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, RC_STATUS_MAX,
+    RC_STATUS_NAME_MAX, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,
+    SCALING_FLAG_SKIP_420, THIRD_PARTY_PAYLOAD_MAX, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX,
+    V2IP_SINK_ROTATION_MAX, V2IP_SOURCE_FILTER_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -48,18 +49,18 @@ use crate::wire::{
     build_rc_action, build_rc_key, build_rc_settings, build_set_bay_name, build_set_volume,
     build_sink_sdp_command, build_sink_sdp_pages, build_stats_request, build_target_only,
     build_third_party, build_tiling, build_time_zone, build_unit_command,
-    build_v2ip_device_settings, build_v2ip_downmix, build_v2ip_manual_source_switch,
-    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_frames,
-    build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan, build_video_wall,
-    mv_cmd_payload, mv_sub, op, osd_kind, sdp_type, testcard_part, testcard_type, Addressee,
-    BayUid, DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
-    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode,
-    OsdMessageFlag, OsdMessagePriority, RcAction, RcKey, SendError, StreamAddr, UnitCommandFlag,
-    UnitCommandKind, UnitFlag, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode,
-    V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
-    TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
-    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_device_settings, build_v2ip_downmix, build_v2ip_dscp, build_v2ip_locale,
+    build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_settings_all,
+    build_v2ip_source_frames, build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan,
+    build_video_wall, mv_cmd_payload, mv_sub, op, osd_kind, sdp_type, testcard_part, testcard_type,
+    Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio,
+    MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode,
+    MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode,
+    MxrSignalType, Opcode, OsdMessageFlag, OsdMessagePriority, RcAction, RcKey, SendError,
+    StreamAddr, UnitCommandFlag, UnitCommandKind, UnitFlag, V2ipDeviceSetting, V2ipFpgaFeature,
+    V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
+    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_LOCALE_UNKNOWN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1136,6 +1137,37 @@ impl Remote {
         Ok(())
     }
 
+    /// Asks a OneIP unit to enter power save, or to leave it: 0x41 naming the
+    /// unit. It takes the request only from its mesh controller or a
+    /// management application; one that can't power down ignores it.
+    pub fn request_v2ip_power_save(
+        &self,
+        device: DeviceUid,
+        suspend: bool,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            let mut payload = build_target_only(d.uid);
+            payload.push(u8::from(suspend));
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_POWER_SAVE,
+                payload,
+            ))
+        })
+    }
+
+    /// Asks every OneIP unit to enter power save, or to leave it: 0x41 with
+    /// the flag alone, as a mesh controller sends it without a target.
+    pub fn request_all_v2ip_power_save(&self, suspend: bool) -> Result<(), ControlError> {
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::V2IP_POWER_SAVE,
+            &[u8::from(suspend)],
+        )?;
+        Ok(())
+    }
+
     /// Asks every unit to factory-reset and reboot, as a unit's own
     /// `/network/remote/factoryreset` does before it resets itself: the
     /// single byte 0xFF, to both endpoints.
@@ -1840,6 +1872,18 @@ impl Remote {
         Ok(())
     }
 
+    /// Tells every unit to flash the latest video processor image it holds,
+    /// as a mesh controller's `/v2ip/upgrade/1` does.
+    ///
+    /// A unit takes it only from management, and flashes only when its
+    /// running image differs: the frame carries no force.
+    /// [`Remote::upgrade_unit_fpga`] forces one unit.
+    pub fn upgrade_all_fpga(&self) -> Result<(), ControlError> {
+        self.shared
+            .send(&Addressee::Broadcast, op::V2IP_UPGRADE_FPGA, &[])?;
+        Ok(())
+    }
+
     /// Tells every unit to check its update server for new firmware now.
     pub fn send_monitoring_pulse(&self) -> Result<(), ControlError> {
         self.shared
@@ -1908,6 +1952,33 @@ impl Remote {
                 flags: (cached.flags & !SCALING_FLAG_AUTO_SCALING)
                     | SCALING_FLAG_OPTIONS_VALID
                     | (written & SCALING_FLAG_AUTO_SCALING),
+                ..cached
+            }
+        })
+    }
+
+    /// Has a OneIP sink skip its check that the display lists 4:2:0, or
+    /// check again.
+    ///
+    /// One validity bit covers this and the sink's match-source setting, so
+    /// the write restates match-source as the sink last reported it, off when
+    /// it reported none. Refused for a unit below protocol 0x2F, as
+    /// [`Remote::set_v2ip_auto_scaling`] is, and read back the same way.
+    pub fn set_v2ip_skip_420(&self, device: DeviceUid, enabled: bool) -> Result<(), ControlError> {
+        let matching = self
+            .v2ip_details(device)
+            .is_some_and(|d| d.scaling.match_source() == Some(true));
+        let options = SCALING_FLAG_SKIP_420 | SCALING_FLAG_MATCH_SOURCE;
+        let mut written = SCALING_FLAG_OPTIONS2_VALID;
+        if enabled {
+            written |= SCALING_FLAG_SKIP_420;
+        }
+        if matching {
+            written |= SCALING_FLAG_MATCH_SOURCE;
+        }
+        self.set_v2ip_scaling(device, MxrSignalType::NONE, 0, written, move |cached| {
+            V2ipScalingSettings {
+                flags: (cached.flags & !options) | written,
                 ..cached
             }
         })
@@ -2004,6 +2075,48 @@ impl Remote {
                 flags: cached.flags & !SCALING_FLAG_MODE_VALID,
             },
         )
+    }
+
+    /// Marks the streams a OneIP source sends with the DSCP values of
+    /// `marking`, all three at once.
+    ///
+    /// A device applies a marking only when all three streams carry one, so a
+    /// marking that leaves a stream out, or one above
+    /// [`V2IP_DSCP_MAX`](crate::V2IP_DSCP_MAX), is refused before anything is
+    /// sent, as is a device that does not announce a source. Nothing
+    /// acknowledges the frame; [`Remote::v2ip_details`] reads the marking
+    /// written until the device reports its own.
+    pub fn set_v2ip_dscp(
+        &self,
+        device: DeviceUid,
+        marking: V2ipDscpConfig,
+    ) -> Result<(), ControlError> {
+        let (Some(video), Some(audio), Some(anc)) = (marking.video, marking.audio, marking.anc)
+        else {
+            return Err(ControlError::InvalidRequest(
+                "a marking leaves a stream out",
+            ));
+        };
+        let written = [video, audio, anc];
+        if written.iter().any(|m| *m > V2IP_DSCP_MAX) {
+            return Err(ControlError::InvalidRequest("a DSCP above 63"));
+        }
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.hello.features.has(DeviceFeature::V2IP_SOURCE) {
+                return Err(ControlError::Unsupported("markings need a OneIP source"));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_DEVICE_CFG,
+                build_v2ip_dscp(d.uid, written),
+            )
+            .then(move |state, ev| {
+                if let Some(d) = state.device_mut(device) {
+                    d.set_v2ip_dscp(marking, ev);
+                }
+            }))
+        })
     }
 
     /// The one send behind the scaling methods.
@@ -2302,6 +2415,40 @@ impl Remote {
         })
     }
 
+    /// Sets the locale a OneIP device runs, by its number: its position in
+    /// the list of locales the device's `/system/locale` names.
+    ///
+    /// A device stores and loads a locale it knows and ignores one it
+    /// doesn't, so a locale is sent also to a device that hasn't reported its
+    /// settings yet. Refused before anything is sent for
+    /// [`V2IP_LOCALE_UNKNOWN`](crate::V2IP_LOCALE_UNKNOWN), and for a device
+    /// whose settings arrived without a locale, as its firmware has none. The
+    /// locale is cached once the frame is sent, and the device's next report
+    /// replaces it.
+    pub fn set_v2ip_locale(&self, device: DeviceUid, locale: u8) -> Result<(), ControlError> {
+        if locale == V2IP_LOCALE_UNKNOWN {
+            return Err(ControlError::InvalidRequest("the unknown locale"));
+        }
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if d.v2ip_settings.is_some() && d.v2ip_locale.is_none() {
+                return Err(ControlError::Unsupported(
+                    "the device's firmware has no locales",
+                ));
+            }
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_DEVICE_CFG,
+                build_v2ip_locale(d.uid, locale),
+            )
+            .then(move |state, ev| {
+                if let Some(d) = state.device_mut(device) {
+                    d.set_v2ip_locale(Some(locale), ev);
+                }
+            }))
+        })
+    }
+
     /// Sets the PTP mode a OneIP device runs. The terms of
     /// [`Remote::set_v2ip_device_setting`] apply.
     pub fn set_v2ip_ptp_mode(
@@ -2513,6 +2660,45 @@ impl Remote {
                 Addressee::device(d),
                 op::V2IP_DEVICE_CFG,
                 build_v2ip_vlan(d.uid, &written),
+            ))
+        })
+    }
+
+    /// Confirms the VLAN configuration a OneIP device runs pending, as its
+    /// mesh controller does, so the device keeps it rather than reverting it.
+    ///
+    /// The frame echoes the configuration the device last reported. A device
+    /// repeats its report every 3s while the change is pending and stores a
+    /// confirmation only while it is, so a confirmation lost or sent twice is
+    /// answered by the next report. It takes it only from its mesh controller
+    /// or a management application. Refused unless the device announces
+    /// [`DeviceFeature::VLAN`] and has last reported a pending configuration.
+    pub fn confirm_v2ip_vlan(&self, device: DeviceUid) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, device)?;
+            if !d.hello.features.has(DeviceFeature::VLAN) {
+                return Err(ControlError::Unsupported("the device does not take VLANs"));
+            }
+            let Some(reported) = d.v2ip_vlan else {
+                return Err(ControlError::NotReported("the device's VLAN configuration"));
+            };
+            if !reported.is_pending() {
+                return Err(ControlError::InvalidRequest(
+                    "the device has no VLAN change pending",
+                ));
+            }
+            let confirmed = V2ipVlan {
+                flags: V2ipVlanFlag::VALID
+                    | V2ipVlanFlag::CONFIRM
+                    | (reported.flags & V2ipVlanFlag::TRUNK),
+                active_uplink: 0,
+                revert_s: 0,
+                ..reported
+            };
+            Ok(Command::new(
+                Addressee::device(d),
+                op::V2IP_DEVICE_CFG,
+                build_v2ip_vlan(d.uid, &confirmed),
             ))
         })
     }

@@ -608,6 +608,15 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_downmix)
     }
 
+    /// The locale a OneIP device runs, by its number, as it last reported or
+    /// as it was last written; `None` while it reports none, and always for
+    /// one whose firmware has no locales.
+    /// [`V2IP_LOCALE_UNKNOWN`](crate::V2IP_LOCALE_UNKNOWN) is a stored locale
+    /// its firmware doesn't know.
+    pub fn v2ip_locale(&self, uid: DeviceUid) -> Option<u8> {
+        self.shared.read(|state| state.device(uid)?.v2ip_locale)
+    }
+
     /// The VLAN configuration a OneIP device last reported about itself,
     /// `None` until it has reported one.
     pub fn v2ip_vlan(&self, uid: DeviceUid) -> Option<V2ipVlan> {
