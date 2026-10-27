@@ -1013,6 +1013,11 @@ impl V2ipDeviceSettings {
 /// The longest session description a OneIP output takes, in bytes.
 pub const V2IP_SDP_MAX: usize = 2048;
 
+/// The most sources one OneIP output's filter can name: what one frame holds
+/// behind the output itself. A unit takes the filter only whole, in one
+/// frame.
+pub const V2IP_SOURCE_FILTER_MAX: usize = 89;
+
 /// What a OneIP output plays from a session description, as it last reported
 /// it. The stream's fields are zero while it plays none.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -9,18 +9,18 @@ use crate::event::Event;
 use crate::state::{Device, HelloInfo, MeshBayChange, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    HiddenStatus, MuteStatus, PowerStatus, StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings,
-    V2ipDownmix, V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState,
-    V2ipScalingSettings, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
-    V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
-    SCALING_FLAG_OPTIONS_VALID, VOLUME_UNCHANGED,
+    HiddenStatus, MeshControllerReport, MeshOperation, MuteStatus, PowerStatus, StreamKind,
+    TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig,
+    V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState, V2ipScalingSettings, V2ipStreamSource,
+    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
+    VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_OPTIONS_VALID, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode,
-    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipTestPattern,
-    V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
-    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX,
+    MeshOperationKind, MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipDownmixLevel,
+    V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode,
+    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
+    MESH_OPERATION_SIZE, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX,
 };
 
 use super::Rx;
@@ -987,13 +987,6 @@ pub(super) fn mirror_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
 /// The length of a mirror report: the sink, then the sink it mirrors.
 const MIRROR_SIZE: usize = 32;
 
-/// The mesh sub-opcode that reports which device is the mesh master.
-const MESH_REPORT_MEMBERSHIP: u8 = 0xFF;
-
-/// Size of `mxr_mesh_operation`, which is 8-aligned: the operation byte is
-/// followed by three bytes of padding before the two uids.
-const MESH_OPERATION_SIZE: usize = 40;
-
 /// The protocol version from which a mesh operation is acted on at all.
 ///
 /// Below this the opcode's own receiver ignores the frame, so a client that
@@ -1009,18 +1002,51 @@ const MESH_OPERATION_SIZE: usize = 40;
 /// ignored deliberately rather than missed.
 const MESH_OPERATION_PROTOCOL: u16 = 0x1A;
 
+/// The protocol version from which a controller report carries the installer
+/// id in its second word. Below it units read no installer from the frame.
+const MESH_REPORT_INSTALLER_PROTOCOL: u16 = 0x1D;
+
 pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     if rx.frame.payload().len() < MESH_OPERATION_SIZE
         || rx.frame.protocol() < MESH_OPERATION_PROTOCOL
     {
         return;
     }
-    if rx.frame.u8(0) != Some(MESH_REPORT_MEMBERSHIP) {
+    let (Some(kind), Some(target), Some(param)) =
+        (rx.frame.u8(0), rx.frame.uid(4), rx.frame.uid(20))
+    else {
         return;
-    }
-    let master = rx.uid_or_zero(4);
-    if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_mesh_master(master, ev);
+    };
+    let mut operation = MeshOperation {
+        kind: MeshOperationKind::from_wire(kind),
+        target,
+        param,
+    };
+    let sender = rx.sender();
+    match operation.kind {
+        MeshOperationKind::REPORT_MEMBERSHIP => {
+            if let Some(device) = state.device_mut(sender) {
+                device.set_mesh_master(target, ev);
+            }
+        }
+        MeshOperationKind::REPORT_CONTROLLER => {
+            if rx.frame.protocol() < MESH_REPORT_INSTALLER_PROTOCOL {
+                operation = MeshOperation::report_controller(target, operation.priority(), 0);
+            }
+            let report = MeshControllerReport {
+                priority: operation.priority(),
+                installer: operation.installer(),
+            };
+            if target == sender {
+                if let Some(device) = state.device_mut(sender) {
+                    device.set_mesh_controller_report(report, ev);
+                }
+            }
+        }
+        _ => ev.push(Event::MeshOperationReceived {
+            device: sender,
+            operation,
+        }),
     }
 }
 

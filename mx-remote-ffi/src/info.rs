@@ -236,6 +236,14 @@ pub struct mxr_device_info_t {
     pub temperature_count: usize,
     /// How many bays `mxr_device_bays()` would return.
     pub bay_count: usize,
+    /// Whether the device has announced itself as a mesh controller.
+    pub has_mesh_controller_report: bool,
+    /// Its priority as controller, lower winning; meaningful only when
+    /// `has_mesh_controller_report` is set.
+    pub mesh_controller_priority: u16,
+    /// The installer id its members take, zero for none; meaningful only when
+    /// `has_mesh_controller_report` is set.
+    pub mesh_controller_installer: u16,
 }
 
 /// What a bay is, and what is connected to it.
@@ -528,6 +536,9 @@ impl mxr_device_info_t {
             system_message: [0; MXR_MESSAGE_LEN],
             temperature_count: info.temperatures.len(),
             bay_count: info.bays.len(),
+            has_mesh_controller_report: info.mesh_controller_report.is_some(),
+            mesh_controller_priority: info.mesh_controller_report.map_or(0, |r| r.priority),
+            mesh_controller_installer: info.mesh_controller_report.map_or(0, |r| r.installer),
         };
         put_str(&mut out.name, &info.name);
         put_str(&mut out.serial, &info.serial);

@@ -31,32 +31,35 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, AudioFeatures, HiddenStatus, MultiviewerStatus, PowerStatus, ThirdPartyVendor,
-    UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipOutputMode,
-    V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings,
-    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipVlan, VideoWallOp,
-    VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX,
+    AmpZoneSettings, AudioFeatures, BayMirrorStatus, HiddenStatus, MeshOperation,
+    MultiviewerStatus, PowerStatus, RcSettings, ThirdPartyVendor, UnitNetConfig, V2ipAudioFormat,
+    V2ipDeviceSettings, V2ipDownmix, V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages,
+    V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone,
+    V2ipTestcard, V2ipTilingConfig, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+    MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, RC_STATUS_MAX, RC_STATUS_NAME_MAX,
     SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
     THIRD_PARTY_PAYLOAD_MAX, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX,
-    V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    V2IP_SOURCE_FILTER_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
-    build_bay_hide, build_edid_profile, build_edid_request, build_mesh_operation,
-    build_osd_message, build_privacy_request, build_rc_action, build_rc_key, build_set_bay_name,
-    build_set_volume, build_sink_sdp_command, build_sink_sdp_pages, build_stats_request,
-    build_target_only, build_third_party, build_time_zone, build_unit_command,
+    build_bay_hide, build_edid_profile, build_edid_request, build_filter_status,
+    build_mesh_operation, build_mirror_status, build_osd_message, build_privacy_request,
+    build_rc_action, build_rc_key, build_rc_settings, build_set_bay_name, build_set_volume,
+    build_sink_sdp_command, build_sink_sdp_pages, build_stats_request, build_target_only,
+    build_third_party, build_tiling, build_time_zone, build_unit_command,
     build_v2ip_device_settings, build_v2ip_downmix, build_v2ip_manual_source_switch,
-    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_switch, build_v2ip_testcard,
-    build_v2ip_vlan, build_video_wall, mesh_op, mv_cmd_payload, mv_sub, op, osd_kind, sdp_type,
-    testcard_part, testcard_type, Addressee, BayUid, DeviceFeature, DeviceUid, EdidProfile,
-    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
-    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, MxrSignalType, Opcode, OsdMessageFlag, OsdMessagePriority, RcAction,
-    RcKey, SendError, StreamAddr, UnitCommandFlag, UnitCommandKind, UnitFlag, V2ipDeviceSetting,
-    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
-    V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    build_v2ip_scaling, build_v2ip_settings_all, build_v2ip_source_frames,
+    build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan, build_video_wall,
+    mv_cmd_payload, mv_sub, op, osd_kind, sdp_type, testcard_part, testcard_type, Addressee,
+    BayUid, DeviceFeature, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, Opcode,
+    OsdMessageFlag, OsdMessagePriority, RcAction, RcKey, SendError, StreamAddr, UnitCommandFlag,
+    UnitCommandKind, UnitFlag, V2ipDeviceSetting, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode,
+    V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN,
+    TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -262,6 +265,16 @@ fn mv_setting(value: u8, highest: u8, what: &'static str) -> Result<u8, ControlE
     } else {
         Err(ControlError::InvalidRequest(what))
     }
+}
+
+/// A OneIP output and the port of its output bay, which holds what is set
+/// about it.
+fn v2ip_output_of(state: &State, uid: DeviceUid) -> Result<(&Device, u16), ControlError> {
+    let device = sdp_sink_of(state, uid)?;
+    let port = device
+        .first_output_port()
+        .ok_or(ControlError::NotReported("the output's bay"))?;
+    Ok((device, port))
 }
 
 fn bay_of(state: &State, uid: BayUid) -> Result<(&Device, &Bay), ControlError> {
@@ -1032,9 +1045,214 @@ impl Remote {
             Ok(Command::new(
                 Addressee::device(d),
                 op::MESH_OPERATION,
-                build_mesh_operation(mesh_op::AUTO_ADDRESSES, d.uid),
+                build_mesh_operation(&MeshOperation::auto_addresses(d.uid)),
             ))
         })
+    }
+
+    /// Sends a mesh operation to every device.
+    ///
+    /// A unit takes the operations that change a mesh from its controller or
+    /// a management application, which this client announces itself as.
+    /// Nothing acknowledges them: a unit that took one reports the mesh
+    /// controller it follows from then on, which
+    /// [`Event::MeshMasterChanged`](crate::Event::MeshMasterChanged) carries
+    /// and [`DeviceInfo::mesh_master`](crate::DeviceInfo::mesh_master) holds.
+    pub fn send_mesh_operation(&self, operation: MeshOperation) -> Result<(), ControlError> {
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::MESH_OPERATION,
+            &build_mesh_operation(&operation),
+        )?;
+        Ok(())
+    }
+
+    /// Sends the mesh's whole list of OneIP sources, as the mesh controller
+    /// does.
+    ///
+    /// Each entry names a source unit and its video, audio and ancillary
+    /// stream addresses; an entry's audio-return stream is not carried. A
+    /// unit named in the list, hearing it from the controller it follows,
+    /// registers every unit listed and unregisters every source unit that is
+    /// not, so the list must always be complete. A unit takes it from a
+    /// sender that announces itself as the mesh master.
+    ///
+    /// A list longer than one frame goes out in pages that each say where they
+    /// start and how long the whole list is. Refused for a list longer than
+    /// 65535 entries, which the pages cannot number.
+    pub fn send_v2ip_source_list(&self, sources: &[V2ipStreamSources]) -> Result<(), ControlError> {
+        if u16::try_from(sources.len()).is_err() {
+            return Err(ControlError::InvalidRequest(
+                "a source list longer than 65535 entries",
+            ));
+        }
+        for frame in build_v2ip_source_frames(sources) {
+            self.shared
+                .send(&Addressee::Broadcast, op::SYS_BAY_V2IP_SOURCES, &frame)?;
+        }
+        Ok(())
+    }
+
+    /// Has one OneIP output mirror another, or `None` to stop mirroring.
+    ///
+    /// Every unit hears it and keeps it, and the output follows the one it
+    /// mirrors. A unit takes it only from its mesh controller or a
+    /// management application. Refused unless both are known OneIP outputs
+    /// whose bays have been reported, and unless they differ. What is held
+    /// here is updated once the frame is away, and the output's own report
+    /// replaces it.
+    pub fn set_v2ip_mirroring(
+        &self,
+        sink: DeviceUid,
+        mirrored: Option<DeviceUid>,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let (d, port) = v2ip_output_of(state, sink)?;
+            if let Some(m) = mirrored {
+                if m == sink {
+                    return Err(ControlError::InvalidRequest("an output mirroring itself"));
+                }
+                v2ip_output_of(state, m)?;
+            }
+            let bay = BayUid::new(d.uid, port);
+            Ok(Command::new(
+                Addressee::device(d),
+                op::BAY_MIRROR_STATUS,
+                build_mirror_status(sink, mirrored),
+            )
+            .then(move |state, ev| {
+                if let Some(b) = state.bay_mut(bay) {
+                    b.set_mirroring(
+                        BayMirrorStatus {
+                            target: mirrored.map(|m| BayUid::new(m, 0)),
+                        },
+                        ev,
+                    );
+                }
+            }))
+        })
+    }
+
+    /// Replaces the list of sources a OneIP output may not show.
+    ///
+    /// A unit takes it only from its mesh controller or a management
+    /// application, and only whole, so the list is refused above
+    /// [`V2IP_SOURCE_FILTER_MAX`](crate::V2IP_SOURCE_FILTER_MAX) entries, as
+    /// is an output that is not a known OneIP output with a reported bay. What
+    /// is held here is updated once the frame is away.
+    pub fn set_v2ip_source_filter(
+        &self,
+        sink: DeviceUid,
+        filtered: &[DeviceUid],
+    ) -> Result<(), ControlError> {
+        if filtered.len() > V2IP_SOURCE_FILTER_MAX {
+            return Err(ControlError::InvalidRequest(
+                "a source filter longer than one frame holds",
+            ));
+        }
+        let filtered = filtered.to_vec();
+        self.shared.command(move |state| {
+            let (d, port) = v2ip_output_of(state, sink)?;
+            let bay = BayUid::new(d.uid, port);
+            Ok(Command::new(
+                Addressee::device(d),
+                op::BAY_FILTER_STATUS,
+                build_filter_status(sink, &filtered),
+            )
+            .then(move |state, ev| {
+                if let Some(b) = state.bay_mut(bay) {
+                    b.set_filtered(filtered, ev);
+                }
+            }))
+        })
+    }
+
+    /// Sets the part of a video wall a OneIP output shows: the window of the
+    /// picture it crops and scales up.
+    ///
+    /// The output takes it only from its mesh controller or a management
+    /// application, and a video wall module loaded on it replaces it within a
+    /// second. Refused unless the output is a known OneIP output. What is
+    /// held here is updated once the frame is away.
+    pub fn set_v2ip_tiling(&self, tiling: V2ipTilingConfig) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = sdp_sink_of(state, tiling.target)?;
+            Ok(
+                Command::new(Addressee::device(d), op::V2IP_TILING, build_tiling(&tiling)).then(
+                    move |state, ev| {
+                        if let Some(d) = state.device_mut(tiling.target) {
+                            d.set_tiling(tiling, ev);
+                        }
+                    },
+                ),
+            )
+        })
+    }
+
+    /// Changes a OneIP unit's remote control and CEC settings.
+    ///
+    /// The unit applies the control method, the controlled device's address
+    /// and the four switches, then reports its settings; the driver state and
+    /// status text are its own to report and it ignores them here. It takes
+    /// the change only from its mesh controller or a management application.
+    /// Refused unless the unit is a known OneIP unit, the state fits
+    /// [`RC_STATUS_MAX`](crate::RC_STATUS_MAX), and the text is at most
+    /// [`RC_STATUS_NAME_MAX`](crate::RC_STATUS_NAME_MAX) bytes without a NUL.
+    /// What is held here is updated once the frame is away, as a unit
+    /// controller does.
+    pub fn set_rc_settings(&self, settings: &RcSettings) -> Result<(), ControlError> {
+        if settings.rc_status > RC_STATUS_MAX
+            || settings.status_name.len() > RC_STATUS_NAME_MAX
+            || settings.status_name.contains('\0')
+        {
+            return Err(ControlError::InvalidRequest(
+                "a driver state or status text that does not fit its field",
+            ));
+        }
+        let settings = settings.clone();
+        self.shared.command(move |state| {
+            let d = device_of(state, settings.target)?;
+            if !d.is_v2ip() {
+                return Err(ControlError::Unsupported("the device is not a OneIP unit"));
+            }
+            let payload = build_rc_settings(&settings);
+            Ok(
+                Command::new(Addressee::device(d), op::RC_SETTINGS, payload).then(
+                    move |state, ev| {
+                        if let Some(d) = state.device_mut(settings.target) {
+                            d.set_rc_settings(settings, ev);
+                        }
+                    },
+                ),
+            )
+        })
+    }
+
+    /// Marks the setup of every unit that hears it completed, or not.
+    ///
+    /// A unit takes it only from its mesh controller or a management
+    /// application, and shows it in its next announcement.
+    pub fn set_mesh_setup_completed(&self, completed: bool) -> Result<(), ControlError> {
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::SETUP_STATUS,
+            &[u8::from(completed)],
+        )?;
+        Ok(())
+    }
+
+    /// Sets the installer id of every unit that hears it.
+    ///
+    /// A unit takes it only from its mesh controller or a management
+    /// application. A controller also carries the id in its controller report,
+    /// which [`MeshOperation::report_controller`] builds.
+    pub fn set_mesh_installer(&self, installer: u16) -> Result<(), ControlError> {
+        self.shared.send(
+            &Addressee::Broadcast,
+            op::SET_INSTALLER,
+            &installer.to_le_bytes(),
+        )?;
+        Ok(())
     }
 
     // ---- OneIP session descriptions ----

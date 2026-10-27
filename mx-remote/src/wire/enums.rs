@@ -572,6 +572,33 @@ bitmask! {
 }
 
 wire_enum! {
+    /// What a mesh operation asks of the mesh.
+    MeshOperationKind: u8 {
+        /// The target joins the mesh of the controller the parameter names.
+        REGISTER = 0;
+        /// The target leaves the mesh of the controller the parameter names.
+        UNREGISTER = 1;
+        /// The unit the parameter names takes the target's place in the mesh.
+        REPLACE = 2;
+        /// The target picks new stream addresses.
+        REGENERATE_ADDRESSES = 3;
+        /// The target announces itself as a mesh controller, with the
+        /// priority and installer id the parameter carries.
+        REPORT_CONTROLLER = 4;
+        /// The target takes over as mesh controller from the unit the
+        /// parameter names.
+        PROMOTE_CONTROLLER = 5;
+        /// The target hands its source addresses back to automatic
+        /// assignment.
+        AUTO_ADDRESSES = 6;
+        /// The target takes over as PTP grandmaster from the sender.
+        PTP_TAKE_OVER = 7;
+        /// The sender reports the target as its mesh controller.
+        REPORT_MEMBERSHIP = 0xFF;
+    }
+}
+
+wire_enum! {
     /// What a unit command asks of its unit.
     UnitCommandKind: u8 {
         /// Clear the current system status.

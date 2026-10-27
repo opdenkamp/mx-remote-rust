@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, ArcStatus, BayContentField, BayMirrorStatus, BaySignalDetails, DeviceStatus,
-    PowerStatus, VolumeMuteStatus,
+    MeshControllerReport, PowerStatus, VolumeMuteStatus,
 };
 use crate::wire::{
     BayFeatures, BayUid, DeviceFeature, DeviceUid, EdidProfile, MxrSignalType, RcType,
@@ -72,6 +72,9 @@ pub struct DeviceInfo {
     /// The mesh master this device follows, or the zero uid when it is in no
     /// mesh.
     pub mesh_master: DeviceUid,
+    /// What the device last announced about itself as a mesh controller,
+    /// `None` until it has.
+    pub mesh_controller_report: Option<MeshControllerReport>,
     /// How many HDBaseT outputs this model has.
     pub hdbt_outputs: u8,
     /// Whether installation was marked complete, `None` before the device
@@ -102,6 +105,7 @@ impl DeviceInfo {
             config_initialised: device.config_initialised(),
             temperatures: device.temperatures.clone(),
             mesh_master: device.mesh_master,
+            mesh_controller_report: device.mesh_controller_report,
             hdbt_outputs: device.hdbt_outputs(),
             setup_done: device.setup_done,
             installer_id: device.installer_id,

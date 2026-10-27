@@ -1569,6 +1569,17 @@ pub const MXR_V2IP_SDP_LAYOUT_LEN: usize = 8;
 
 const _: () = assert!(MXR_V2IP_SDP_MAX == mx_remote::V2IP_SDP_MAX);
 
+/// The most sources `mxr_set_v2ip_source_filter()` can name for one output.
+pub const MXR_V2IP_SOURCE_FILTER_MAX: usize = 89;
+/// The highest driver state `mxr_set_rc_settings()` takes.
+pub const MXR_RC_STATUS_MAX: u8 = 0xF;
+/// The longest status text `mxr_set_rc_settings()` takes, in bytes.
+pub const MXR_RC_STATUS_NAME_MAX: usize = 15;
+
+const _: () = assert!(MXR_V2IP_SOURCE_FILTER_MAX == mx_remote::V2IP_SOURCE_FILTER_MAX);
+const _: () = assert!(MXR_RC_STATUS_MAX == mx_remote::RC_STATUS_MAX);
+const _: () = assert!(MXR_RC_STATUS_NAME_MAX == mx_remote::RC_STATUS_NAME_MAX);
+
 /// What a OneIP output plays from a session description, as it last reported
 /// it. The stream's fields are zero while it plays none.
 #[repr(C)]

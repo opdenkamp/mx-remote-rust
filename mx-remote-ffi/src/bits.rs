@@ -458,6 +458,37 @@ pub const MXR_KEY_CUSTOM_SKY: u16 = 2048;
 // newer than this library reports a mode named here by none of these, and
 // passing it through is what lets a caller see it at all.
 
+// What a mesh operation asks, in `mxr_mesh_operation_t::kind`. An operation
+// this library has no name for arrives with its wire value unchanged.
+
+/// The target joins the mesh of the controller `param` names.
+pub const MXR_MESH_OP_REGISTER: u8 = 0;
+
+/// The target leaves the mesh of the controller `param` names.
+pub const MXR_MESH_OP_UNREGISTER: u8 = 1;
+
+/// The unit `param` names takes the target's place in the mesh.
+pub const MXR_MESH_OP_REPLACE: u8 = 2;
+
+/// The target picks new stream addresses.
+pub const MXR_MESH_OP_REGENERATE_ADDRESSES: u8 = 3;
+
+/// The target announces itself as a mesh controller; `param` carries its
+/// priority and installer id.
+pub const MXR_MESH_OP_REPORT_CONTROLLER: u8 = 4;
+
+/// The target takes over as mesh controller from the unit `param` names.
+pub const MXR_MESH_OP_PROMOTE_CONTROLLER: u8 = 5;
+
+/// The target hands its source addresses back to automatic assignment.
+pub const MXR_MESH_OP_AUTO_ADDRESSES: u8 = 6;
+
+/// The target takes over as PTP grandmaster from the sender.
+pub const MXR_MESH_OP_PTP_TAKE_OVER: u8 = 7;
+
+/// The sender reports the target as its mesh controller.
+pub const MXR_MESH_OP_REPORT_MEMBERSHIP: u8 = 0xFF;
+
 /// The multiviewer reports no window layout.
 pub const MXR_MV_VIEW_MODE_UNKNOWN: u8 = 0;
 

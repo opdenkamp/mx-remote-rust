@@ -18,10 +18,11 @@ use crate::event::EventHandler;
 use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n, vlan_block, Cfg};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
-    EdidProfileChange, EdidRequest, KeyTransmitRequest, UnitNetConfig, V2ipAudioFormat,
-    V2ipDownmix, V2ipOutputMode, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipVlan,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
-    V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
+    EdidProfileChange, EdidRequest, KeyTransmitRequest, MeshOperation, StreamKind, UnitNetConfig,
+    V2ipAudioFormat, V2ipDownmix, V2ipOutputMode, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget,
+    V2ipStreamSource, V2ipStreamSources, V2ipVlan, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX,
+    V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -3869,6 +3870,174 @@ fn auto_addresses_goes_out_as_mesh_operation_6() {
     assert!(p[20..].iter().all(|b| *b == 0), "the parameter and padding");
 }
 
+/// A mesh operation goes to every device as the 40-byte struct: the kind,
+/// padding, the target, then the parameter, stamped as every mesh operation
+/// is. A controller report puts its priority and installer id in the low half
+/// of the parameter's first two words.
+#[test]
+fn a_mesh_operation_goes_out_as_sent() {
+    let f = Fixture::new();
+    f.connect();
+    let controller = uid_n(243);
+    let previous = uid_n(244);
+
+    f.tap.clear();
+    f.remote
+        .send_mesh_operation(MeshOperation::promote_controller(controller, previous))
+        .expect("a mesh operation needs no known device");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::MESH_OPERATION.0.to_le_bytes());
+    assert_eq!(
+        &frame[2..4],
+        &protocol_for(op::MESH_OPERATION).to_le_bytes(),
+        "the stamp"
+    );
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 40);
+    assert_eq!(&p[..4], &[5, 0, 0, 0]);
+    assert_eq!(&p[4..20], controller.as_bytes());
+    assert_eq!(&p[20..36], previous.as_bytes());
+    assert_eq!(&p[36..], &[0; 4], "the trailing padding");
+
+    f.tap.clear();
+    f.remote
+        .send_mesh_operation(MeshOperation::report_controller(controller, 0x0102, 0x0304))
+        .expect("a mesh operation needs no known device");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..4], &[4, 0, 0, 0]);
+    assert_eq!(&p[4..20], controller.as_bytes());
+    assert_eq!(&p[20..28], &[0x02, 0x01, 0, 0, 0x04, 0x03, 0, 0]);
+    assert!(p[28..].iter().all(|b| *b == 0));
+
+    for (operation, kind, param) in [
+        (MeshOperation::register(previous, controller), 0, controller),
+        (
+            MeshOperation::unregister(previous, controller),
+            1,
+            controller,
+        ),
+        (MeshOperation::replace(previous, controller), 2, controller),
+        (
+            MeshOperation::regenerate_addresses(previous),
+            3,
+            DeviceUid::ZERO,
+        ),
+        (MeshOperation::auto_addresses(previous), 6, DeviceUid::ZERO),
+    ] {
+        f.tap.clear();
+        f.remote
+            .send_mesh_operation(operation)
+            .expect("a mesh operation needs no known device");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(&p[..4], &[kind, 0, 0, 0], "operation {kind}");
+        assert_eq!(&p[4..20], previous.as_bytes(), "operation {kind}");
+        assert_eq!(&p[20..36], param.as_bytes(), "operation {kind}");
+    }
+
+    f.tap.clear();
+    f.remote
+        .send_mesh_operation(MeshOperation::report_membership(controller))
+        .expect("a mesh operation needs no known device");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..4], &[0xFF, 0, 0, 0]);
+    assert_eq!(&p[4..20], controller.as_bytes());
+}
+
+/// A source list entry for unit `n`, every address and port distinct and none
+/// reading the same reversed.
+fn source_entry(n: u8) -> V2ipStreamSources {
+    let stream = |kind, k: u8| V2ipStreamSource {
+        kind,
+        ip: Ipv4Addr::new(239, n, k, 7),
+        port: 0x5000 + u16::from(n) * 16 + u16::from(k),
+    };
+    V2ipStreamSources {
+        uid: uid_n(n),
+        video: stream(StreamKind::Video, 1),
+        audio: stream(StreamKind::Audio, 2),
+        anc: stream(StreamKind::Anc, 3),
+        arc: Some(stream(StreamKind::Arc, 4)),
+    }
+}
+
+/// The 40-byte record a source list carries for `entry`: the uid, then each
+/// stream as its address in network order and its port in a little-endian
+/// 32-bit field.
+fn source_record(entry: &V2ipStreamSources) -> Vec<u8> {
+    let mut r = entry.uid.as_bytes().to_vec();
+    for s in [entry.video, entry.audio, entry.anc] {
+        r.extend_from_slice(&s.ip.octets());
+        r.extend_from_slice(&u32::from(s.port).to_le_bytes());
+    }
+    r
+}
+
+/// A source list that fits one frame goes as bare records, an empty one as an
+/// empty frame, both stamped as the opcode is. The audio-return stream has no
+/// place in a record.
+#[test]
+fn a_short_source_list_goes_out_as_bare_records() {
+    let f = Fixture::new();
+    f.connect();
+    let list = [source_entry(31), source_entry(32)];
+
+    f.tap.clear();
+    f.remote
+        .send_v2ip_source_list(&list)
+        .expect("a source list needs no known device");
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 1);
+    let frame = &frames[0];
+    assert_eq!(&frame[20..22], &op::SYS_BAY_V2IP_SOURCES.0.to_le_bytes());
+    assert_eq!(
+        &frame[2..4],
+        &protocol_for(op::SYS_BAY_V2IP_SOURCES).to_le_bytes(),
+        "the stamp"
+    );
+    let expected: Vec<u8> = list.iter().flat_map(source_record).collect();
+    assert_eq!(&frame[HEADER_LEN..], expected.as_slice());
+
+    f.tap.clear();
+    f.remote
+        .send_v2ip_source_list(&[])
+        .expect("an empty list is a list");
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 1, "an empty list was not sent");
+    assert!(frames[0][HEADER_LEN..].is_empty());
+}
+
+/// A list longer than one frame goes in pages of 36, each led by its first
+/// record's index and the length of the whole list, so a receiver can tell
+/// the complete list from part of one.
+#[test]
+fn a_long_source_list_goes_out_in_numbered_pages() {
+    let f = Fixture::new();
+    f.connect();
+    let list: Vec<V2ipStreamSources> = (0..40).map(|n| source_entry(n + 100)).collect();
+
+    f.tap.clear();
+    f.remote
+        .send_v2ip_source_list(&list)
+        .expect("a source list needs no known device");
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 2);
+    for (frame, (first, records)) in frames.iter().zip([(0u16, &list[..36]), (36, &list[36..])]) {
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(&p[..2], &first.to_le_bytes(), "the page's first record");
+        assert_eq!(&p[2..4], &40u16.to_le_bytes(), "the whole list's length");
+        assert_eq!(&p[4..8], &[0; 4], "the reserved bytes");
+        let expected: Vec<u8> = records.iter().flat_map(source_record).collect();
+        assert_eq!(&p[8..], expected.as_slice());
+    }
+    assert!(
+        frames.iter().all(|f| f.len() - HEADER_LEN <= 8 + 36 * 40),
+        "a page outgrew the largest payload"
+    );
+}
+
 /// A device that is not a source, or that predates the operation, is refused
 /// before anything is sent.
 #[test]
@@ -4980,4 +5149,211 @@ fn a_unit_is_located_only_once_it_says_it_can_be() {
         UnitFlag::LOCATE_SUPPORTED | UnitFlag::FAN_SPEED,
         "a stop clears the flag and nothing else"
     );
+}
+
+/// Remote-control settings whose every field differs from its default and
+/// whose switches alternate, so a bit moved or a field dropped shows.
+fn rc_settings_for(target: DeviceUid) -> crate::types::RcSettings {
+    crate::types::RcSettings {
+        target,
+        rc_target: 7,
+        ip: Some(Ipv4Addr::new(192, 168, 7, 21)),
+        cec_enabled: true,
+        cec_auto_on: false,
+        forward_rc: true,
+        forward_ir: false,
+        rc_status: 3,
+        status_name: "Connected".to_owned(),
+    }
+}
+
+/// What the controller writes about a unit's output or the whole mesh decodes,
+/// on the receive path a unit's report takes, back to what was set.
+#[test]
+fn a_mesh_write_decodes_back_to_what_it_set() {
+    let f = Fixture::new();
+    let (target, peer, other) = (uid_n(201), uid_n(202), uid_n(203));
+    f.everything(target, 0x30, "MW0001");
+    f.everything(peer, 0x30, "MW0002");
+    f.everything(other, 0x30, "MW0003");
+    let output = BayUid::new(target, 2);
+    let round_trip = |what: &str, call| f.round_trip(what, peer, call);
+
+    f.tap.clear();
+    round_trip(
+        "mirroring",
+        f.remote.set_v2ip_mirroring(target, Some(other)),
+    );
+    assert_eq!(
+        f.remote.bay(output).expect("no output").mirror.target,
+        Some(BayUid::new(other, 0)),
+        "the mirrored output"
+    );
+    round_trip("no mirroring", f.remote.set_v2ip_mirroring(target, None));
+    assert_eq!(f.remote.bay(output).expect("no output").mirror.target, None);
+
+    let filtered = [other, uid_n(204)];
+    round_trip("filter", f.remote.set_v2ip_source_filter(target, &filtered));
+    assert_eq!(f.remote.bay(output).expect("no output").filtered, filtered);
+    round_trip("empty filter", f.remote.set_v2ip_source_filter(target, &[]));
+    assert!(f.remote.bay(output).expect("no output").filtered.is_empty());
+
+    let tiling = crate::types::V2ipTilingConfig {
+        target,
+        pos_x: 960,
+        pos_y: 540,
+        width: 1920,
+        height: 1080,
+    };
+    round_trip("tiling", f.remote.set_v2ip_tiling(tiling));
+    assert_eq!(f.remote.v2ip_tiling(target), Some(tiling));
+
+    let rc = rc_settings_for(target);
+    round_trip("rc settings", f.remote.set_rc_settings(&rc));
+    assert_eq!(f.remote.rc_settings(target), Some(rc));
+
+    // A unit keeps these as its own and reports them back; this library reads
+    // them as a report of the sender's.
+    round_trip("setup", f.remote.set_mesh_setup_completed(true));
+    assert_eq!(
+        f.remote.device(peer).expect("no peer").setup_done,
+        Some(true)
+    );
+    round_trip("setup undone", f.remote.set_mesh_setup_completed(false));
+    assert_eq!(
+        f.remote.device(peer).expect("no peer").setup_done,
+        Some(false)
+    );
+    round_trip("installer", f.remote.set_mesh_installer(0x1234));
+    assert_eq!(
+        f.remote.device(peer).expect("no peer").installer_id,
+        Some(0x1234)
+    );
+}
+
+/// What is set about a unit is held here as soon as the frame is away, as a
+/// unit controller holds it, without waiting for the unit's report.
+#[test]
+fn a_mesh_write_is_held_here_once_sent() {
+    let f = Fixture::new();
+    let (target, other) = (uid_n(211), uid_n(212));
+    f.everything(target, 0x30, "MW0011");
+    f.everything(other, 0x30, "MW0012");
+    let output = BayUid::new(target, 2);
+    f.connect();
+
+    f.remote
+        .set_v2ip_mirroring(target, Some(other))
+        .expect("mirroring");
+    assert_eq!(
+        f.remote.bay(output).expect("no output").mirror.target,
+        Some(BayUid::new(other, 0))
+    );
+    f.remote
+        .set_v2ip_source_filter(target, &[other])
+        .expect("filter");
+    assert_eq!(f.remote.bay(output).expect("no output").filtered, [other]);
+    let tiling = crate::types::V2ipTilingConfig {
+        target,
+        pos_x: 1,
+        pos_y: 2,
+        width: 3,
+        height: 4,
+    };
+    f.remote.set_v2ip_tiling(tiling).expect("tiling");
+    assert_eq!(f.remote.v2ip_tiling(target), Some(tiling));
+    let rc = rc_settings_for(target);
+    f.remote.set_rc_settings(&rc).expect("rc settings");
+    assert_eq!(f.remote.rc_settings(target), Some(rc));
+}
+
+/// The settings frame is the unit's 48-byte struct: the method, three bytes
+/// of padding, the address in network order, the switches and state in the
+/// low bits of a 16-bit field, a reserved one, the text NUL-padded to 16, and
+/// four bytes of tail padding a unit's length check counts.
+#[test]
+fn an_rc_settings_frame_is_the_units_struct() {
+    let f = Fixture::new();
+    let target = uid_n(221);
+    f.everything(target, 0x30, "MW0021");
+    f.tap.clear();
+
+    let _ = f.remote.set_rc_settings(&rc_settings_for(target));
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 1);
+    let p = &frames[0][HEADER_LEN..];
+    assert_eq!(&frames[0][20..22], &op::RC_SETTINGS.0.to_le_bytes());
+
+    let mut expected = target.as_bytes().to_vec();
+    expected.extend_from_slice(&[7, 0, 0, 0]);
+    expected.extend_from_slice(&[192, 168, 7, 21]);
+    expected.extend_from_slice(&[0b0011_0101, 0, 0, 0]);
+    expected.extend_from_slice(b"Connected\0\0\0\0\0\0\0");
+    expected.extend_from_slice(&[0; 4]);
+    assert_eq!(p, expected.as_slice());
+}
+
+/// A write a unit would drop, or one naming nothing it could act on, is
+/// refused before anything is sent.
+#[test]
+fn a_mesh_write_is_refused_before_it_is_sent() {
+    let f = Fixture::new();
+    let (sink, other, amp, unknown) = (uid_n(231), uid_n(232), uid_n(233), uid_n(234));
+    f.everything(sink, 0x30, "MW0031");
+    f.everything(other, 0x30, "MW0032");
+    f.amplifier(amp, 0x30, "MW0033");
+    f.tap.clear();
+
+    let invalid = |r: Result<(), ControlError>| matches!(r, Err(ControlError::InvalidRequest(_)));
+    let unsupported = |r: Result<(), ControlError>| matches!(r, Err(ControlError::Unsupported(_)));
+    let unknown_device = |r: Result<(), ControlError>| matches!(r, Err(ControlError::UnknownDevice(u)) if u == unknown);
+
+    assert!(invalid(f.remote.set_v2ip_mirroring(sink, Some(sink))));
+    assert!(unknown_device(f.remote.set_v2ip_mirroring(unknown, None)));
+    assert!(unknown_device(
+        f.remote.set_v2ip_mirroring(sink, Some(unknown))
+    ));
+    assert!(unsupported(f.remote.set_v2ip_mirroring(amp, None)));
+    assert!(unsupported(f.remote.set_v2ip_mirroring(sink, Some(amp))));
+
+    let too_many = vec![other; crate::types::V2IP_SOURCE_FILTER_MAX + 1];
+    assert!(invalid(f.remote.set_v2ip_source_filter(sink, &too_many)));
+    assert!(unsupported(f.remote.set_v2ip_source_filter(amp, &[])));
+
+    let tiling = crate::types::V2ipTilingConfig {
+        target: amp,
+        ..Default::default()
+    };
+    assert!(unsupported(f.remote.set_v2ip_tiling(tiling)));
+
+    let mut rc = rc_settings_for(sink);
+    rc.rc_status = crate::types::RC_STATUS_MAX + 1;
+    assert!(invalid(f.remote.set_rc_settings(&rc)));
+    let mut rc = rc_settings_for(sink);
+    rc.status_name = "N".repeat(crate::types::RC_STATUS_NAME_MAX + 1);
+    assert!(invalid(f.remote.set_rc_settings(&rc)));
+    let mut rc = rc_settings_for(sink);
+    "a\0b".clone_into(&mut rc.status_name);
+    assert!(invalid(f.remote.set_rc_settings(&rc)));
+    assert!(unsupported(f.remote.set_rc_settings(&rc_settings_for(amp))));
+    assert!(unknown_device(
+        f.remote.set_rc_settings(&rc_settings_for(unknown))
+    ));
+
+    assert!(f.tap.frames().is_empty(), "a refused write was sent");
+
+    let longest = vec![other; crate::types::V2IP_SOURCE_FILTER_MAX];
+    let _ = f.remote.set_v2ip_source_filter(sink, &longest);
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 1, "the longest filter was not sent");
+    assert_eq!(
+        frames[0].len() - HEADER_LEN,
+        (1 + crate::types::V2IP_SOURCE_FILTER_MAX) * 16
+    );
+    let mut rc = rc_settings_for(sink);
+    rc.status_name = "N".repeat(crate::types::RC_STATUS_NAME_MAX);
+    rc.rc_status = crate::types::RC_STATUS_MAX;
+    f.tap.clear();
+    let _ = f.remote.set_rc_settings(&rc);
+    assert_eq!(f.tap.frames().len(), 1, "the longest text was not sent");
 }

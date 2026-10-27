@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
-    DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MultiviewerStatus, NetworkPortStatus,
-    OsdMessage, OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry, UnitStatus,
-    V2ipDeviceSettings, V2ipDeviceStats, V2ipDownmix, V2ipPrivacy, V2ipPtpState,
+    DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MeshControllerReport, MultiviewerStatus,
+    NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry,
+    UnitStatus, V2ipDeviceSettings, V2ipDeviceStats, V2ipDownmix, V2ipPrivacy, V2ipPtpState,
     V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
     VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
@@ -168,6 +168,7 @@ pub(crate) struct Device {
     pub(crate) audio_select: Option<AudioChangeSource>,
     pub(crate) firmware: BTreeMap<FirmwareType, FirmwareVersion>,
     pub(crate) mesh_master: DeviceUid,
+    pub(crate) mesh_controller_report: Option<MeshControllerReport>,
     pub(crate) network: BTreeMap<u16, NetworkPortStatus>,
     pub(crate) sys_status: Option<(u16, String)>,
     pub(crate) topology: Vec<TopologyEntry>,
@@ -228,6 +229,7 @@ impl Device {
             audio_select: None,
             firmware: BTreeMap::new(),
             mesh_master: DeviceUid::ZERO,
+            mesh_controller_report: None,
             network: BTreeMap::new(),
             sys_status: None,
             topology: Vec::new(),
@@ -951,6 +953,21 @@ impl Device {
         ev.push(Event::MeshMasterChanged {
             device: self.uid,
             master,
+        });
+    }
+
+    pub(crate) fn set_mesh_controller_report(
+        &mut self,
+        report: MeshControllerReport,
+        ev: &mut Vec<Event>,
+    ) {
+        if self.mesh_controller_report == Some(report) {
+            return;
+        }
+        self.mesh_controller_report = Some(report);
+        ev.push(Event::MeshControllerReportChanged {
+            device: self.uid,
+            report,
         });
     }
 

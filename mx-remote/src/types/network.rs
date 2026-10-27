@@ -5,7 +5,7 @@
 
 use std::net::Ipv4Addr;
 
-use crate::wire::UtpLinkSpeed;
+use crate::wire::{DeviceUid, MeshOperationKind, UtpLinkSpeed, UID_LEN};
 
 /// The decoded link-error bitmask for a network port.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -103,4 +103,113 @@ pub struct NetworkPortStatus {
     pub vct_status: Option<[VctStatus; 4]>,
     /// Cable diagnostics per pair.
     pub cable_status: Vec<UtpCableStatus>,
+}
+
+/// One operation on a mesh: what it asks, the device it concerns, and its
+/// parameter.
+///
+/// The parameter is a uid for every operation but
+/// [`MeshOperationKind::REPORT_CONTROLLER`], where it carries two 32-bit words
+/// instead; [`MeshOperation::priority`] and [`MeshOperation::installer`] read
+/// them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeshOperation {
+    /// What the operation asks.
+    pub kind: MeshOperationKind,
+    /// The device it concerns.
+    pub target: DeviceUid,
+    /// Its parameter.
+    pub param: DeviceUid,
+}
+
+impl MeshOperation {
+    const fn new(kind: MeshOperationKind, target: DeviceUid, param: DeviceUid) -> Self {
+        Self {
+            kind,
+            target,
+            param,
+        }
+    }
+
+    /// `unit` joins the mesh of `controller`.
+    pub const fn register(unit: DeviceUid, controller: DeviceUid) -> Self {
+        Self::new(MeshOperationKind::REGISTER, unit, controller)
+    }
+
+    /// `unit` leaves the mesh of `controller`.
+    pub const fn unregister(unit: DeviceUid, controller: DeviceUid) -> Self {
+        Self::new(MeshOperationKind::UNREGISTER, unit, controller)
+    }
+
+    /// `replacement` takes the place of `unit` in its mesh.
+    pub const fn replace(unit: DeviceUid, replacement: DeviceUid) -> Self {
+        Self::new(MeshOperationKind::REPLACE, unit, replacement)
+    }
+
+    /// `unit` picks new stream addresses.
+    pub const fn regenerate_addresses(unit: DeviceUid) -> Self {
+        Self::new(
+            MeshOperationKind::REGENERATE_ADDRESSES,
+            unit,
+            DeviceUid::ZERO,
+        )
+    }
+
+    /// `unit` hands its source addresses back to automatic assignment.
+    pub const fn auto_addresses(unit: DeviceUid) -> Self {
+        Self::new(MeshOperationKind::AUTO_ADDRESSES, unit, DeviceUid::ZERO)
+    }
+
+    /// `controller` announces itself as a mesh controller. A lower `priority`
+    /// wins, and `installer` is the installer id its members take, zero for
+    /// none.
+    pub fn report_controller(controller: DeviceUid, priority: u16, installer: u16) -> Self {
+        let mut param = [0; UID_LEN];
+        param[..4].copy_from_slice(&u32::from(priority).to_le_bytes());
+        param[4..8].copy_from_slice(&u32::from(installer).to_le_bytes());
+        Self::new(
+            MeshOperationKind::REPORT_CONTROLLER,
+            controller,
+            DeviceUid::from_array(param),
+        )
+    }
+
+    /// `controller` takes over as mesh controller from `previous`, and every
+    /// unit following `previous` follows `controller` from then on.
+    pub const fn promote_controller(controller: DeviceUid, previous: DeviceUid) -> Self {
+        Self::new(MeshOperationKind::PROMOTE_CONTROLLER, controller, previous)
+    }
+
+    /// The sender reports `controller` as its mesh controller, the zero uid
+    /// for none.
+    pub const fn report_membership(controller: DeviceUid) -> Self {
+        Self::new(
+            MeshOperationKind::REPORT_MEMBERSHIP,
+            controller,
+            DeviceUid::ZERO,
+        )
+    }
+
+    /// The priority a controller report carries. Units read the word as 16
+    /// bits.
+    pub fn priority(&self) -> u16 {
+        let b = self.param.as_bytes();
+        u16::from_le_bytes([b[0], b[1]])
+    }
+
+    /// The installer id a controller report carries. Units read the word as
+    /// 16 bits.
+    pub fn installer(&self) -> u16 {
+        let b = self.param.as_bytes();
+        u16::from_le_bytes([b[4], b[5]])
+    }
+}
+
+/// What a device last announced about itself as a mesh controller.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MeshControllerReport {
+    /// Its priority as controller. Lower wins.
+    pub priority: u16,
+    /// The installer id its members take, zero for none.
+    pub installer: u16,
 }

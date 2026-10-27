@@ -693,6 +693,52 @@
 #define MXR_KEY_CUSTOM_SKY 2048
 
 /**
+ * The target joins the mesh of the controller `param` names.
+ */
+#define MXR_MESH_OP_REGISTER 0
+
+/**
+ * The target leaves the mesh of the controller `param` names.
+ */
+#define MXR_MESH_OP_UNREGISTER 1
+
+/**
+ * The unit `param` names takes the target's place in the mesh.
+ */
+#define MXR_MESH_OP_REPLACE 2
+
+/**
+ * The target picks new stream addresses.
+ */
+#define MXR_MESH_OP_REGENERATE_ADDRESSES 3
+
+/**
+ * The target announces itself as a mesh controller; `param` carries its
+ * priority and installer id.
+ */
+#define MXR_MESH_OP_REPORT_CONTROLLER 4
+
+/**
+ * The target takes over as mesh controller from the unit `param` names.
+ */
+#define MXR_MESH_OP_PROMOTE_CONTROLLER 5
+
+/**
+ * The target hands its source addresses back to automatic assignment.
+ */
+#define MXR_MESH_OP_AUTO_ADDRESSES 6
+
+/**
+ * The target takes over as PTP grandmaster from the sender.
+ */
+#define MXR_MESH_OP_PTP_TAKE_OVER 7
+
+/**
+ * The sender reports the target as its mesh controller.
+ */
+#define MXR_MESH_OP_REPORT_MEMBERSHIP 255
+
+/**
  * The multiviewer reports no window layout.
  */
 #define MXR_MV_VIEW_MODE_UNKNOWN 0
@@ -2100,6 +2146,21 @@
 #define MXR_V2IP_SDP_LAYOUT_LEN 8
 
 /**
+ * The most sources `mxr_set_v2ip_source_filter()` can name for one output.
+ */
+#define MXR_V2IP_SOURCE_FILTER_MAX 89
+
+/**
+ * The highest driver state `mxr_set_rc_settings()` takes.
+ */
+#define MXR_RC_STATUS_MAX 15
+
+/**
+ * The longest status text `mxr_set_rc_settings()` takes, in bytes.
+ */
+#define MXR_RC_STATUS_NAME_MAX 15
+
+/**
  * The logo slots an overlay sync can copy.
  */
 #define MXR_OSD_SYNC_SLOTS 4
@@ -2459,6 +2520,112 @@ typedef struct {
 } mxr_stream_addr_t;
 
 /**
+ * One entry of a mesh's source list: a source unit and its three streams.
+ *
+ * The ports go out as given; zero is not replaced by a standard port here.
+ */
+typedef struct {
+  /**
+   * The source unit.
+   */
+  mxr_uid_t uid;
+  /**
+   * Its video stream. A null or empty address sends the slot zeroed.
+   */
+  mxr_stream_addr_t video;
+  /**
+   * Its audio stream. A null or empty address sends the slot zeroed.
+   */
+  mxr_stream_addr_t audio;
+  /**
+   * Its ancillary-data stream. A null or empty address sends the slot
+   * zeroed.
+   */
+  mxr_stream_addr_t anc;
+} mxr_v2ip_source_entry_t;
+
+/**
+ * The window a sink is currently told to show.
+ *
+ * This is the pollable view of a sink's window, not the persisted video wall
+ * setting: on a sink running the wall module a write here is transient,
+ * because that module pushes its own target window back within about a
+ * second.
+ */
+typedef struct {
+  /**
+   * The sink this window belongs to.
+   */
+  mxr_uid_t target;
+  /**
+   * Window origin, horizontal.
+   */
+  uint16_t pos_x;
+  /**
+   * Window origin, vertical.
+   */
+  uint16_t pos_y;
+  /**
+   * Window width.
+   */
+  uint16_t width;
+  /**
+   * Window height.
+   */
+  uint16_t height;
+} mxr_tiling_config_t;
+
+/**
+ * The remote-control configuration of a source bay.
+ */
+typedef struct {
+  /**
+   * The device this configuration belongs to.
+   */
+  mxr_uid_t target;
+  /**
+   * The control method, as the wire value.
+   *
+   * Zero is infrared, a method a bay really uses, so it is not a stand-in
+   * for "not reported". Check that `mxr_rc_settings()` returned `MXR_OK`
+   * before reading this: a device that has not sent its settings yet
+   * leaves the struct as the caller allocated it, and a zeroed one then
+   * reads as a bay set to infrared. `mxr_bay_info_t` answers the same
+   * question with a `has_rc_type` flag beside its `rc_type`.
+   */
+  uint8_t rc_target;
+  /**
+   * The control target's address, empty when unset.
+   */
+  char ip[MXR_IP_STRING_LEN];
+  /**
+   * Whether CEC is enabled.
+   */
+  bool cec_enabled;
+  /**
+   * Whether CEC powers the sink on automatically.
+   */
+  bool cec_auto_on;
+  /**
+   * Whether remote-control commands are forwarded.
+   */
+  bool forward_rc;
+  /**
+   * Whether infrared is forwarded.
+   */
+  bool forward_ir;
+  /**
+   * The driver state on the source, as the wire value. One above the last
+   * this library knows is passed through as it arrived.
+   */
+  uint8_t rc_status;
+  /**
+   * The driver-reported status string, empty when unknown.
+   */
+  char status_name[MXR_NAME_LEN];
+} mxr_rc_settings_t;
+
+/**
  * The three streams a manual route points a OneIP sink at.
  */
 typedef struct {
@@ -2541,6 +2708,28 @@ typedef struct {
    */
   uint8_t eq_right[MXR_AMP_EQ_BANDS];
 } mxr_amp_zone_settings_t;
+
+/**
+ * A mesh operation: what it asks, the device it concerns, and its parameter.
+ *
+ * `kind` is one of the `MXR_MESH_OP_` values. `param` is a uid for every
+ * operation but `MXR_MESH_OP_REPORT_CONTROLLER`, where its first two 32-bit
+ * little-endian words carry the priority and the installer id.
+ */
+typedef struct {
+  /**
+   * What the operation asks.
+   */
+  uint8_t kind;
+  /**
+   * The device it concerns.
+   */
+  mxr_uid_t target;
+  /**
+   * Its parameter.
+   */
+  mxr_uid_t param;
+} mxr_mesh_operation_t;
 
 /**
  * A OneIP device's power save settings, beside `mxr_v2ip_device_settings_t`
@@ -3067,6 +3256,20 @@ typedef struct {
    * How many bays `mxr_device_bays()` would return.
    */
   size_t bay_count;
+  /**
+   * Whether the device has announced itself as a mesh controller.
+   */
+  bool has_mesh_controller_report;
+  /**
+   * Its priority as controller, lower winning; meaningful only when
+   * `has_mesh_controller_report` is set.
+   */
+  uint16_t mesh_controller_priority;
+  /**
+   * The installer id its members take, zero for none; meaningful only when
+   * `has_mesh_controller_report` is set.
+   */
+  uint16_t mesh_controller_installer;
 } mxr_device_info_t;
 
 /**
@@ -3399,6 +3602,22 @@ typedef struct {
    * picks a free one when the first sync with images is sent.
    */
   uint16_t logo_port;
+  /**
+   * The serial number this client advertises. Null means a default.
+   */
+  const char *serial;
+  /**
+   * The firmware version this client advertises. Null means this library's
+   * version.
+   */
+  const char *version;
+  /**
+   * Announce this client as a mesh device rather than a management
+   * application: mesh support instead of management, which is what a mesh
+   * takes as a member and can hand its controller role to. Units then take
+   * writes from it only while they follow it as their controller.
+   */
+  bool mesh_device;
 } mxr_config_t;
 
 /**
@@ -3955,6 +4174,13 @@ typedef void (*mxr_bay_unlinked_cb)(void *userdata,
                                     const char *bay_name);
 
 /**
+ * Carries a mesh operation a device sent.
+ */
+typedef void (*mxr_mesh_operation_cb)(void *userdata,
+                                      mxr_uid_t device,
+                                      const mxr_mesh_operation_t *operation);
+
+/**
  * What to call when something happens.
  *
  * Zero the whole struct and fill in only what is wanted: a null member drops
@@ -4297,6 +4523,17 @@ typedef struct {
    * the link that went, and mean what they do on `on_bay_linked`.
    */
   mxr_bay_unlinked_cb on_bay_unlinked;
+  /**
+   * The device announced itself as a mesh controller differently; read it
+   * with `mxr_device_info()`.
+   */
+  mxr_device_cb on_mesh_controller_report_changed;
+  /**
+   * The device sent a mesh operation other than a membership report, which
+   * `on_mesh_master_changed` covers, or a controller report, which
+   * `on_mesh_controller_report_changed` covers.
+   */
+  mxr_mesh_operation_cb on_mesh_operation_received;
 } mxr_callbacks_t;
 
 /**
@@ -5091,37 +5328,6 @@ typedef struct {
 } mxr_v2ip_testcard_t;
 
 /**
- * The window a sink is currently told to show.
- *
- * This is the pollable view of a sink's window, not the persisted video wall
- * setting: on a sink running the wall module a write here is transient,
- * because that module pushes its own target window back within about a
- * second.
- */
-typedef struct {
-  /**
-   * The sink this window belongs to.
-   */
-  mxr_uid_t target;
-  /**
-   * Window origin, horizontal.
-   */
-  uint16_t pos_x;
-  /**
-   * Window origin, vertical.
-   */
-  uint16_t pos_y;
-  /**
-   * Window width.
-   */
-  uint16_t width;
-  /**
-   * Window height.
-   */
-  uint16_t height;
-} mxr_tiling_config_t;
-
-/**
  * What a multiviewer reports about itself.
  */
 typedef struct {
@@ -5235,56 +5441,6 @@ typedef struct {
    */
   bool pcm_upmix_active;
 } mxr_dolby_settings_t;
-
-/**
- * The remote-control configuration of a source bay.
- */
-typedef struct {
-  /**
-   * The device this configuration belongs to.
-   */
-  mxr_uid_t target;
-  /**
-   * The control method, as the wire value.
-   *
-   * Zero is infrared, a method a bay really uses, so it is not a stand-in
-   * for "not reported". Check that `mxr_rc_settings()` returned `MXR_OK`
-   * before reading this: a device that has not sent its settings yet
-   * leaves the struct as the caller allocated it, and a zeroed one then
-   * reads as a bay set to infrared. `mxr_bay_info_t` answers the same
-   * question with a `has_rc_type` flag beside its `rc_type`.
-   */
-  uint8_t rc_target;
-  /**
-   * The control target's address, empty when unset.
-   */
-  char ip[MXR_IP_STRING_LEN];
-  /**
-   * Whether CEC is enabled.
-   */
-  bool cec_enabled;
-  /**
-   * Whether CEC powers the sink on automatically.
-   */
-  bool cec_auto_on;
-  /**
-   * Whether remote-control commands are forwarded.
-   */
-  bool forward_rc;
-  /**
-   * Whether infrared is forwarded.
-   */
-  bool forward_ir;
-  /**
-   * The driver state on the source, as the wire value. One above the last
-   * this library knows is passed through as it arrived.
-   */
-  uint8_t rc_status;
-  /**
-   * The driver-reported status string, empty when unknown.
-   */
-  char status_name[MXR_NAME_LEN];
-} mxr_rc_settings_t;
 
 /**
  * The diagnostic result for one UTP cable pair.
@@ -5670,6 +5826,108 @@ mxr_result_t mxr_select_audio_source_addr(const mxr_remote_t *remote,
                                           const mxr_audio_format_t *format);
 
 /**
+ * Sends the mesh's whole list of OneIP sources, as the mesh controller does.
+ *
+ * A unit named in the list, hearing it from the controller it follows,
+ * registers every unit listed and unregisters every source unit that is not,
+ * so the list must always be complete. A list longer than one frame goes out
+ * in numbered pages. `count` zero sends the empty list.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a null `entries` with a non-zero `count`, an
+ * address that is not IPv4, or more than 65535 entries.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`. `entries` is
+ * null or points at `count` entries whose addresses are null or
+ * NUL-terminated.
+ */
+mxr_result_t mxr_send_v2ip_source_list(const mxr_remote_t *remote,
+                                       const mxr_v2ip_source_entry_t *entries,
+                                       size_t count);
+
+/**
+ * Has OneIP output `sink` mirror output `mirrored`, or stop mirroring for a
+ * zero `mirrored`.
+ *
+ * Every unit keeps it, and the output follows the one it mirrors.
+ * `MXR_ERR_NOT_FOUND` for an output not heard from,
+ * `MXR_ERR_UNSUPPORTED` for one that is not a OneIP output,
+ * `MXR_ERR_NOT_REPORTED` before its bay is, and `MXR_ERR_INVALID_ARGUMENT`
+ * for an output mirroring itself.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_mirroring(const mxr_remote_t *remote, mxr_uid_t sink, mxr_uid_t mirrored);
+
+/**
+ * Replaces the `count` sources at `filtered` that OneIP output `sink` may not
+ * show. `count` zero clears the list.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a null `filtered` with a non-zero `count`,
+ * or more than `MXR_V2IP_SOURCE_FILTER_MAX` sources; otherwise as
+ * `mxr_set_v2ip_mirroring()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`. `filtered` is
+ * null or points at `count` uids.
+ */
+mxr_result_t mxr_set_v2ip_source_filter(const mxr_remote_t *remote,
+                                        mxr_uid_t sink,
+                                        const mxr_uid_t *filtered,
+                                        size_t count);
+
+/**
+ * Sets the window of a video wall OneIP output `tiling.target` shows.
+ *
+ * `MXR_ERR_NOT_FOUND` for an output not heard from and
+ * `MXR_ERR_UNSUPPORTED` for one that is not a OneIP output.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_v2ip_tiling(const mxr_remote_t *remote, mxr_tiling_config_t tiling);
+
+/**
+ * Changes OneIP unit `settings.target`'s remote control and CEC settings.
+ *
+ * The unit ignores `rc_status` and `status_name`, which are its own to
+ * report. `ip` empty sends no address. `MXR_ERR_INVALID_ARGUMENT` for an
+ * `ip` that is not IPv4, a field without its NUL, an `rc_status` above
+ * `MXR_RC_STATUS_MAX` or a `status_name` longer than
+ * `MXR_RC_STATUS_NAME_MAX`; `MXR_ERR_NOT_FOUND` for a unit not heard
+ * from and `MXR_ERR_UNSUPPORTED` for one that is not a OneIP unit.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `settings`
+ * is null or points at a readable [`mxr_rc_settings_t`].
+ */
+mxr_result_t mxr_set_rc_settings(const mxr_remote_t *remote, const mxr_rc_settings_t *settings);
+
+/**
+ * Marks the setup of every unit that hears it completed, or not.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_mesh_setup_completed(const mxr_remote_t *remote, bool completed);
+
+/**
+ * Sets the installer id of every unit that hears it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_set_mesh_installer(const mxr_remote_t *remote, uint16_t installer);
+
+/**
  * Routes a OneIP sink's video, audio and ancillary streams to multicast groups
  * the caller names.
  *
@@ -6037,6 +6295,24 @@ mxr_result_t mxr_clear_mesh_time_zone(const mxr_remote_t *remote);
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_set_mesh_time(const mxr_remote_t *remote, uint64_t utc);
+
+/**
+ * Sends a mesh operation to every device.
+ *
+ * A unit takes the operations that change a mesh from its controller or a
+ * management application, which this client announces itself as. Nothing
+ * acknowledges them: a unit that took one reports the mesh controller it
+ * follows from then on, which `on_mesh_master_changed` carries.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a null operation.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `operation`
+ * is null or points at an initialised struct.
+ */
+mxr_result_t mxr_send_mesh_operation(const mxr_remote_t *remote,
+                                     const mxr_mesh_operation_t *operation);
 
 /**
  * Tells every unit to check its update server for new firmware now.
@@ -7286,6 +7562,32 @@ mxr_result_t mxr_remote_uid(const mxr_remote_t *remote, mxr_uid_t *out);
  * `remote` is null or a live handle, and `out` points at `cap` writable bytes.
  */
 mxr_result_t mxr_remote_name(const mxr_remote_t *remote, char *out, size_t cap);
+
+/**
+ * Sets the mesh controller this client announces it follows: the zero uid
+ * for none, and its own uid while it is the controller.
+ *
+ * The hello then announces mesh membership while there is one, and the mesh
+ * controller role while it is this client. Only the announcement changes:
+ * membership reports, and the units that follow this client, are the
+ * caller's to keep in step. A change is announced at once.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle.
+ */
+mxr_result_t mxr_remote_set_mesh_controller(const mxr_remote_t *remote, mxr_uid_t controller);
+
+/**
+ * Writes the mesh controller this client announces it follows, zero for
+ * none.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * [`mxr_uid_t`].
+ */
+mxr_result_t mxr_remote_mesh_controller(const mxr_remote_t *remote, mxr_uid_t *out);
 
 /**
  * Writes the address this client sends to.

@@ -19,12 +19,13 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, UNIX_EPOCH};
 
 use mx_remote::{
-    ControlError, DeviceUid, EdidProfile, MultiviewerAspectRatio, MultiviewerEdidTemplate,
-    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, RcAction, RcKey, UnitNetConfig,
-    V2ipAudioFormat, V2ipColourSpace, V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode,
-    V2ipPowerSaveLevel, V2ipPowerSaveSchedule, V2ipPtpMode, V2ipRoute, V2ipRouteTarget,
-    V2ipTestPattern, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
+    ControlError, DeviceUid, EdidProfile, MeshOperation, MeshOperationKind, MultiviewerAspectRatio,
+    MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode,
+    MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, RcAction,
+    RcKey, RcSettings, StreamKind, UnitNetConfig, V2ipAudioFormat, V2ipColourSpace,
+    V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveLevel,
+    V2ipPowerSaveSchedule, V2ipPtpMode, V2ipRoute, V2ipRouteTarget, V2ipStreamSource,
+    V2ipStreamSources, V2ipTestPattern, V2ipTilingConfig, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
 };
 use mx_remote::{
     OsdCaption, OsdCaptionAlign, OsdCaptionFormat, OsdLogo, OsdMessagePriority, OsdSyncContent,
@@ -37,12 +38,13 @@ use crate::abi::{
 use crate::bits::{
     MXR_OSD_SYNC_TYPE_BACKGROUND, MXR_OSD_SYNC_TYPE_CAPTION, MXR_OSD_SYNC_TYPE_LOGO,
 };
+use crate::events::mxr_mesh_operation_t;
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
 use crate::subsystems::{
-    mxr_v2ip_device_settings_t, mxr_v2ip_downmix_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t,
-    mxr_v2ip_ptp_settings_t, mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t,
-    MXR_OSD_SYNC_SLOTS,
+    mxr_rc_settings_t, mxr_tiling_config_t, mxr_v2ip_device_settings_t, mxr_v2ip_downmix_t,
+    mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t, mxr_v2ip_ptp_settings_t, mxr_v2ip_test_sync_t,
+    mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t, MXR_OSD_SYNC_SLOTS,
 };
 
 /// A stream's sample rate and channel count.
@@ -260,6 +262,295 @@ unsafe fn to_target(slot: mxr_stream_addr_t, what: &str) -> Result<V2ipRouteTarg
             &format!("{what} is not an IPv4 address: {text:?}"),
         )),
     }
+}
+
+/// One entry of a mesh's source list: a source unit and its three streams.
+///
+/// The ports go out as given; zero is not replaced by a standard port here.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_v2ip_source_entry_t {
+    /// The source unit.
+    pub uid: mxr_uid_t,
+    /// Its video stream. A null or empty address sends the slot zeroed.
+    pub video: mxr_stream_addr_t,
+    /// Its audio stream. A null or empty address sends the slot zeroed.
+    pub audio: mxr_stream_addr_t,
+    /// Its ancillary-data stream. A null or empty address sends the slot
+    /// zeroed.
+    pub anc: mxr_stream_addr_t,
+}
+
+/// Reads one source list entry.
+///
+/// # Safety
+///
+/// Every address in `e` is null or a NUL-terminated string.
+unsafe fn to_source_entry(e: &mxr_v2ip_source_entry_t) -> Result<V2ipStreamSources, mxr_result_t> {
+    let stream = |kind, slot, what| {
+        // SAFETY: the caller guarantees the slot's address.
+        unsafe { to_target(slot, what) }.map(|t| V2ipStreamSource {
+            kind,
+            ip: t.ip,
+            port: t.port,
+        })
+    };
+    Ok(V2ipStreamSources {
+        uid: e.uid.into(),
+        video: stream(StreamKind::Video, e.video, "video ip")?,
+        audio: stream(StreamKind::Audio, e.audio, "audio ip")?,
+        anc: stream(StreamKind::Anc, e.anc, "anc ip")?,
+        arc: None,
+    })
+}
+
+/// Sends the mesh's whole list of OneIP sources, as the mesh controller does.
+///
+/// A unit named in the list, hearing it from the controller it follows,
+/// registers every unit listed and unregisters every source unit that is not,
+/// so the list must always be complete. A list longer than one frame goes out
+/// in numbered pages. `count` zero sends the empty list.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a null `entries` with a non-zero `count`, an
+/// address that is not IPv4, or more than 65535 entries.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`. `entries` is
+/// null or points at `count` entries whose addresses are null or
+/// NUL-terminated.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_v2ip_source_list(
+    remote: *const mxr_remote_t,
+    entries: *const mxr_v2ip_source_entry_t,
+    count: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let entries: &[mxr_v2ip_source_entry_t] = match (entries.is_null(), count) {
+            (_, 0) => &[],
+            (true, _) => {
+                return fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    "entries is null with a count above zero",
+                )
+            }
+            // SAFETY: the caller guarantees count entries at entries.
+            (false, _) => unsafe { std::slice::from_raw_parts(entries, count) },
+        };
+        let sources = entries
+            .iter()
+            // SAFETY: the caller guarantees the addresses in each entry.
+            .map(|e| unsafe { to_source_entry(e) })
+            .collect::<Result<Vec<_>, _>>();
+        match sources {
+            Ok(sources) => from_control(r.remote.send_v2ip_source_list(&sources)),
+            Err(rc) => rc,
+        }
+    })
+}
+
+/// Has OneIP output `sink` mirror output `mirrored`, or stop mirroring for a
+/// zero `mirrored`.
+///
+/// Every unit keeps it, and the output follows the one it mirrors.
+/// `MXR_ERR_NOT_FOUND` for an output not heard from,
+/// `MXR_ERR_UNSUPPORTED` for one that is not a OneIP output,
+/// `MXR_ERR_NOT_REPORTED` before its bay is, and `MXR_ERR_INVALID_ARGUMENT`
+/// for an output mirroring itself.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_mirroring(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+    mirrored: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(
+            r.remote
+                .set_v2ip_mirroring(sink.into(), uid_or_none(mirrored)),
+        )
+    })
+}
+
+/// A uid argument where zero means none.
+fn uid_or_none(uid: mxr_uid_t) -> Option<DeviceUid> {
+    let uid = DeviceUid::from(uid);
+    (!uid.is_zero()).then_some(uid)
+}
+
+/// Replaces the `count` sources at `filtered` that OneIP output `sink` may not
+/// show. `count` zero clears the list.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a null `filtered` with a non-zero `count`,
+/// or more than `MXR_V2IP_SOURCE_FILTER_MAX` sources; otherwise as
+/// `mxr_set_v2ip_mirroring()`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`. `filtered` is
+/// null or points at `count` uids.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_source_filter(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+    filtered: *const mxr_uid_t,
+    count: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let filtered: &[mxr_uid_t] = match (filtered.is_null(), count) {
+            (_, 0) => &[],
+            (true, _) => {
+                return fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    "filtered is null with a count above zero",
+                )
+            }
+            // SAFETY: the caller guarantees count uids at filtered.
+            (false, _) => unsafe { std::slice::from_raw_parts(filtered, count) },
+        };
+        let filtered: Vec<DeviceUid> = filtered.iter().map(|&u| u.into()).collect();
+        from_control(r.remote.set_v2ip_source_filter(sink.into(), &filtered))
+    })
+}
+
+/// Sets the window of a video wall OneIP output `tiling.target` shows.
+///
+/// `MXR_ERR_NOT_FOUND` for an output not heard from and
+/// `MXR_ERR_UNSUPPORTED` for one that is not a OneIP output.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_v2ip_tiling(
+    remote: *const mxr_remote_t,
+    tiling: mxr_tiling_config_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_v2ip_tiling(V2ipTilingConfig {
+            target: tiling.target.into(),
+            pos_x: tiling.pos_x,
+            pos_y: tiling.pos_y,
+            width: tiling.width,
+            height: tiling.height,
+        }))
+    })
+}
+
+/// Reads a NUL-terminated string out of a fixed-width field.
+fn field_str<'a>(field: &'a [c_char], what: &str) -> Result<&'a str, mxr_result_t> {
+    // SAFETY: c_char and u8 have the same size and alignment.
+    let bytes = unsafe { std::slice::from_raw_parts(field.as_ptr().cast::<u8>(), field.len()) };
+    std::ffi::CStr::from_bytes_until_nul(bytes)
+        .ok()
+        .and_then(|s| s.to_str().ok())
+        .ok_or_else(|| {
+            fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                &format!("{what} is not NUL-terminated UTF-8"),
+            )
+        })
+}
+
+/// Changes OneIP unit `settings.target`'s remote control and CEC settings.
+///
+/// The unit ignores `rc_status` and `status_name`, which are its own to
+/// report. `ip` empty sends no address. `MXR_ERR_INVALID_ARGUMENT` for an
+/// `ip` that is not IPv4, a field without its NUL, an `rc_status` above
+/// `MXR_RC_STATUS_MAX` or a `status_name` longer than
+/// `MXR_RC_STATUS_NAME_MAX`; `MXR_ERR_NOT_FOUND` for a unit not heard
+/// from and `MXR_ERR_UNSUPPORTED` for one that is not a OneIP unit.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `settings`
+/// is null or points at a readable [`mxr_rc_settings_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_rc_settings(
+    remote: *const mxr_remote_t,
+    settings: *const mxr_rc_settings_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees a readable struct or null.
+        let Some(s) = (unsafe { settings.as_ref() }) else {
+            return fail(mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "settings is null");
+        };
+        let ip = match field_str(&s.ip, "ip") {
+            Ok("") => None,
+            Ok(text) => match text.parse::<Ipv4Addr>() {
+                Ok(ip) => Some(ip),
+                Err(_) => {
+                    return fail(
+                        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                        &format!("ip is not an IPv4 address: {text:?}"),
+                    )
+                }
+            },
+            Err(rc) => return rc,
+        };
+        let status_name = match field_str(&s.status_name, "status_name") {
+            Ok(text) => text.to_owned(),
+            Err(rc) => return rc,
+        };
+        from_control(r.remote.set_rc_settings(&RcSettings {
+            target: s.target.into(),
+            rc_target: s.rc_target,
+            ip,
+            cec_enabled: s.cec_enabled,
+            cec_auto_on: s.cec_auto_on,
+            forward_rc: s.forward_rc,
+            forward_ir: s.forward_ir,
+            rc_status: s.rc_status,
+            status_name,
+        }))
+    })
+}
+
+/// Marks the setup of every unit that hears it completed, or not.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_mesh_setup_completed(
+    remote: *const mxr_remote_t,
+    completed: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_mesh_setup_completed(completed))
+    })
+}
+
+/// Sets the installer id of every unit that hears it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_mesh_installer(
+    remote: *const mxr_remote_t,
+    installer: u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.set_mesh_installer(installer))
+    })
 }
 
 /// Routes a OneIP sink's video, audio and ancillary streams to multicast groups
@@ -906,6 +1197,42 @@ pub unsafe extern "C" fn mxr_set_mesh_time(remote: *const mxr_remote_t, utc: u64
                 "the time does not fit the frame",
             ),
         }
+    })
+}
+
+/// Sends a mesh operation to every device.
+///
+/// A unit takes the operations that change a mesh from its controller or a
+/// management application, which this client announces itself as. Nothing
+/// acknowledges them: a unit that took one reports the mesh controller it
+/// follows from then on, which `on_mesh_master_changed` carries.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a null operation.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `operation`
+/// is null or points at an initialised struct.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_mesh_operation(
+    remote: *const mxr_remote_t,
+    operation: *const mxr_mesh_operation_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees an initialised struct or null.
+        let Some(op) = (unsafe { operation.as_ref() }) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the mesh operation is null",
+            );
+        };
+        from_control(r.remote.send_mesh_operation(MeshOperation {
+            kind: MeshOperationKind::from_wire(op.kind),
+            target: op.target.into(),
+            param: op.param.into(),
+        }))
     })
 }
 
@@ -3004,6 +3331,17 @@ mod tests {
     use std::ptr;
 
     use super::*;
+
+    #[test]
+    fn a_zero_uid_names_no_device() {
+        assert_eq!(uid_or_none(mxr_uid_t { bytes: [0; 16] }), None);
+        let mut bytes = [0; 16];
+        bytes[15] = 1;
+        assert_eq!(
+            uid_or_none(mxr_uid_t { bytes }),
+            Some(DeviceUid::from(mxr_uid_t { bytes }))
+        );
+    }
 
     fn entry(kind: u8) -> mxr_osd_sync_entry_t {
         mxr_osd_sync_entry_t {

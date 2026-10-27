@@ -27,9 +27,9 @@ use std::ffi::{c_char, c_void, CString};
 use mx_remote::{
     ActionTransmitRequest, ArcStatus, AudioChangeSource, AudioClip, BayNameChange, BayUid,
     DeviceUid, EdidProfileChange, EdidRecord, EdidRequest, EventHandler, FactoryResetRequest,
-    IrCapture, IrMeta, IrTransmitRequest, KeyTransmitRequest, LinkFeature, MultiviewerCommand,
-    PowerStatus, RcAction, RcKey, RebootRequest, SetRouteRequest, V2ipBlacklistChange,
-    V2ipPowerSaveRequest, VideoWallCommand, VolumeMuteStatus,
+    IrCapture, IrMeta, IrTransmitRequest, KeyTransmitRequest, LinkFeature, MeshControllerReport,
+    MeshOperation, MultiviewerCommand, PowerStatus, RcAction, RcKey, RebootRequest,
+    SetRouteRequest, V2ipBlacklistChange, V2ipPowerSaveRequest, VideoWallCommand, VolumeMuteStatus,
 };
 
 use crate::abi::{bay_or_zero, guard, mxr_bay_uid_t, mxr_tribool_t, mxr_uid_t};
@@ -347,6 +347,36 @@ pub struct mxr_audio_change_source_t {
     pub target_id: u16,
 }
 
+/// A mesh operation: what it asks, the device it concerns, and its parameter.
+///
+/// `kind` is one of the `MXR_MESH_OP_` values. `param` is a uid for every
+/// operation but `MXR_MESH_OP_REPORT_CONTROLLER`, where its first two 32-bit
+/// little-endian words carry the priority and the installer id.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct mxr_mesh_operation_t {
+    /// What the operation asks.
+    pub kind: u8,
+    /// The device it concerns.
+    pub target: mxr_uid_t,
+    /// Its parameter.
+    pub param: mxr_uid_t,
+}
+
+impl From<MeshOperation> for mxr_mesh_operation_t {
+    fn from(op: MeshOperation) -> Self {
+        Self {
+            kind: op.kind.to_wire(),
+            target: op.target.into(),
+            param: op.param.into(),
+        }
+    }
+}
+
+/// Carries a mesh operation a device sent.
+pub type mxr_mesh_operation_cb = Option<
+    extern "C" fn(userdata: *mut c_void, device: mxr_uid_t, operation: *const mxr_mesh_operation_t),
+>;
 /// Carries a request addressed to a device.
 pub type mxr_set_route_cb = Option<
     extern "C" fn(
@@ -642,6 +672,13 @@ pub struct mxr_callbacks_t {
     /// The bay's link to another device was removed. The arguments describe
     /// the link that went, and mean what they do on `on_bay_linked`.
     pub on_bay_unlinked: mxr_bay_unlinked_cb,
+    /// The device announced itself as a mesh controller differently; read it
+    /// with `mxr_device_info()`.
+    pub on_mesh_controller_report_changed: mxr_device_cb,
+    /// The device sent a mesh operation other than a membership report, which
+    /// `on_mesh_master_changed` covers, or a controller report, which
+    /// `on_mesh_controller_report_changed` covers.
+    pub on_mesh_operation_received: mxr_mesh_operation_cb,
 }
 
 /// The caller's cookie, which this library carries and never reads.
@@ -782,6 +819,15 @@ impl EventHandler for Bridge {
 
     fn on_mesh_master_changed(&self, device: DeviceUid, master: DeviceUid) {
         forward!(self.on_mesh_master_changed(device.into(), master.into()));
+    }
+
+    fn on_mesh_controller_report_changed(&self, device: DeviceUid, _report: MeshControllerReport) {
+        forward!(self.on_mesh_controller_report_changed(device.into()));
+    }
+
+    fn on_mesh_operation_received(&self, device: DeviceUid, operation: MeshOperation) {
+        let payload = mxr_mesh_operation_t::from(operation);
+        forward!(self.on_mesh_operation_received(device.into(), &payload));
     }
 
     fn on_topology_changed(&self, device: DeviceUid, _topology: Vec<mx_remote::TopologyEntry>) {

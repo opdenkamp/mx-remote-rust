@@ -6,7 +6,11 @@
 use std::time::{Duration, Instant};
 
 use crate::event::Event;
-use crate::wire::{op, BayFeatures, BayStatus, BayUid, DeviceFeature, V2IP_PORT_VIDEO};
+use crate::types::{MeshControllerReport, MeshOperation};
+use crate::wire::{
+    op, BayFeatures, BayStatus, BayUid, DeviceFeature, DeviceUid, MeshOperationKind,
+    V2IP_PORT_VIDEO,
+};
 
 use crate::testing::{bay_config_rec, link_rec, poisoned, stream_rec, uid_n};
 
@@ -289,6 +293,101 @@ fn a_mesh_report_below_its_own_gate_is_not_a_master() {
     // The gate's own version is enough; nothing here needs the table entry.
     h.feed_proto(op::MESH_OPERATION, 0x1A, &mesh);
     assert_eq!(h.device().mesh_master, master);
+}
+
+/// Every mesh operation other than the two reports reaches the caller as it
+/// arrived, so a controller can follow promotions and registrations it did not
+/// send, and an operation this library has no name for is passed on rather
+/// than dropped. None of them names the sender's mesh master.
+#[test]
+fn a_mesh_operation_arrives_as_an_event() {
+    let mut h = Harness::new(4);
+    h.hello(
+        0x2F,
+        "ONEIP",
+        "MO0001",
+        DeviceFeature::V2IP_SINK | DeviceFeature::MESH,
+    );
+    let target = uid_n(41);
+    let param = uid_n(42);
+    for kind in [0u8, 1, 2, 3, 5, 6, 7, 0x80] {
+        h.events.clear();
+        let mut mesh = poisoned(40);
+        mesh[0] = kind;
+        mesh[4..20].copy_from_slice(target.as_bytes());
+        mesh[20..36].copy_from_slice(param.as_bytes());
+        h.feed(op::MESH_OPERATION, &mesh);
+        let expected = MeshOperation {
+            kind: MeshOperationKind::from_wire(kind),
+            target,
+            param,
+        };
+        assert!(
+            h.saw(
+                |e| matches!(e, Event::MeshOperationReceived { device, operation }
+                if *device == h.sender && *operation == expected)
+            ),
+            "operation {kind:#04x} did not arrive as sent"
+        );
+        assert_eq!(
+            h.device().mesh_master,
+            DeviceUid::ZERO,
+            "operation {kind:#04x}"
+        );
+    }
+}
+
+/// A controller report is the sender's own: its priority and installer id
+/// each come from the low half of a 32-bit word, as a unit reads them, and
+/// the installer is there only from the version that added it.
+#[test]
+fn a_controller_report_is_recorded_on_its_sender() {
+    let mut h = Harness::new(5);
+    h.hello(0x2F, "ONEIP", "CR0001", DeviceFeature::MESH);
+    let mut mesh = poisoned(40);
+    mesh[0] = 4;
+    mesh[4..20].copy_from_slice(h.sender.as_bytes());
+    mesh[20..24].copy_from_slice(&[0x07, 0x01, 0xEF, 0xBE]);
+    mesh[24..28].copy_from_slice(&[0x42, 0x03, 0xFE, 0xCA]);
+
+    h.feed_proto(op::MESH_OPERATION, 0x1C, &mesh);
+    assert_eq!(
+        h.device().mesh_controller_report,
+        Some(MeshControllerReport {
+            priority: 0x0107,
+            installer: 0,
+        }),
+        "an installer was read below the version that carries it"
+    );
+
+    h.events.clear();
+    h.feed_proto(op::MESH_OPERATION, 0x1D, &mesh);
+    assert_eq!(
+        h.device().mesh_controller_report,
+        Some(MeshControllerReport {
+            priority: 0x0107,
+            installer: 0x0342,
+        })
+    );
+    assert!(h.saw(|e| matches!(e, Event::MeshControllerReportChanged { .. })));
+
+    h.events.clear();
+    h.feed_proto(op::MESH_OPERATION, 0x1D, &mesh);
+    assert!(
+        !h.saw(|e| matches!(e, Event::MeshControllerReportChanged { .. })),
+        "an unchanged report was announced again"
+    );
+
+    let mut other = Harness::new(6);
+    other.hello(0x2F, "ONEIP", "CR0002", DeviceFeature::MESH);
+    mesh[4..20].copy_from_slice(uid_n(43).as_bytes());
+    other.feed(op::MESH_OPERATION, &mesh);
+    assert_eq!(
+        other.device().mesh_controller_report,
+        None,
+        "a report about another device was filed on the sender"
+    );
+    assert!(!other.saw(|e| matches!(e, Event::MeshOperationReceived { .. })));
 }
 
 /// A frame from a device this client has never heard of is not acted on.

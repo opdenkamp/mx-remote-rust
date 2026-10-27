@@ -296,6 +296,94 @@ fn the_announcement_describes_this_client() {
     peer.close();
 }
 
+/// A controller replacing a unit has to be told apart in the device list by
+/// a serial and version of its own. A mesh device announces mesh support
+/// rather than management, membership while it follows a controller, and the
+/// controller role while that controller is itself.
+#[test]
+fn the_announcement_carries_the_identity_and_role_it_was_given() {
+    let remote = Remote::new(
+        Config {
+            uid: Some(uid_n(209)),
+            serial: Some("P9SN66660600".to_owned()),
+            version: Some("1.2.3".to_owned()),
+            mesh_device: true,
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    let tap = Arc::new(Tap::default());
+    let sink = Arc::clone(&tap);
+    lock(&remote.shared.tx).set_tap(Arc::new(move |frame: &[u8]| {
+        sink.0
+            .lock()
+            .expect("the tap is only ever locked to push or read")
+            .push(frame.to_vec())
+    }));
+    let peer = Remote::new(
+        Config {
+            uid: Some(uid_n(210)),
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    let heard = |peer: &Remote| {
+        let frame = tap.frames().pop().expect("nothing was announced");
+        peer.shared
+            .process_datagram(&frame, Ipv4Addr::new(10, 8, 8, 1));
+        peer.device(remote.uid())
+            .expect("a peer could not decode this client's announcement")
+    };
+    let role = |f: DeviceFeature| {
+        (
+            f.has(DeviceFeature::MESH_MEMBER),
+            f.has(DeviceFeature::MESH_MASTER),
+        )
+    };
+
+    remote.shared.announce();
+    let seen = heard(&peer);
+    assert_eq!(seen.serial, "P9SN66660600");
+    assert_eq!(seen.version, "1.2.3");
+    assert!(seen.features.has(DeviceFeature::MESH));
+    assert!(
+        !seen.features.has(DeviceFeature::MANAGER),
+        "a mesh device announced management"
+    );
+    assert!(seen.features.has(DeviceFeature::CONFIG_INITIALISED));
+    assert_eq!(role(seen.features), (false, false));
+
+    tap.clear();
+    remote.set_mesh_controller(uid_n(211));
+    assert_eq!(remote.mesh_controller(), uid_n(211));
+    assert_eq!(
+        role(heard(&peer).features),
+        (true, false),
+        "following another controller"
+    );
+
+    tap.clear();
+    remote.set_mesh_controller(remote.uid());
+    assert_eq!(
+        role(heard(&peer).features),
+        (true, true),
+        "taking the role was not announced"
+    );
+
+    tap.clear();
+    remote.set_mesh_controller(remote.uid());
+    assert!(
+        tap.frames().is_empty(),
+        "an unchanged controller was re-announced"
+    );
+
+    remote.set_mesh_controller(DeviceUid::ZERO);
+    assert_eq!(role(heard(&peer).features), (false, false));
+    peer.close();
+}
+
 /// An event reaches the handler after the state lock is released, so a handler
 /// may read the state the event describes without deadlocking.
 #[test]

@@ -169,6 +169,14 @@ pub struct RcSettings {
     pub status_name: String,
 }
 
+/// The longest driver status text [`RcSettings::status_name`] carries, in
+/// bytes: its field is 16 bytes and ends in a NUL.
+pub const RC_STATUS_NAME_MAX: usize = 15;
+
+/// The highest driver state [`RcSettings::rc_status`] has room for on the
+/// wire.
+pub const RC_STATUS_MAX: u8 = 0xF;
+
 /// The raw-IR metadata shared by the IR capture and transmit frames.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IrMeta {

@@ -136,7 +136,8 @@ inline std::string last_error() { return std::string(mxr_last_error()); }
     X(on_discover_request) \
     X(on_monitoring_pulse) \
     X(on_upgrade_fpga_requested) \
-    X(on_detect_bays_requested)
+    X(on_detect_bays_requested) \
+    X(on_mesh_controller_report_changed)
 
 #define MXR_EVENTS_DEVICE_BOOL(X) \
     X(on_device_online_changed) \
@@ -208,7 +209,8 @@ inline std::string last_error() { return std::string(mxr_last_error()); }
     X(on_action_transmit_requested, mxr_action_transmit_request_t) \
     X(on_ir_transmit_requested, mxr_ir_transmit_request_t) \
     X(on_blacklist_changed, mxr_blacklist_change_t) \
-    X(on_video_wall_command, mxr_video_wall_command_t)
+    X(on_video_wall_command, mxr_video_wall_command_t) \
+    X(on_mesh_operation_received, mxr_mesh_operation_t)
 
 #define MXR_EVENTS_BAY_PAYLOAD(X) \
     X(on_ir_captured, mxr_ir_capture_t)
@@ -576,6 +578,19 @@ public:
         char buf[MXR_NAME_LEN];
         if (mxr_remote_name(h_, buf, sizeof buf) != MXR_OK) return std::string();
         return std::string(buf);
+    }
+
+    /// Sets the mesh controller this client announces it follows: zero for
+    /// none, its own uid while it is the controller.
+    mxr_result_t set_mesh_controller(Uid controller) const {
+        return mxr_remote_set_mesh_controller(h_, controller.raw);
+    }
+
+    /// The mesh controller this client announces it follows, zero for none.
+    Uid mesh_controller() const {
+        Uid out;
+        mxr_remote_mesh_controller(h_, &out.raw);
+        return out;
     }
 
     /// The address this client sends to. False before `start()`.

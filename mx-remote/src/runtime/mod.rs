@@ -45,7 +45,7 @@ use schedule::Schedule;
 /// The name this client advertises when the caller sets none.
 const DEFAULT_NAME: &str = "MXR Rust";
 
-/// The serial this client advertises.
+/// The serial this client advertises when the caller sets none.
 ///
 /// A client is not a unit with a serial number, but the field is fixed-width
 /// and every device fills it, so it carries a constant rather than a blank.
@@ -121,6 +121,11 @@ pub struct Config {
     pub broadcast: bool,
     /// The name this client advertises. Unset means `MXR Rust`.
     pub name: Option<String>,
+    /// The serial number this client advertises. Unset means `P9SN00000000`.
+    pub serial: Option<String>,
+    /// The firmware version this client advertises. Unset means this
+    /// library's version.
+    pub version: Option<String>,
     /// This client's identifier. Unset loads it from
     /// [`Config::uid_path`], generating and storing one on first run.
     pub uid: Option<DeviceUid>,
@@ -130,12 +135,25 @@ pub struct Config {
     /// The TCP port units fetch an overlay sync's logo images from. Unset
     /// picks a free one when the first sync with images is sent.
     pub logo_port: Option<u16>,
+    /// Announce this client as a mesh device rather than a management
+    /// application.
+    ///
+    /// A mesh device announces mesh support instead of management, which is
+    /// what a mesh takes as a member and can hand its controller role to.
+    /// Units then take writes from it only while they follow it as their
+    /// controller.
+    pub mesh_device: bool,
 }
 
 /// Everything the threads share.
 struct Shared {
     uid: DeviceUid,
     name: String,
+    serial: String,
+    version: String,
+    mesh_device: bool,
+    /// The mesh controller this client follows, zero for none.
+    mesh_controller: Mutex<DeviceUid>,
     handler: Arc<dyn EventHandler>,
     state: Mutex<State>,
     tx: Mutex<Tx>,
@@ -210,10 +228,16 @@ impl Remote {
             None => load_uid(config.uid_path.clone())?,
         };
         let name = config.name.unwrap_or_else(|| DEFAULT_NAME.to_owned());
+        let serial = config.serial.unwrap_or_else(|| CLIENT_SERIAL.to_owned());
+        let version = config.version.unwrap_or_else(|| VERSION.to_owned());
         Ok(Self {
             shared: Arc::new(Shared {
                 uid,
                 name,
+                serial,
+                version,
+                mesh_device: config.mesh_device,
+                mesh_controller: Mutex::new(DeviceUid::ZERO),
                 handler,
                 state: Mutex::new(State::new(uid)),
                 tx: Mutex::new(Tx::default()),
@@ -294,6 +318,39 @@ impl Remote {
     /// The name this client advertises.
     pub fn name(&self) -> &str {
         &self.shared.name
+    }
+
+    /// The serial number this client advertises.
+    pub fn serial(&self) -> &str {
+        &self.shared.serial
+    }
+
+    /// The firmware version this client advertises.
+    pub fn version(&self) -> &str {
+        &self.shared.version
+    }
+
+    /// The mesh controller this client announces it follows, zero for none.
+    pub fn mesh_controller(&self) -> DeviceUid {
+        *lock(&self.shared.mesh_controller)
+    }
+
+    /// Sets the mesh controller this client announces it follows: the zero
+    /// uid for none, and its own uid while it is the controller.
+    ///
+    /// The hello then announces mesh membership while there is one, and the
+    /// mesh controller role while it is this client. Only the announcement
+    /// changes: membership reports, and the units that follow this client,
+    /// are the caller's to keep in step. A change is announced at once rather
+    /// than at the next scheduled hello.
+    pub fn set_mesh_controller(&self, controller: DeviceUid) {
+        let changed = {
+            let mut stored = lock(&self.shared.mesh_controller);
+            std::mem::replace(&mut *stored, controller) != controller
+        };
+        if changed {
+            self.shared.announce();
+        }
     }
 
     /// The address frames are being sent to, once started.
@@ -714,15 +771,27 @@ impl Shared {
     /// overlay sync manager, which is what has the controller leave units'
     /// requests for a new sync to it.
     fn announce(&self) {
-        let mut features = DeviceFeature::MANAGER | DeviceFeature::CONFIG_INITIALISED;
+        let mut features = DeviceFeature::CONFIG_INITIALISED;
+        features |= if self.mesh_device {
+            DeviceFeature::MESH
+        } else {
+            DeviceFeature::MANAGER
+        };
         if lock(&self.osd).holds() {
             features |= DeviceFeature::OSD_SYNC;
+        }
+        let controller = *lock(&self.mesh_controller);
+        if !controller.is_zero() {
+            features |= DeviceFeature::MESH_MEMBER;
+        }
+        if controller == self.uid {
+            features |= DeviceFeature::MESH_MASTER;
         }
         let payload = build_hello(
             PROTOCOL_VERSION,
             &self.name,
-            CLIENT_SERIAL,
-            VERSION,
+            &self.serial,
+            &self.version,
             features.bits(),
         );
         match self.send(&Addressee::Broadcast, op::SYS_HELLO, &payload) {

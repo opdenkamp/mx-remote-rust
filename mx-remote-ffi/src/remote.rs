@@ -70,6 +70,16 @@ pub struct mxr_config_t {
     /// The TCP port units fetch an overlay sync's logo images from. Zero
     /// picks a free one when the first sync with images is sent.
     pub logo_port: u16,
+    /// The serial number this client advertises. Null means a default.
+    pub serial: *const c_char,
+    /// The firmware version this client advertises. Null means this library's
+    /// version.
+    pub version: *const c_char,
+    /// Announce this client as a mesh device rather than a management
+    /// application: mesh support instead of management, which is what a mesh
+    /// takes as a member and can hand its controller role to. Units then take
+    /// writes from it only while they follow it as their controller.
+    pub mesh_device: bool,
 }
 
 /// Reads an address argument, where null means "not set".
@@ -102,12 +112,14 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
         )
     };
     // SAFETY: as above.
-    let (interface, name, uid_text, uid_path) = unsafe {
+    let (interface, name, uid_text, uid_path, serial, version) = unsafe {
         (
             opt_str(c.interface)?,
             opt_str(c.name)?,
             opt_str(c.uid)?,
             opt_str(c.uid_path)?,
+            opt_str(c.serial)?,
+            opt_str(c.version)?,
         )
     };
     let uid = match uid_text {
@@ -129,9 +141,12 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.interface = interface.map(str::to_owned);
     config.broadcast = c.broadcast;
     config.name = name.map(str::to_owned);
+    config.serial = serial.map(str::to_owned);
+    config.version = version.map(str::to_owned);
     config.uid = uid;
     config.uid_path = uid_path.map(PathBuf::from);
     config.logo_port = (c.logo_port != 0).then_some(c.logo_port);
+    config.mesh_device = c.mesh_device;
     Ok(config)
 }
 
@@ -325,6 +340,57 @@ pub unsafe extern "C" fn mxr_remote_name(
             unsafe { std::slice::from_raw_parts_mut(out, cap) },
             r.remote.name(),
         );
+        mxr_result_t::MXR_OK
+    })
+}
+
+/// Sets the mesh controller this client announces it follows: the zero uid
+/// for none, and its own uid while it is the controller.
+///
+/// The hello then announces mesh membership while there is one, and the mesh
+/// controller role while it is this client. Only the announcement changes:
+/// membership reports, and the units that follow this client, are the
+/// caller's to keep in step. A change is announced at once.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_remote_set_mesh_controller(
+    remote: *const mxr_remote_t,
+    controller: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        r.remote.set_mesh_controller(controller.into());
+        mxr_result_t::MXR_OK
+    })
+}
+
+/// Writes the mesh controller this client announces it follows, zero for
+/// none.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// [`mxr_uid_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_remote_mesh_controller(
+    remote: *const mxr_remote_t,
+    out: *mut mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if out.is_null() {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "controller output pointer is null",
+            );
+        }
+        // SAFETY: checked non-null just above.
+        unsafe { *out = r.remote.mesh_controller().into() };
         mxr_result_t::MXR_OK
     })
 }

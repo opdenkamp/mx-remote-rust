@@ -37,6 +37,9 @@ fn client(name: &CStr, uid: &CStr) -> *mut mxr_remote_t {
         uid: uid.as_ptr(),
         uid_path: ptr::null(),
         logo_port: 0,
+        serial: ptr::null(),
+        version: ptr::null(),
+        mesh_device: false,
     };
     // SAFETY: every pointer in the config is a live NUL-terminated string, and
     // a null callback table asks for no callbacks.
@@ -170,6 +173,175 @@ fn a_client_reports_the_identifier_and_name_it_was_given() {
 }
 
 #[test]
+fn the_announced_mesh_controller_follows_the_last_call() {
+    let name = CString::new("controller").expect("no NUL");
+    let uid_text = CString::new("00000008.00000000.00000000.00000000").expect("no NUL");
+    let handle = client(&name, &uid_text);
+    let read = |handle| {
+        let mut out = uid_n(0xEE);
+        // SAFETY: the handle is live and the output is writable.
+        let rc = unsafe { mxr_remote_mesh_controller(handle, &mut out) };
+        assert_eq!(rc, mxr_result_t::MXR_OK);
+        out
+    };
+
+    assert_eq!(read(handle), mxr_uid_t::default());
+    // SAFETY: the handle is live.
+    let rc = unsafe { mxr_remote_set_mesh_controller(handle, uid_n(8)) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+    assert_eq!(read(handle), uid_n(8));
+    // SAFETY: the handle is live.
+    let rc = unsafe { mxr_remote_set_mesh_controller(handle, mxr_uid_t::default()) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+    assert_eq!(read(handle), mxr_uid_t::default());
+
+    // SAFETY: a null handle is allowed and refused.
+    let rc = unsafe { mxr_remote_set_mesh_controller(ptr::null(), uid_n(8)) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: the handle is live, and a null output is allowed and refused.
+    let rc = unsafe { mxr_remote_mesh_controller(handle, ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(handle) };
+}
+
+#[test]
+fn a_mesh_operation_must_be_given() {
+    let name = CString::new("mesh").expect("no NUL");
+    let uid_text = CString::new("00000009.00000000.00000000.00000000").expect("no NUL");
+    let handle = client(&name, &uid_text);
+
+    // SAFETY: the handle is live, and a null operation is allowed and refused.
+    let rc = unsafe { mxr_send_mesh_operation(handle, ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(handle) };
+}
+
+#[test]
+fn a_source_list_is_checked_before_it_is_sent() {
+    let name = CString::new("sources").expect("no NUL");
+    let uid_text = CString::new("0000000a.00000000.00000000.00000000").expect("no NUL");
+    let handle = client(&name, &uid_text);
+    let bad = CString::new("239.1.2").expect("no NUL");
+    let slot = |ip: *const c_char| mxr_stream_addr_t { ip, port: 50020 };
+    let entry = mxr_v2ip_source_entry_t {
+        uid: uid_n(10),
+        video: slot(bad.as_ptr()),
+        audio: slot(ptr::null()),
+        anc: slot(ptr::null()),
+    };
+
+    // SAFETY: the handle is live, and a null list with a count is refused.
+    let rc = unsafe { mxr_send_v2ip_source_list(handle, ptr::null(), 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: the handle is live and the entry's strings outlive the call.
+    let rc = unsafe { mxr_send_v2ip_source_list(handle, &entry, 1) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "an address that is not IPv4 was sent"
+    );
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(handle) };
+}
+
+/// Copies `text` into a fixed-width field, NUL-padded.
+fn to_field<const N: usize>(text: &str) -> [c_char; N] {
+    let mut out = [0 as c_char; N];
+    for (dst, b) in out.iter_mut().zip(text.bytes()) {
+        *dst = b as c_char;
+    }
+    out
+}
+
+#[test]
+fn a_mesh_write_is_checked_before_it_is_sent() {
+    let name = CString::new("writes").expect("no NUL");
+    let uid_text = CString::new("0000000b.00000000.00000000.00000000").expect("no NUL");
+    let handle = client(&name, &uid_text);
+    let unknown = uid_n(11);
+    let settings = |ip: &str, status: &str| mxr_rc_settings_t {
+        target: unknown,
+        rc_target: 1,
+        ip: to_field(ip),
+        cec_enabled: true,
+        cec_auto_on: false,
+        forward_rc: false,
+        forward_ir: false,
+        rc_status: 0,
+        status_name: to_field(status),
+    };
+
+    // SAFETY: the handle is live; every pointer below is null or outlives the
+    // call that reads it.
+    unsafe {
+        assert_eq!(
+            mxr_set_v2ip_mirroring(handle, unknown, uid_n(0)),
+            mxr_result_t::MXR_ERR_NOT_FOUND
+        );
+        assert_eq!(
+            mxr_set_v2ip_source_filter(handle, unknown, ptr::null(), 1),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        let too_many = vec![uid_n(12); MXR_V2IP_SOURCE_FILTER_MAX + 1];
+        assert_eq!(
+            mxr_set_v2ip_source_filter(handle, unknown, too_many.as_ptr(), too_many.len()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            mxr_set_v2ip_source_filter(handle, unknown, ptr::null(), 0),
+            mxr_result_t::MXR_ERR_NOT_FOUND
+        );
+        let tiling = mxr_tiling_config_t {
+            target: unknown,
+            pos_x: 0,
+            pos_y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        assert_eq!(
+            mxr_set_v2ip_tiling(handle, tiling),
+            mxr_result_t::MXR_ERR_NOT_FOUND
+        );
+
+        assert_eq!(
+            mxr_set_rc_settings(handle, ptr::null()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        let bad_ip = settings("10.1.2", "");
+        assert_eq!(
+            mxr_set_rc_settings(handle, &bad_ip),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+            "an address that is not IPv4 was sent"
+        );
+        let unterminated = settings("", &"N".repeat(MXR_NAME_LEN));
+        assert_eq!(
+            mxr_set_rc_settings(handle, &unterminated),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+            "an unterminated status text was sent"
+        );
+        let too_long = settings("", &"N".repeat(MXR_RC_STATUS_NAME_MAX + 1));
+        assert_eq!(
+            mxr_set_rc_settings(handle, &too_long),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        let good = settings("192.168.7.21", "Connected");
+        assert_eq!(
+            mxr_set_rc_settings(handle, &good),
+            mxr_result_t::MXR_ERR_NOT_FOUND,
+            "a well-formed request did not reach the device lookup"
+        );
+    }
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(handle) };
+}
+
+#[test]
 fn a_client_that_was_never_started_has_no_target() {
     let name = CString::new("unstarted").expect("no NUL");
     let uid_text = CString::new("00000001.00000000.00000000.00000000").expect("no NUL");
@@ -218,6 +390,9 @@ fn a_configuration_that_cannot_be_read_yields_no_client() {
         uid: ptr::null(),
         uid_path: ptr::null(),
         logo_port: 0,
+        serial: ptr::null(),
+        version: ptr::null(),
+        mesh_device: false,
     };
     // SAFETY: every non-null pointer in the config is a live NUL-terminated
     // string, and a null callback table asks for no callbacks.
@@ -421,8 +596,14 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 39] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 40] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
+        (
+            "MXR_MESH_OP_",
+            core_bits(&enums, "MeshOperationKind"),
+            &[],
+            9,
+        ),
         (
             "MXR_BAY_",
             core_bits(&enums, "BayFeatures"),

@@ -10,9 +10,10 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, ThirdPartyVendor, UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings,
-    V2ipDownmix, V2ipPtpMessages, V2ipTestcard, V2ipVlan, VideoWallOp, VideoWallWindow,
-    VolumeMuteStatus, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, MeshOperation, RcSettings, ThirdPartyVendor, UnitNetConfig, V2ipAudioFormat,
+    V2ipDeviceSettings, V2ipDownmix, V2ipPtpMessages, V2ipStreamSources, V2ipTestcard,
+    V2ipTilingConfig, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, RC_STATUS_NAME_MAX,
+    VIDEO_WALL_CLEARED,
 };
 
 use super::constants::{TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX};
@@ -291,6 +292,114 @@ pub(crate) fn build_sink_sdp_pages(target: DeviceUid, sdp: &[u8]) -> Vec<Vec<u8>
             p.extend_from_slice(&(chunk.len() as u16).to_le_bytes());
             p.extend_from_slice(&[0, 0]);
             p.extend_from_slice(chunk);
+            p
+        })
+        .collect()
+}
+
+/// Builds the `BAY_MIRROR_STATUS` (0x32) payload: the output that mirrors,
+/// then the output it mirrors, all zero for none.
+pub(crate) fn build_mirror_status(sink: DeviceUid, mirrored: Option<DeviceUid>) -> Vec<u8> {
+    let mut p = Vec::with_capacity(32);
+    p.extend_from_slice(sink.as_bytes());
+    p.extend_from_slice(mirrored.unwrap_or_default().as_bytes());
+    p
+}
+
+/// Builds the `BAY_FILTER_STATUS` (0x38) payload: the output, then each
+/// source it may not show.
+pub(crate) fn build_filter_status(sink: DeviceUid, filtered: &[DeviceUid]) -> Vec<u8> {
+    let mut p = Vec::with_capacity((1 + filtered.len()) * 16);
+    p.extend_from_slice(sink.as_bytes());
+    for uid in filtered {
+        p.extend_from_slice(uid.as_bytes());
+    }
+    p
+}
+
+/// Builds the `V2IP_TILING` (0x40) payload: the output, then its window's
+/// origin and size.
+pub(crate) fn build_tiling(tiling: &V2ipTilingConfig) -> Vec<u8> {
+    let mut p = Vec::with_capacity(24);
+    p.extend_from_slice(tiling.target.as_bytes());
+    for v in [tiling.pos_x, tiling.pos_y, tiling.width, tiling.height] {
+        p.extend_from_slice(&v.to_le_bytes());
+    }
+    p
+}
+
+/// Builds the `RC_SETTINGS` (0x45) payload, 48 bytes: the unit, the control
+/// method and three bytes of padding, the controlled device's address in
+/// network order, the flags in a 16-bit field and a reserved one, the status
+/// text in 16 bytes, and four bytes of padding. The caller has checked the
+/// state fits its four bits and the text its field.
+pub(crate) fn build_rc_settings(settings: &RcSettings) -> Vec<u8> {
+    let mut p = Vec::with_capacity(48);
+    p.extend_from_slice(settings.target.as_bytes());
+    p.push(settings.rc_target);
+    p.extend_from_slice(&[0; 3]);
+    p.extend_from_slice(&settings.ip.unwrap_or(Ipv4Addr::UNSPECIFIED).octets());
+    let flags = u16::from(settings.cec_enabled)
+        | u16::from(settings.cec_auto_on) << 1
+        | u16::from(settings.forward_rc) << 2
+        | u16::from(settings.forward_ir) << 3
+        | u16::from(settings.rc_status) << 4;
+    p.extend_from_slice(&flags.to_le_bytes());
+    p.extend_from_slice(&[0; 2]);
+    append_fixed_str(&mut p, &settings.status_name, RC_STATUS_NAME_MAX + 1);
+    p.extend_from_slice(&[0; 4]);
+    p
+}
+
+/// Width of one record of a `SYS_BAY_V2IP_SOURCES` (0x26) list.
+pub(crate) const V2IP_SOURCE_RECORD_LEN: usize = 40;
+
+/// Records of a `SYS_BAY_V2IP_SOURCES` (0x26) list one frame carries: as many
+/// as fit the largest payload behind the 8-byte page header.
+pub(crate) const V2IP_SOURCES_PER_FRAME: usize = 36;
+
+/// Builds the `SYS_BAY_V2IP_SOURCES` (0x26) frames carrying a whole source
+/// list.
+///
+/// Each record is the source's uid, then its video, audio and ancillary
+/// stream addresses. A list that fits one frame goes as bare records; a longer
+/// one goes in pages, each led by the index of its first record and the
+/// length of the whole list, so a receiver can tell when it holds all of it.
+/// An empty list is one frame with no records.
+///
+/// The list holds at most 65535 records, which the caller checks.
+pub(crate) fn build_v2ip_source_frames(sources: &[V2ipStreamSources]) -> Vec<Vec<u8>> {
+    let record = |p: &mut Vec<u8>, s: &V2ipStreamSources| {
+        p.extend_from_slice(s.uid.as_bytes());
+        for stream in [s.video, s.audio, s.anc] {
+            append_stream_addr(
+                p,
+                StreamAddr {
+                    ip: stream.ip,
+                    port: stream.port,
+                },
+            );
+        }
+    };
+    if sources.len() <= V2IP_SOURCES_PER_FRAME {
+        let mut p = Vec::with_capacity(sources.len() * V2IP_SOURCE_RECORD_LEN);
+        for s in sources {
+            record(&mut p, s);
+        }
+        return vec![p];
+    }
+    let total = sources.len() as u16;
+    sources
+        .chunks(V2IP_SOURCES_PER_FRAME)
+        .enumerate()
+        .map(|(i, page)| {
+            let mut p = Vec::with_capacity(8 + page.len() * V2IP_SOURCE_RECORD_LEN);
+            p.extend_from_slice(&((i * V2IP_SOURCES_PER_FRAME) as u16).to_le_bytes());
+            p.extend_from_slice(&total.to_le_bytes());
+            p.extend_from_slice(&[0; 4]);
+            for s in page {
+                record(&mut p, s);
+            }
             p
         })
         .collect()
@@ -631,20 +740,18 @@ pub(crate) fn build_v2ip_vlan(target: DeviceUid, vlan: &V2ipVlan) -> Vec<u8> {
     p
 }
 
-/// Mesh operations this library sends on `MESH_OPERATION` (0x3B).
-pub(crate) mod mesh_op {
-    /// Hand the target's source addresses back to automatic assignment.
-    pub(crate) const AUTO_ADDRESSES: u8 = 6;
-}
+/// Size of a `MESH_OPERATION` payload.
+pub(crate) const MESH_OPERATION_SIZE: usize = 40;
 
-/// Builds a `MESH_OPERATION` payload that names only its target: 40 bytes,
-/// the operation at 0, three bytes of padding, the target uid at 4, then the
-/// parameter uid at 20 and the struct's trailing padding, both zero.
-pub(crate) fn build_mesh_operation(operation: u8, target: DeviceUid) -> Vec<u8> {
-    let mut p = Vec::with_capacity(40);
-    p.extend_from_slice(&[operation, 0, 0, 0]);
-    p.extend_from_slice(target.as_bytes());
-    p.resize(40, 0);
+/// Builds a `MESH_OPERATION` payload: 40 bytes, the operation at 0, three
+/// bytes of padding, the target uid at 4, the parameter at 20, then the
+/// struct's trailing padding, zero.
+pub(crate) fn build_mesh_operation(operation: &MeshOperation) -> Vec<u8> {
+    let mut p = Vec::with_capacity(MESH_OPERATION_SIZE);
+    p.extend_from_slice(&[operation.kind.to_wire(), 0, 0, 0]);
+    p.extend_from_slice(operation.target.as_bytes());
+    p.extend_from_slice(operation.param.as_bytes());
+    p.resize(MESH_OPERATION_SIZE, 0);
     p
 }
 

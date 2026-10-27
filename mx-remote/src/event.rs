@@ -199,6 +199,12 @@ events! {
         AudioEndpointsChanged => on_audio_endpoints_changed(endpoints: AudioEndpoints);
         /// The device reported its mesh master.
         MeshMasterChanged => on_mesh_master_changed(master: DeviceUid);
+        /// The device announced itself as a mesh controller differently.
+        MeshControllerReportChanged => on_mesh_controller_report_changed(report: MeshControllerReport);
+        /// The device sent a mesh operation other than a membership or
+        /// controller report, which [`Event::MeshMasterChanged`] and
+        /// [`Event::MeshControllerReportChanged`] cover.
+        MeshOperationReceived => on_mesh_operation_received(operation: MeshOperation);
         /// The device reported its view of the mesh topology.
         TopologyChanged => on_topology_changed(topology: Vec<TopologyEntry>);
         /// A ProAmp8 reported its Dolby settings.
