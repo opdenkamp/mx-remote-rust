@@ -428,7 +428,9 @@ impl Remote {
     }
 
     /// How a OneIP source unit's streams are encrypted, as it last reported
-    /// it, `None` until it has reported.
+    /// it, `None` until it has reported since its hello last showed it may
+    /// have restarted: it was offline, its reboot toggle flipped, or it is
+    /// about to reboot.
     pub fn v2ip_privacy(&self, uid: DeviceUid) -> Option<V2ipPrivacy> {
         self.shared.read(|state| state.device(uid)?.v2ip_privacy)
     }

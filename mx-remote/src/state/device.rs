@@ -1212,11 +1212,11 @@ impl Device {
         });
     }
 
-    pub(crate) fn set_v2ip_privacy(&mut self, privacy: V2ipPrivacy, ev: &mut Vec<Event>) {
-        if self.v2ip_privacy == Some(privacy) {
+    pub(crate) fn set_v2ip_privacy(&mut self, privacy: Option<V2ipPrivacy>, ev: &mut Vec<Event>) {
+        if self.v2ip_privacy == privacy {
             return;
         }
-        self.v2ip_privacy = Some(privacy);
+        self.v2ip_privacy = privacy;
         ev.push(Event::V2ipPrivacyChanged {
             device: self.uid,
             privacy,

@@ -115,6 +115,16 @@ pub(crate) fn process_frame(
     };
     let mut ev = Vec::new();
     dispatch(state, &rx, &mut ev);
+    // A source unit's video processor picks a new key generator every boot,
+    // and the reports it sent while this client could not hear it are lost,
+    // so what it reported before would decrypt its new streams as noise.
+    if opcode == op::SYS_HELLO {
+        if let (Some(b), Some(device)) = (&before, state.device_mut(sender)) {
+            if b.may_have_restarted(device) {
+                device.set_v2ip_privacy(None, &mut ev);
+            }
+        }
+    }
     // Any frame from a device still counted alive keeps it so, as a unit
     // keeps it: online detection must not rest on hello frames alone. Once
     // it has gone silent long enough to count as offline, only a hello brings
@@ -144,6 +154,16 @@ impl Heard {
             away: !device.is_online(timestamp),
             boot_bit: device.hello.features.has(DeviceFeature::BOOT_BIT),
         }
+    }
+
+    /// Whether a device's hello shows it may have restarted since this client
+    /// last heard it: it was offline, its reboot toggle flipped, or it is
+    /// about to reboot.
+    fn may_have_restarted(&self, device: &Device) -> bool {
+        let features = device.hello.features;
+        self.away
+            || self.boot_bit != features.has(DeviceFeature::BOOT_BIT)
+            || features.has(DeviceFeature::STATUS_REBOOT)
     }
 
     /// Whether a device just heard may hold state this client never received.

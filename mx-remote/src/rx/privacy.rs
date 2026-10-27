@@ -48,7 +48,7 @@ pub(super) fn privacy(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         anc: at(2),
     };
     if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_v2ip_privacy(privacy, ev);
+        device.set_v2ip_privacy(Some(privacy), ev);
     }
 }
 

@@ -4,9 +4,10 @@
 //! How a source unit's streams are encrypted (0x54).
 
 use std::net::Ipv4Addr;
+use std::time::{Duration, Instant};
 
 use crate::event::Event;
-use crate::testing::uid_n;
+use crate::testing::{hello_payload, uid_n};
 use crate::types::V2ipPrivacyStream;
 use crate::wire::{op, DeviceFeature, DeviceUid};
 
@@ -120,4 +121,43 @@ fn only_a_whole_privacy_report_is_kept() {
         .v2ip_privacy
         .expect("a longer report was dropped");
     assert_eq!(p.anc, expected(3));
+}
+
+/// A kept report is dropped by a hello showing that its sender may have
+/// restarted, and by no other: a new boot brings a new key generator.
+#[test]
+fn a_privacy_report_is_dropped_when_its_sender_may_have_restarted() {
+    let plain = DeviceFeature::V2IP_SOURCE;
+    let hello = |f| hello_payload(0x30, "ONEIP", "PV0001", "4.8.0", f);
+    let restarts: [(&str, DeviceFeature, Duration); 3] = [
+        ("went offline", plain, Duration::from_secs(120)),
+        (
+            "flipped its reboot toggle",
+            plain | DeviceFeature::BOOT_BIT,
+            Duration::ZERO,
+        ),
+        (
+            "announced a reboot",
+            plain | DeviceFeature::STATUS_REBOOT,
+            Duration::ZERO,
+        ),
+    ];
+    for (what, features, silence) in restarts {
+        let mut h = source(143);
+        h.feed_proto(op::V2IP_PRIVACY, 0x30, &report(h.sender));
+
+        h.hello(0x30, "ONEIP", "PV0001", plain);
+        assert!(
+            h.device().v2ip_privacy.is_some(),
+            "a plain hello dropped it"
+        );
+
+        h.events.clear();
+        h.feed_at(op::SYS_HELLO, &hello(features), Instant::now() + silence);
+        assert_eq!(h.device().v2ip_privacy, None, "kept after it {what}");
+        assert!(
+            h.saw(|e| matches!(e, Event::V2ipPrivacyChanged { privacy: None, .. })),
+            "dropped unannounced after it {what}"
+        );
+    }
 }

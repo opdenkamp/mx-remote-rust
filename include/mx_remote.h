@@ -7630,9 +7630,10 @@ size_t mxr_v2ip_sink_description(const mxr_remote_t *remote, mxr_uid_t uid, char
  * Fills `out` with how a OneIP source unit's streams are encrypted, as it
  * last reported it.
  *
- * Reports `MXR_ERR_NOT_REPORTED` until the unit has reported; it does when
- * that changes, at least once a minute, and when asked with
- * `mxr_request_v2ip_privacy()`. A change is announced through
+ * Reports `MXR_ERR_NOT_REPORTED` until the unit has reported since its hello
+ * last showed it may have restarted: it was offline, its reboot toggle
+ * flipped, or it is about to reboot. It reports when that changes, at least
+ * once a minute, and when asked with `mxr_request_v2ip_privacy()`. A change is announced through
  * `on_device_update`.
  *
  * # Safety
