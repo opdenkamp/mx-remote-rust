@@ -1,11 +1,12 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! The UDP socket, and the only write to it.
+//! The UDP sockets, and the only write to them.
 //!
-//! One socket serves both directions: it is bound to the MX Remote port and
+//! Each endpoint is one socket serving both directions: bound to its port and
 //! either joined to the discovery group or enabled for broadcast, so what this
-//! client sends and what it hears come and go by the same interface.
+//! client sends and what it hears come and go by the same interface. A client
+//! has one endpoint, or both, as a unit does.
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
@@ -13,6 +14,7 @@ use std::time::Duration;
 
 use socket2::{Domain, InterfaceIndexOrAddress, Protocol, SockAddr, Socket, Type};
 
+use super::constants::{MULTICAST_IP, MULTICAST_PORT};
 use super::netif;
 
 /// How long a receive waits before returning empty-handed.
@@ -28,6 +30,15 @@ const READ_TIMEOUT: Duration = Duration::from_millis(500);
 /// that can reach it.
 const MULTICAST_TTL: u32 = 64;
 
+/// Which of the two endpoints a datagram arrived by or leaves by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Path {
+    /// The discovery group.
+    Multicast,
+    /// The subnet broadcast address, or a unicast target in its place.
+    Broadcast,
+}
+
 /// Which interface carries the traffic.
 ///
 /// The two are not interchangeable. An address names the interface indirectly
@@ -40,11 +51,97 @@ enum Egress {
     Interface { name: String, index: u32 },
 }
 
-/// The bound socket and the address it sends to.
+/// One bound socket, the address it sends to, and the path that is.
 #[derive(Debug)]
-pub(crate) struct Conn {
+struct Endpoint {
     socket: UdpSocket,
     target: SocketAddrV4,
+    path: Path,
+}
+
+/// The bound endpoints: the one frames go to first, and in dual mode the
+/// broadcast endpoint beside the multicast one.
+#[derive(Debug)]
+pub(crate) struct Conn {
+    primary: Endpoint,
+    secondary: Option<Endpoint>,
+}
+
+/// Which interface the caller selected, by name taking precedence over
+/// address, or the host's choice when neither is given.
+fn egress_for(local_ip: Option<Ipv4Addr>, interface: Option<&str>) -> io::Result<Egress> {
+    Ok(match interface {
+        // An address is preferred even when the caller named an interface,
+        // because naming one by index is the platform-restricted path; the
+        // index is the fallback an addressless interface has to take.
+        Some(name) => match netif::address_of(name) {
+            Some(ip) => Egress::Address(ip),
+            None => Egress::Interface {
+                name: name.to_owned(),
+                index: netif::index_of(name)?,
+            },
+        },
+        None => Egress::Address(match local_ip {
+            Some(ip) => ip,
+            None => netif::default_local_ip()?,
+        }),
+    })
+}
+
+impl Endpoint {
+    fn open(target: Ipv4Addr, port: u16, egress: &Egress) -> io::Result<Self> {
+        let multicast = target.is_multicast();
+        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        // Every client on the host must get its own copy of each datagram.
+        // SO_REUSEADDR is what allows the second bind and still fans out;
+        // SO_REUSEPORT would instead hash each datagram to one member of the
+        // group, so a second client would silently take half of this one's
+        // frames. It is deliberately not set.
+        socket.set_reuse_address(true)?;
+        socket.bind(&SockAddr::from(SocketAddrV4::new(
+            Ipv4Addr::UNSPECIFIED,
+            port,
+        )))?;
+        socket.set_read_timeout(Some(READ_TIMEOUT))?;
+
+        if multicast {
+            socket.set_multicast_ttl_v4(MULTICAST_TTL)?;
+            match egress {
+                Egress::Address(ip) => {
+                    socket.set_multicast_if_v4(ip)?;
+                    socket.join_multicast_v4(&target, ip)?;
+                }
+                Egress::Interface { name, index } => {
+                    socket.join_multicast_v4_n(&target, &InterfaceIndexOrAddress::Index(*index))?;
+                    bind_to_interface(&socket, name)?;
+                }
+            }
+        } else {
+            socket.set_broadcast(true)?;
+            if let Egress::Interface { name, .. } = egress {
+                bind_to_interface(&socket, name)?;
+            }
+        }
+
+        Ok(Self {
+            socket: socket.into(),
+            target: SocketAddrV4::new(target, port),
+            path: if multicast {
+                Path::Multicast
+            } else {
+                Path::Broadcast
+            },
+        })
+    }
+
+    fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<(&'a [u8], Ipv4Addr)>> {
+        match self.socket.recv_from(buf) {
+            Ok((n, SocketAddr::V4(from))) => Ok(buf.get(..n).map(|data| (data, *from.ip()))),
+            Ok((_, SocketAddr::V6(_))) => Ok(None),
+            Err(e) if is_timeout(&e) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 impl Conn {
@@ -63,89 +160,85 @@ impl Conn {
         local_ip: Option<Ipv4Addr>,
         interface: Option<&str>,
     ) -> io::Result<Self> {
-        let multicast = target.is_multicast();
-        let egress = match interface {
-            // An address is preferred even when the caller named an interface,
-            // because naming one by index is the platform-restricted path; the
-            // index is the fallback an addressless interface has to take.
-            Some(name) => match netif::address_of(name) {
-                Some(ip) => Egress::Address(ip),
-                None => Egress::Interface {
-                    name: name.to_owned(),
-                    index: netif::index_of(name)?,
-                },
-            },
-            None => Egress::Address(match local_ip {
-                Some(ip) => ip,
-                None => netif::default_local_ip()?,
-            }),
-        };
-
-        let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
-        // Every client on the host must get its own copy of each datagram.
-        // SO_REUSEADDR is what allows the second bind and still fans out;
-        // SO_REUSEPORT would instead hash each datagram to one member of the
-        // group, so a second client would silently take half of this one's
-        // frames. It is deliberately not set.
-        socket.set_reuse_address(true)?;
-        socket.bind(&SockAddr::from(SocketAddrV4::new(
-            Ipv4Addr::UNSPECIFIED,
-            port,
-        )))?;
-        socket.set_read_timeout(Some(READ_TIMEOUT))?;
-
-        if multicast {
-            socket.set_multicast_ttl_v4(MULTICAST_TTL)?;
-            match &egress {
-                Egress::Address(ip) => {
-                    socket.set_multicast_if_v4(ip)?;
-                    socket.join_multicast_v4(&target, ip)?;
-                }
-                Egress::Interface { name, index } => {
-                    socket.join_multicast_v4_n(&target, &InterfaceIndexOrAddress::Index(*index))?;
-                    bind_to_interface(&socket, name)?;
-                }
-            }
-        } else {
-            socket.set_broadcast(true)?;
-            if let Egress::Interface { name, .. } = &egress {
-                bind_to_interface(&socket, name)?;
-            }
-        }
-
+        let egress = egress_for(local_ip, interface)?;
         Ok(Self {
-            socket: socket.into(),
-            target: SocketAddrV4::new(target, port),
+            primary: Endpoint::open(target, port, &egress)?,
+            secondary: None,
         })
     }
 
-    /// Writes a frame to the wire.
+    /// Binds both endpoints a unit has: the discovery group on its port, and
+    /// `broadcast` on `broadcast_port`, on the interface selected as
+    /// [`Conn::open`] selects it.
+    pub(crate) fn open_both(
+        broadcast: Ipv4Addr,
+        broadcast_port: u16,
+        local_ip: Option<Ipv4Addr>,
+        interface: Option<&str>,
+    ) -> io::Result<Self> {
+        let egress = egress_for(local_ip, interface)?;
+        Ok(Self {
+            primary: Endpoint::open(MULTICAST_IP, MULTICAST_PORT, &egress)?,
+            secondary: Some(Endpoint::open(broadcast, broadcast_port, &egress)?),
+        })
+    }
+
+    /// Whether both endpoints are bound.
+    pub(crate) fn is_dual(&self) -> bool {
+        self.secondary.is_some()
+    }
+
+    /// Writes a frame to the wire: to the first endpoint, and to the second as
+    /// well when `both` is set and there is one.
     ///
-    /// The only call to the socket in this library. Every frame reaches it
+    /// The only call to the sockets in this library. Every frame reaches it
     /// through [`Tx::send`](super::tx::Tx::send), which is what makes the
     /// protocol-floor check unskippable; a second write anywhere would bypass
     /// that gate rather than merely duplicate this function.
-    pub(super) fn send(&self, data: &[u8]) -> io::Result<usize> {
-        self.socket.send_to(data, self.target)
+    pub(super) fn send(&self, data: &[u8], both: bool) -> io::Result<usize> {
+        let sent = self.primary.socket.send_to(data, self.primary.target)?;
+        if let Some(second) = self.secondary.as_ref().filter(|_| both) {
+            second.socket.send_to(data, second.target)?;
+        }
+        Ok(sent)
     }
 
-    /// Waits for a datagram, for at most [`READ_TIMEOUT`].
+    /// Waits for a datagram on the first endpoint, for at most
+    /// [`READ_TIMEOUT`].
     ///
     /// `Ok(None)` is that timeout expiring, which is how the caller gets a
     /// chance to notice it is shutting down. A sender that is not IPv4 has no
     /// address to report, which no MX Remote device does.
     pub(crate) fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<(&'a [u8], Ipv4Addr)>> {
-        match self.socket.recv_from(buf) {
-            Ok((n, SocketAddr::V4(from))) => Ok(buf.get(..n).map(|data| (data, *from.ip()))),
-            Ok((_, SocketAddr::V6(_))) => Ok(None),
-            Err(e) if is_timeout(&e) => Ok(None),
-            Err(e) => Err(e),
+        self.primary.recv(buf)
+    }
+
+    /// Waits for a datagram on the second endpoint, as [`Conn::recv`] does
+    /// on the first, and reports the path each arrived by. `Ok(None)` at once
+    /// when there is no second endpoint.
+    pub(crate) fn recv_secondary<'a>(
+        &self,
+        buf: &'a mut [u8],
+    ) -> io::Result<Option<(&'a [u8], Ipv4Addr)>> {
+        match &self.secondary {
+            Some(second) => second.recv(buf),
+            None => Ok(None),
         }
     }
 
-    /// The address frames are sent to.
+    /// The path of the first endpoint and, when bound, the second.
+    pub(crate) fn paths(&self) -> (Path, Option<Path>) {
+        (self.primary.path, self.secondary.as_ref().map(|e| e.path))
+    }
+
+    /// The address frames are sent to first.
     pub(crate) fn target(&self) -> SocketAddrV4 {
-        self.target
+        self.primary.target
+    }
+
+    /// The address of the second endpoint, when bound.
+    pub(crate) fn secondary_target(&self) -> Option<SocketAddrV4> {
+        self.secondary.as_ref().map(|e| e.target)
     }
 
     /// Whether the socket is in a reuseport group, which it must not be.
@@ -154,13 +247,13 @@ impl Conn {
     /// Windows, so naming one there does not compile.
     #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn reuse_port(&self) -> io::Result<bool> {
-        socket2::SockRef::from(&self.socket).reuse_port()
+        socket2::SockRef::from(&self.primary.socket).reuse_port()
     }
 
     /// The multicast hop limit the socket sends with.
     #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn multicast_ttl(&self) -> io::Result<u32> {
-        socket2::SockRef::from(&self.socket).multicast_ttl_v4()
+        socket2::SockRef::from(&self.primary.socket).multicast_ttl_v4()
     }
 
     /// Waits for a datagram for up to `timeout`, restoring the socket's own
@@ -170,14 +263,14 @@ impl Conn {
     /// for any other does not warn on it as dead.
     #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn recv_within(&self, timeout: Duration) -> Option<Vec<u8>> {
-        self.socket.set_read_timeout(Some(timeout)).ok()?;
+        self.primary.socket.set_read_timeout(Some(timeout)).ok()?;
         let mut buf = vec![0u8; 2048];
         let got = self
             .recv(&mut buf)
             .ok()
             .flatten()
             .map(|(data, _)| data.to_vec());
-        let _ = self.socket.set_read_timeout(Some(READ_TIMEOUT));
+        let _ = self.primary.socket.set_read_timeout(Some(READ_TIMEOUT));
         got
     }
 }

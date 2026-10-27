@@ -17,7 +17,7 @@ use crate::types::{
     VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{
-    BayConfig, BayFeatures, BayUid, DeviceFeature, DeviceUid, FirmwareType, V2ipFpgaFeature,
+    BayConfig, BayFeatures, BayUid, DeviceFeature, DeviceUid, FirmwareType, Path, V2ipFpgaFeature,
 };
 
 use super::bay::Bay;
@@ -62,6 +62,9 @@ const SLOW_HELLO_PROTOCOL: u16 = 0x2A;
 /// [`Device::has_bays`].
 pub(crate) const CONFIG_GRACE: Duration = Duration::from_secs(15);
 
+/// How long a frame by one path counts as proof that a device is heard by it.
+pub(crate) const PATH_WINDOW: Duration = Duration::from_secs(120);
+
 /// What a device advertises about itself in its hello frame.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct HelloInfo {
@@ -96,6 +99,10 @@ pub(crate) struct Device {
     pub(crate) have_config: bool,
     pub(crate) rebooting: bool,
     pub(crate) last_ping: Instant,
+    /// When a frame from this device last arrived by multicast.
+    pub(crate) heard_multicast: Option<Instant>,
+    /// When a frame from this device last arrived by broadcast or unicast.
+    pub(crate) heard_broadcast: Option<Instant>,
     /// When this device was first heard from.
     ///
     /// What [`CONFIG_GRACE`] is measured against, so it is the moment the
@@ -195,6 +202,8 @@ impl Device {
             have_config: false,
             rebooting: false,
             last_ping: now,
+            heard_multicast: None,
+            heard_broadcast: None,
             first_seen: now,
             owed_asks: 0,
             last_owed_ask: None,
@@ -331,6 +340,30 @@ impl Device {
     }
 
     // ---- status ----
+
+    /// Records that a frame from this device arrived by `path` at `stamped`.
+    pub(crate) fn heard_on(&mut self, path: Path, stamped: Instant) {
+        match path {
+            Path::Multicast => self.heard_multicast = Some(stamped),
+            Path::Broadcast => self.heard_broadcast = Some(stamped),
+        }
+    }
+
+    /// Whether no frame from this device has arrived by multicast within
+    /// [`PATH_WINDOW`], as a unit judges a peer it must also reach by
+    /// broadcast.
+    pub(crate) fn broadcast_only(&self, now: Instant) -> bool {
+        !self
+            .heard_multicast
+            .is_some_and(|t| now.saturating_duration_since(t) < PATH_WINDOW)
+    }
+
+    /// Whether a frame from this device arrived by broadcast within
+    /// [`PATH_WINDOW`].
+    pub(crate) fn heard_broadcast_lately(&self, now: Instant) -> bool {
+        self.heard_broadcast
+            .is_some_and(|t| now.saturating_duration_since(t) < PATH_WINDOW)
+    }
 
     pub(crate) fn is_online(&self, now: Instant) -> bool {
         let limit = if self.hello.supported_protocol >= SLOW_HELLO_PROTOCOL {

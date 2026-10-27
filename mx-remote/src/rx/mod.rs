@@ -30,7 +30,9 @@ use std::time::Instant;
 
 use crate::event::Event;
 use crate::state::{Device, State};
-use crate::wire::{op, DeviceFeature, DeviceUid, Frame, Opcode, HEADER_LEN, PROTOCOL_VERSION};
+use crate::wire::{
+    op, DeviceFeature, DeviceUid, Frame, Opcode, Path, HEADER_LEN, PROTOCOL_VERSION,
+};
 
 pub use svd::{lookup_svd, Svd};
 
@@ -61,15 +63,33 @@ impl Rx<'_> {
 /// a unit drops.
 const BROKEN_PROTOCOL: u16 = 2;
 
+/// Decodes one datagram that arrived by no known endpoint into events.
+#[cfg(test)]
+pub(crate) fn process_frame(
+    state: &mut State,
+    data: &[u8],
+    address: Option<Ipv4Addr>,
+    timestamp: Instant,
+) -> Vec<Event> {
+    process_frame_on(state, data, address, None, timestamp)
+}
+
 /// Decodes one datagram into events, updating the registry.
 ///
 /// `timestamp` is when the datagram arrived, which is what the sending device
 /// is recorded as last heard from. A frame that does not parse, or that this
 /// client sent itself, produces nothing.
-pub(crate) fn process_frame(
+///
+/// `path` is the endpoint it arrived by, when two are bound. A device that
+/// sent it is then recorded as heard by that path, which is what decides
+/// whether frames must reach it by broadcast too, and that happens before the
+/// duplicate check, so the copy that loses the race still proves its path. A
+/// datagram repeating one received within the duplicate window is dropped.
+pub(crate) fn process_frame_on(
     state: &mut State,
     data: &[u8],
     address: Option<Ipv4Addr>,
+    path: Option<Path>,
     timestamp: Instant,
 ) -> Vec<Event> {
     let Ok(frame) = Frame::parse(data) else {
@@ -92,6 +112,14 @@ pub(crate) fn process_frame(
     // sender put on the wire. This client's own multicast is looped back by
     // the host whichever interface was selected, so counting that would answer
     // "did anything reach this interface" with yes on every interface.
+    if let Some(path) = path {
+        if let Some(device) = state.device_mut(sender) {
+            device.heard_on(path, timestamp);
+        }
+        if state.is_duplicate(data, timestamp) {
+            return Vec::new();
+        }
+    }
     state.frames_received = state.frames_received.saturating_add(1);
     // A device drops every frame from a uid it has no record of, so acting on
     // one would put this client ahead of the mesh: it would hold a route, a

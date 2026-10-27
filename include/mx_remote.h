@@ -3618,6 +3618,15 @@ typedef struct {
    * writes from it only while they follow it as their controller.
    */
   bool mesh_device;
+  /**
+   * Bind both endpoints a unit has rather than one: the discovery group,
+   * and the broadcast address of the selected interface (or `target_ip`)
+   * on `port`, zero meaning 8811. Frames every unit sends to both go to
+   * both; every other frame goes to the group, and to the broadcast
+   * address too while some live peer is not heard by multicast or reports
+   * that its multicast fails. Takes precedence over `broadcast`.
+   */
+  bool both_endpoints;
 } mxr_config_t;
 
 /**

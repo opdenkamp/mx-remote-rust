@@ -8,7 +8,7 @@ use std::io;
 
 use super::conn::Conn;
 use super::frame::build_frame;
-use super::opcode::{stamp_for, Opcode};
+use super::opcode::{op, stamp_for, Opcode};
 use super::uid::DeviceUid;
 
 /// Why a frame was not sent.
@@ -124,6 +124,22 @@ impl Addressee {
     }
 }
 
+/// Whether every unit sends `opcode` to both endpoints, whatever its peers
+/// need: what announces a device or asks for one, and what acts on every unit
+/// at once.
+pub(crate) fn to_both_endpoints(opcode: Opcode) -> bool {
+    matches!(
+        opcode,
+        op::SYS_HELLO
+            | op::SYS_DISCOVER
+            | op::SYS_REBOOT
+            | op::SYS_FACTORY_RESET
+            | op::SYS_MONITORING_PULSE
+            | op::V2IP_DETECT_BAYS
+            | op::V2IP_UPGRADE_FPGA
+    )
+}
+
 /// A tap on the transmit path.
 #[cfg(test)]
 pub(crate) type TxTap = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
@@ -143,6 +159,9 @@ pub(crate) struct Tx {
     /// is how a test reads back what would go on the wire.
     #[cfg(test)]
     tap: Option<TxTap>,
+    /// Whether each frame that passed the gate was meant for both endpoints.
+    #[cfg(test)]
+    pub(crate) both: Vec<bool>,
 }
 
 impl Tx {
@@ -175,12 +194,16 @@ impl Tx {
     /// accepts every opcode it does understand. The gate compares against that
     /// same stamp: a receiver drops what is stamped above its own version, so
     /// checking anything else would leave the hole the gate exists to close.
+    ///
+    /// `both` asks for the second endpoint too, where one is bound; an opcode
+    /// every unit sends to both endpoints goes to both whatever it says.
     pub(crate) fn send(
-        &self,
+        &mut self,
         to: &Addressee,
         uid: DeviceUid,
         opcode: Opcode,
         payload: &[u8],
+        both: bool,
     ) -> Result<usize, SendError> {
         let need = stamp_for(opcode).ok_or(SendError::UnknownOpcode { opcode: opcode.0 })?;
         if let Addressee::Device { serial, protocol } = to {
@@ -196,12 +219,16 @@ impl Tx {
             }
         }
 
+        let both = both || to_both_endpoints(opcode);
         let frame = build_frame(uid, opcode, need, payload);
         #[cfg(test)]
-        if let Some(tap) = &self.tap {
-            tap(&frame);
+        {
+            if let Some(tap) = &self.tap {
+                tap(&frame);
+            }
+            self.both.push(both);
         }
         let conn = self.conn.as_ref().ok_or(SendError::NotConnected)?;
-        Ok(conn.send(&frame)?)
+        Ok(conn.send(&frame, both)?)
     }
 }

@@ -80,6 +80,13 @@ pub struct mxr_config_t {
     /// takes as a member and can hand its controller role to. Units then take
     /// writes from it only while they follow it as their controller.
     pub mesh_device: bool,
+    /// Bind both endpoints a unit has rather than one: the discovery group,
+    /// and the broadcast address of the selected interface (or `target_ip`)
+    /// on `port`, zero meaning 8811. Frames every unit sends to both go to
+    /// both; every other frame goes to the group, and to the broadcast
+    /// address too while some live peer is not heard by multicast or reports
+    /// that its multicast fails. Takes precedence over `broadcast`.
+    pub both_endpoints: bool,
 }
 
 /// Reads an address argument, where null means "not set".
@@ -147,6 +154,7 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.uid_path = uid_path.map(PathBuf::from);
     config.logo_port = (c.logo_port != 0).then_some(c.logo_port);
     config.mesh_device = c.mesh_device;
+    config.both_endpoints = c.both_endpoints;
     Ok(config)
 }
 

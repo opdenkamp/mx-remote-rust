@@ -48,10 +48,10 @@ pub use tx::SendError;
 pub use uid::{BayUid, DeviceUid, UidParseError};
 
 pub(crate) use bayconfig::{parse_bay_config, BayConfig, BAY_CONFIG_SIZE};
-pub(crate) use conn::Conn;
+pub(crate) use conn::{Conn, Path};
 pub(crate) use frame::HEADER_LEN;
 pub(crate) use frame::{cstr, Frame, DEVICE_NAME_LEN, FW_VERSION_LEN};
-pub(crate) use netif::broadcast_address;
+pub(crate) use netif::{address_of, broadcast_address};
 pub(crate) use opcode::{audio_sub, mv_sub, op, Opcode};
 pub(crate) use osd::*;
 pub(crate) use payload::*;

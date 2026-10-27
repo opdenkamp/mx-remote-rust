@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::testing::{bay_config_rec, datagram, fixed_str, uid_n};
+use crate::types::MeshOperation;
 use crate::wire::{
-    op, protocol_for, BayFeatures, BayStatus, DeviceFeature, DeviceUid, HEADER_LEN,
+    op, protocol_for, BayFeatures, BayStatus, DeviceFeature, DeviceUid, Path, HEADER_LEN,
     PROTOCOL_VERSION,
 };
 
@@ -381,6 +382,110 @@ fn the_announcement_carries_the_identity_and_role_it_was_given() {
 
     remote.set_mesh_controller(DeviceUid::ZERO);
     assert_eq!(role(heard(&peer).features), (false, false));
+    peer.close();
+}
+
+/// What every unit sends to both endpoints goes to both; anything else goes
+/// to both only while some peer needs broadcast, which is judged afresh as
+/// frames arrive by each path.
+#[test]
+fn a_frame_goes_to_both_endpoints_when_a_unit_would_send_it_there() {
+    let (remote, _tap) = client(212);
+    let last = |remote: &Remote| *lock(&remote.shared.tx).both.last().expect("nothing sent");
+
+    remote.shared.announce();
+    assert!(last(&remote), "a hello goes to both endpoints");
+    let _ = remote.send_mesh_operation(MeshOperation::report_membership(DeviceUid::ZERO));
+    assert!(!last(&remote), "nothing needs broadcast yet");
+
+    let peer = uid_n(213);
+    let heard = |remote: &Remote, serial: &str, path: Path| {
+        remote
+            .shared
+            .process_datagram_on(&hello_datagram(peer, "Peer", serial), FROM, Some(path));
+    };
+    heard(&remote, "PC0001", Path::Broadcast);
+    heard(&remote, "PC0002", Path::Broadcast);
+    let _ = remote.send_mesh_operation(MeshOperation::report_membership(DeviceUid::ZERO));
+    assert!(
+        last(&remote),
+        "a peer heard only by broadcast was not reached by it"
+    );
+
+    heard(&remote, "PC0003", Path::Multicast);
+    let _ = remote.send_mesh_operation(MeshOperation::report_membership(DeviceUid::ZERO));
+    assert!(
+        !last(&remote),
+        "a peer heard by multicast again still got broadcast"
+    );
+}
+
+/// A peer whose multicast goes quiet needs broadcast from the next probe
+/// pass on, with no frame arriving to say so.
+#[test]
+fn the_probe_pass_judges_a_path_that_went_quiet() {
+    let (remote, _tap) = client(216);
+    let peer = uid_n(217);
+    remote.shared.process_datagram_on(
+        &hello_datagram(peer, "Peer", "PD0001"),
+        FROM,
+        Some(Path::Multicast),
+    );
+    remote.shared.process_datagram_on(
+        &hello_datagram(peer, "Peer", "PD0002"),
+        FROM,
+        Some(Path::Multicast),
+    );
+    assert!(!remote
+        .shared
+        .broadcast_needed
+        .load(std::sync::atomic::Ordering::SeqCst));
+
+    let now = Instant::now();
+    if let Some(device) = lock(&remote.shared.state).device_mut(peer) {
+        device.heard_multicast = now.checked_sub(Duration::from_secs(125));
+    }
+    remote.shared.probe_once(now);
+    assert!(
+        remote
+            .shared
+            .broadcast_needed
+            .load(std::sync::atomic::Ordering::SeqCst),
+        "the probe pass did not notice the multicast went quiet"
+    );
+}
+
+/// A client that hears a peer by broadcast but not by multicast announces
+/// that its own multicast fails, as a unit does.
+#[test]
+fn a_multicast_fault_is_announced() {
+    let (remote, tap) = client(214);
+    let peer = Remote::new(
+        Config {
+            uid: Some(uid_n(215)),
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    let fault = |remote: &Remote| {
+        tap.clear();
+        remote.shared.announce();
+        let frame = tap.frames().pop().expect("nothing was announced");
+        peer.shared
+            .process_datagram(&frame, Ipv4Addr::new(10, 8, 8, 1));
+        peer.device(remote.uid())
+            .expect("not decoded")
+            .features
+            .has(DeviceFeature::STATUS_MCAST_FAULT)
+    };
+    assert!(!fault(&remote));
+
+    remote
+        .shared
+        .multicast_fault
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(fault(&remote), "the fault was not announced");
     peer.close();
 }
 

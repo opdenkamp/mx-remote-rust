@@ -16,13 +16,16 @@ mod bay;
 mod device;
 mod links;
 
-use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::net::Ipv4Addr;
+use std::time::Duration;
 use std::time::Instant;
 
 use crate::event::Event;
 use crate::types::OsdSyncRequest;
-use crate::wire::{BayFeatures, BayUid, DeviceUid, LinkFeature};
+use crate::wire::{BayFeatures, BayUid, DeviceFeature, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
 pub(crate) use device::{Device, HelloInfo, MeshBayChange, SdpPages, CONFIG_GRACE};
@@ -45,7 +48,18 @@ pub(crate) struct State {
     /// Overlay sync requests this client may be the one to answer: those
     /// asking for a new sync, and those naming this client as the source.
     pub(crate) osd_requests: Vec<OsdSyncRequest>,
+    /// A digest and arrival time of each datagram received in the last
+    /// [`DUPLICATE_WINDOW`], at most [`DUPLICATE_RING`] of them.
+    recent: VecDeque<(u64, Instant)>,
 }
+
+/// How long a datagram identical to one already received counts as its
+/// second copy. Short, because a key press carries nothing that tells two
+/// presses apart.
+const DUPLICATE_WINDOW: Duration = Duration::from_millis(100);
+
+/// How many recent datagrams the duplicate check compares against.
+const DUPLICATE_RING: usize = 64;
 
 impl State {
     pub(crate) fn new(uid: DeviceUid) -> Self {
@@ -57,7 +71,55 @@ impl State {
             hello_requested: false,
             state_requests: Vec::new(),
             osd_requests: Vec::new(),
+            recent: VecDeque::with_capacity(DUPLICATE_RING),
         }
+    }
+
+    /// Whether `data` repeats a datagram received within
+    /// [`DUPLICATE_WINDOW`] of `now`, recording it when it does not.
+    ///
+    /// A frame sent to both endpoints arrives once by each, and the first
+    /// copy is the one acted on.
+    pub(crate) fn is_duplicate(&mut self, data: &[u8], now: Instant) -> bool {
+        let mut hasher = DefaultHasher::new();
+        data.hash(&mut hasher);
+        let digest = hasher.finish();
+        self.recent
+            .retain(|(_, at)| now.saturating_duration_since(*at) < DUPLICATE_WINDOW);
+        if self.recent.iter().any(|(d, _)| *d == digest) {
+            return true;
+        }
+        if self.recent.len() == DUPLICATE_RING {
+            self.recent.pop_front();
+        }
+        self.recent.push_back((digest, now));
+        false
+    }
+
+    /// Whether some live peer has to be reached by broadcast as well: it has
+    /// not been heard by multicast within the path window, or it reports that
+    /// its own multicast fails.
+    pub(crate) fn needs_broadcast(&self, now: Instant) -> bool {
+        self.peers(now).any(|d| {
+            d.broadcast_only(now) || d.hello.features.has(DeviceFeature::STATUS_MCAST_FAULT)
+        })
+    }
+
+    /// Whether this client's own multicast fails: a live peer, not about to
+    /// reboot, is heard by broadcast but not by multicast.
+    pub(crate) fn multicast_fault(&self, now: Instant) -> bool {
+        self.peers(now).any(|d| {
+            !d.hello.features.has(DeviceFeature::STATUS_REBOOT)
+                && d.broadcast_only(now)
+                && d.heard_broadcast_lately(now)
+        })
+    }
+
+    fn peers(&self, now: Instant) -> impl Iterator<Item = &Device> + '_ {
+        let own = self.uid;
+        self.devices
+            .values()
+            .filter(move |d| d.uid != own && d.is_online(now))
     }
 
     pub(crate) fn device(&self, uid: DeviceUid) -> Option<&Device> {

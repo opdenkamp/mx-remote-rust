@@ -29,11 +29,11 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::event::{Event, EventHandler};
-use crate::rx::process_frame;
+use crate::rx::process_frame_on;
 use crate::state::{Device, State, CONFIG_GRACE};
 use crate::types::*;
 use crate::wire::{
-    build_hello, op, Addressee, BayUid, Conn, DeviceFeature, DeviceUid, FirmwareType, Opcode,
+    build_hello, op, Addressee, BayUid, Conn, DeviceFeature, DeviceUid, FirmwareType, Opcode, Path,
     SendError, Tx, V2ipFpgaFeature, MULTICAST_IP, MULTICAST_PORT, PROTOCOL_VERSION, VERSION,
 };
 
@@ -119,6 +119,19 @@ pub struct Config {
     pub interface: Option<String>,
     /// Use broadcast rather than multicast.
     pub broadcast: bool,
+    /// Bind both endpoints a unit has, rather than one: the discovery group,
+    /// and the broadcast address of the selected interface (or
+    /// [`Config::target_ip`]) on [`Config::port`], default 8811.
+    ///
+    /// What every unit sends to both, such as the hello, goes to both. Every
+    /// other frame goes to the group, and to the broadcast address as well
+    /// while some live peer has not been heard by multicast for two minutes
+    /// or reports that its multicast fails. A peer heard only by broadcast in
+    /// that time has this client announce that its own multicast fails. A
+    /// datagram arriving by both endpoints within 100ms is acted on once.
+    ///
+    /// Takes precedence over [`Config::broadcast`].
+    pub both_endpoints: bool,
     /// The name this client advertises. Unset means `MXR Rust`.
     pub name: Option<String>,
     /// The serial number this client advertises. Unset means `P9SN00000000`.
@@ -164,6 +177,10 @@ struct Shared {
     osd_queued: Condvar,
     logo_port: Option<u16>,
     closing: AtomicBool,
+    /// Whether some live peer has to be reached by broadcast as well.
+    broadcast_needed: AtomicBool,
+    /// Whether a live peer is heard by broadcast but not by multicast.
+    multicast_fault: AtomicBool,
 }
 
 /// The network parameters the socket was opened with, so it can be reopened.
@@ -174,6 +191,7 @@ struct Network {
     local_ip: Option<Ipv4Addr>,
     interface: Option<String>,
     broadcast: bool,
+    both_endpoints: bool,
 }
 
 impl Network {
@@ -199,6 +217,21 @@ impl Network {
     }
 
     fn open(&self) -> io::Result<Conn> {
+        if self.both_endpoints {
+            let broadcast = match self.target_ip {
+                Some(ip) => ip,
+                None => crate::wire::broadcast_address(
+                    self.local_ip
+                        .or_else(|| self.interface.as_deref().and_then(crate::wire::address_of)),
+                )?,
+            };
+            return Conn::open_both(
+                broadcast,
+                self.port.unwrap_or(crate::wire::BROADCAST_PORT),
+                self.local_ip,
+                self.interface.as_deref(),
+            );
+        }
         Conn::open(
             self.target()?,
             self.port(),
@@ -248,11 +281,14 @@ impl Remote {
                     local_ip: config.local_ip,
                     interface: config.interface,
                     broadcast: config.broadcast,
+                    both_endpoints: config.both_endpoints,
                 }),
                 osd: Mutex::new(OsdSender::new()),
                 osd_queued: Condvar::new(),
                 logo_port: config.logo_port,
                 closing: AtomicBool::new(false),
+                broadcast_needed: AtomicBool::new(false),
+                multicast_fault: AtomicBool::new(false),
             }),
             workers: Mutex::new(Vec::new()),
         })
@@ -295,6 +331,10 @@ impl Remote {
         }
         for (name, body) in [
             ("mxr-rx", Shared::receive_loop as fn(&Shared)),
+            (
+                "mxr-rx-bcast",
+                Shared::receive_secondary_loop as fn(&Shared),
+            ),
             ("mxr-probe", Shared::probe_loop as fn(&Shared)),
             ("mxr-osd", Shared::osd_loop as fn(&Shared)),
         ] {
@@ -356,6 +396,14 @@ impl Remote {
     /// The address frames are being sent to, once started.
     pub fn target(&self) -> Option<std::net::SocketAddrV4> {
         lock(&self.shared.tx).conn().map(|conn| conn.target())
+    }
+
+    /// The broadcast endpoint's address, once started with
+    /// [`Config::both_endpoints`].
+    pub fn broadcast_target(&self) -> Option<std::net::SocketAddrV4> {
+        lock(&self.shared.tx)
+            .conn()
+            .and_then(|conn| conn.secondary_target())
     }
 
     // ---- reading the registry ----
@@ -703,10 +751,19 @@ impl Shared {
     /// below matters even though the wrapper is thin: announcing is driven by a
     /// clock, and the one frame that may add a hello here is a ping addressed
     /// to this client, which asks for exactly that.
+    #[cfg(test)]
     fn process_datagram(&self, data: &[u8], from: Ipv4Addr) {
+        self.process_datagram_on(data, from, None);
+    }
+
+    /// [`Self::process_datagram`] for a datagram that arrived by a known one
+    /// of two endpoints.
+    fn process_datagram_on(&self, data: &[u8], from: Ipv4Addr, path: Option<Path>) {
         let (events, hello_requested, state_requests, osd_requests) = {
             let mut state = lock(&self.state);
-            let events = process_frame(&mut state, data, Some(from), Instant::now());
+            let now = Instant::now();
+            let events = process_frame_on(&mut state, data, Some(from), path, now);
+            self.judge_paths(&state, now);
             (
                 events,
                 std::mem::take(&mut state.hello_requested),
@@ -728,7 +785,17 @@ impl Shared {
 
     /// Sends a frame, refusing one the addressee cannot decode.
     fn send(&self, to: &Addressee, opcode: Opcode, payload: &[u8]) -> Result<usize, SendError> {
-        lock(&self.tx).send(to, self.uid, opcode, payload)
+        let both = self.broadcast_needed.load(Ordering::SeqCst);
+        lock(&self.tx).send(to, self.uid, opcode, payload, both)
+    }
+
+    /// Re-judges, as of `now`, whether frames must reach some peer by
+    /// broadcast too, and whether this client's own multicast fails.
+    fn judge_paths(&self, state: &State, now: Instant) {
+        self.broadcast_needed
+            .store(state.needs_broadcast(now), Ordering::SeqCst);
+        self.multicast_fault
+            .store(state.multicast_fault(now), Ordering::SeqCst);
     }
 
     fn discover(&self) -> Result<(), SendError> {
@@ -779,6 +846,9 @@ impl Shared {
         };
         if lock(&self.osd).holds() {
             features |= DeviceFeature::OSD_SYNC;
+        }
+        if self.multicast_fault.load(Ordering::SeqCst) {
+            features |= DeviceFeature::STATUS_MCAST_FAULT;
         }
         let controller = *lock(&self.mesh_controller);
         if !controller.is_zero() {
@@ -832,8 +902,29 @@ impl Shared {
             let Some(conn) = lock(&self.tx).conn() else {
                 break;
             };
+            let path = conn.is_dual().then(|| conn.paths().0);
             match conn.recv(&mut buf) {
-                Ok(Some((data, from))) => self.process_datagram(data, from),
+                Ok(Some((data, from))) => self.process_datagram_on(data, from, path),
+                Ok(None) => {}
+                Err(_) => break,
+            }
+        }
+    }
+
+    /// Reads datagrams from the second endpoint until the client is closing,
+    /// idling while there is none.
+    fn receive_secondary_loop(&self) {
+        let mut buf = vec![0u8; RECV_BUFFER];
+        while !self.closing.load(Ordering::SeqCst) {
+            let Some(conn) = lock(&self.tx).conn() else {
+                break;
+            };
+            let Some(path) = conn.paths().1 else {
+                std::thread::sleep(SHUTDOWN_POLL);
+                continue;
+            };
+            match conn.recv_secondary(&mut buf) {
+                Ok(Some((data, from))) => self.process_datagram_on(data, from, Some(path)),
                 Ok(None) => {}
                 Err(_) => break,
             }
@@ -880,6 +971,7 @@ impl Shared {
                     owed.push(device.uid);
                 }
             }
+            self.judge_paths(state, now);
             (state.devices.is_empty(), owed)
         });
 
