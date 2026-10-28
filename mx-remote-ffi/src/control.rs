@@ -110,6 +110,98 @@ pub unsafe extern "C" fn mxr_select_audio_source(
     })
 }
 
+/// Routes a OneIP sink unit to the streams a source unit advertises for its
+/// own input, as a mesh controller does, whether or not the sink lists the
+/// source.
+///
+/// A non-zero `audio` takes the audio from that unit's own input in the same
+/// frame; a zero one has the audio follow the video, as for
+/// `mxr_select_video_source()`. `power_on` has the sink power its display on
+/// with the switch. `MXR_ERR_NOT_FOUND` for a unit not heard
+/// from, `MXR_ERR_UNSUPPORTED` for a sink that is not a OneIP output or a
+/// source without an input of its own, and `MXR_ERR_NOT_REPORTED` before a
+/// source has reported its streams.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_route_v2ip_unit(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+    video: mxr_uid_t,
+    audio: mxr_uid_t,
+    power_on: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    let audio = DeviceUid::from(audio);
+    let audio = (!audio.is_zero()).then_some(audio);
+    with(handle, |r| {
+        from_control(
+            r.remote
+                .route_v2ip_unit(sink.into(), video.into(), audio, power_on),
+        )
+    })
+}
+
+/// Routes a OneIP sink unit to a source unit's own video, with the audio
+/// return group `arc_owner` reported for its output as the audio, as a mesh
+/// controller sends a route whose audio is an output. `power_on` has the sink
+/// power its display on with the switch.
+///
+/// No unit maps that group to a bay, so the sink plays it as a manual stream
+/// on the default audio port, 50022, while the output sends its audio return
+/// on 50023: such a route plays no audio on current firmware. It is sent as a
+/// controller sends it all the same.
+///
+/// `MXR_ERR_NOT_FOUND` for a unit not heard from, `MXR_ERR_UNSUPPORTED` for a
+/// sink that is not a OneIP output or a source without an input of its own,
+/// and `MXR_ERR_NOT_REPORTED` before the source has reported its streams or
+/// `arc_owner` a usable audio return group.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_route_v2ip_unit_with_arc(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+    video: mxr_uid_t,
+    arc_owner: mxr_uid_t,
+    power_on: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.route_v2ip_unit_with_arc(
+            sink.into(),
+            video.into(),
+            arc_owner.into(),
+            power_on,
+        ))
+    })
+}
+
+/// Unroutes a OneIP sink unit, as a mesh controller does: the frame names no
+/// streams. `MXR_ERR_NOT_FOUND` for a unit not heard from and
+/// `MXR_ERR_UNSUPPORTED` for one that is not a OneIP output.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_unroute_v2ip_unit(
+    remote: *const mxr_remote_t,
+    sink: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.unroute_v2ip_unit(sink.into()))
+    })
+}
+
 /// Routes a OneIP sink's video to the source bay with this user-assigned name.
 ///
 /// # Safety

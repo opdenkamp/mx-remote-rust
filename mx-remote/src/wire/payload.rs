@@ -494,21 +494,25 @@ pub(crate) fn build_edid_request(target: DeviceUid, output: bool) -> Vec<u8> {
     build_target_and_flag(target, output)
 }
 
-/// Builds the `V2IP_SOURCE_SWITCH` (0x1F) payload: the sink uid, then the
-/// video and audio group addresses to subscribe to.
+/// Builds the `V2IP_SOURCE_SWITCH` (0x1F) payload: the sink uid, the video
+/// and audio group addresses to subscribe to, then the options block.
 ///
 /// A video of 0.0.0.0 keeps the sink's video where it is. An audio of 0.0.0.0
 /// has the sink take its audio from its video, dropping a separate audio
-/// route.
+/// route. `power_on` has the sink power its display on with the switch.
 pub(crate) fn build_v2ip_source_switch(
     sink: DeviceUid,
     video_ip: Ipv4Addr,
     audio_ip: Ipv4Addr,
+    power_on: bool,
 ) -> Vec<u8> {
-    let mut p = Vec::with_capacity(24);
+    let mut p = Vec::with_capacity(32);
     p.extend_from_slice(sink.as_bytes());
     p.extend_from_slice(&video_ip.octets());
     p.extend_from_slice(&audio_ip.octets());
+    p.push(u8::from(power_on));
+    // mxr_v2ip_switch_options is ALIGN(8), rounding its 1 byte up to 8.
+    p.extend_from_slice(&[0; 7]);
     p
 }
 

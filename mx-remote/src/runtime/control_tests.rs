@@ -1458,6 +1458,199 @@ fn routing_video_names_the_audio_only_for_older_units() {
     }
 }
 
+/// A controller routes a sink to a source unit by the streams the source
+/// advertises for its own input. None of these units lists another, so a
+/// route through the sink's listing could not name the source at all.
+#[test]
+fn a_unit_route_names_the_source_unit_s_own_streams() {
+    let f = Fixture::new();
+    f.connect();
+    let (sink, video, audio, older) = (uid_n(186), uid_n(187), uid_n(188), uid_n(189));
+    f.everything(sink, 0x2F, "UR0001");
+    f.everything(video, 0x2F, "UR0002");
+    f.everything(audio, 0x2F, "UR0003");
+    f.everything(older, 0x1E, "UR0004");
+    let payload = |what: &str, call: Result<(), ControlError>| {
+        call.unwrap_or_else(|e| panic!("{what}: {e}"));
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        f.tap.clear();
+        frame[HEADER_LEN..].to_vec()
+    };
+    f.tap.clear();
+
+    let p = payload("video", f.remote.route_v2ip_unit(sink, video, None, true));
+    assert_eq!(&p[..16], sink.as_bytes(), "not addressed to the sink");
+    assert_eq!(&p[16..20], &[239, 7, 187, 1]);
+    assert_eq!(&p[20..24], &[0; 4], "the audio does not follow the video");
+    assert_eq!(&p[24..], &[1, 0, 0, 0, 0, 0, 0, 0], "no power-on options");
+
+    let p = payload(
+        "video and audio",
+        f.remote.route_v2ip_unit(sink, video, Some(audio), true),
+    );
+    assert_eq!(&p[16..20], &[239, 7, 187, 1]);
+    assert_eq!(&p[20..24], &[239, 7, 188, 2], "not the audio unit's audio");
+
+    let p = payload(
+        "no power-on",
+        f.remote.route_v2ip_unit(sink, video, None, false),
+    );
+    assert_eq!(p[24], 0, "the display was powered on");
+
+    let p = payload(
+        "older sink",
+        f.remote.route_v2ip_unit(older, video, None, true),
+    );
+    assert_eq!(
+        &p[20..24],
+        &[239, 7, 187, 2],
+        "an older unit was not told the audio"
+    );
+}
+
+/// A controller unroutes a sink with the same frame, naming no streams.
+#[test]
+fn a_unit_unroute_names_no_streams() {
+    let f = Fixture::new();
+    f.connect();
+    let (sink, source, unknown) = (uid_n(171), uid_n(172), uid_n(173));
+    f.everything(sink, 0x2F, "UR0021");
+    f.feed(
+        source,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "UR0022", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+    f.tap.clear();
+
+    f.remote.unroute_v2ip_unit(sink).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..16], sink.as_bytes(), "not addressed to the sink");
+    assert_eq!(&p[16..24], &[0; 8], "a stream was named");
+    assert_eq!(&p[24..], &[1, 0, 0, 0, 0, 0, 0, 0], "no power-on options");
+
+    f.tap.clear();
+    for (what, result, expected) in [
+        (
+            "unknown sink",
+            f.remote.unroute_v2ip_unit(unknown),
+            ControlError::UnknownDevice(unknown),
+        ),
+        (
+            "not a sink",
+            f.remote.unroute_v2ip_unit(source),
+            ControlError::Unsupported("the device is not a OneIP output"),
+        ),
+    ] {
+        assert_eq!(
+            format!("{result:?}"),
+            format!("{:?}", Err::<(), _>(expected)),
+            "{what}"
+        );
+    }
+    assert!(f.tap.frames().is_empty(), "a refused unroute was sent");
+}
+
+#[test]
+fn a_unit_route_is_refused_for_what_cannot_play_or_be_played() {
+    let f = Fixture::new();
+    f.connect();
+    let (sink, source, unknown, silent, not_a_sink) =
+        (uid_n(176), uid_n(177), uid_n(178), uid_n(179), uid_n(180));
+    f.everything(sink, 0x2F, "UR0011");
+    f.everything(source, 0x2F, "UR0012");
+    f.feed(
+        silent,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "UR0013", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+    f.feed(
+        silent,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            0,
+            0,
+            "Input 1",
+            "Apple TV",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN | BayFeatures::V2IP_SOURCE_LOCAL,
+        ),
+    );
+    f.feed(
+        not_a_sink,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "UR0014", "4.8.0", DeviceFeature::V2IP_SOURCE),
+    );
+    // A sink-only unit whose one input is a mesh bay standing for `source`:
+    // that input's streams are another unit's.
+    let lister = uid_n(181);
+    f.feed(
+        lister,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "UR0015", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    f.feed(
+        lister,
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            1,
+            1,
+            0,
+            "Output 1",
+            "Den",
+            BayStatus::NONE,
+            BayFeatures::HDMI_OUT | BayFeatures::V2IP_SINK_LOCAL,
+        ),
+    );
+    let mut page = vec![0u8; 8];
+    page[0..2].copy_from_slice(&((1u16 << 1) | 1).to_le_bytes());
+    page[2..4].copy_from_slice(&3u16.to_le_bytes());
+    page.extend_from_slice(source.as_bytes());
+    f.feed(lister, op::V2IP_BAY_MAPPINGS, &page);
+    f.tap.clear();
+    let cases = [
+        (
+            "unknown sink",
+            f.remote.route_v2ip_unit(unknown, source, None, true),
+            ControlError::UnknownDevice(unknown),
+        ),
+        (
+            "unknown source",
+            f.remote.route_v2ip_unit(sink, unknown, None, true),
+            ControlError::UnknownDevice(unknown),
+        ),
+        (
+            "unknown audio",
+            f.remote.route_v2ip_unit(sink, source, Some(unknown), true),
+            ControlError::UnknownDevice(unknown),
+        ),
+        (
+            "no streams",
+            f.remote.route_v2ip_unit(sink, silent, None, true),
+            ControlError::NotReported("the source's stream addresses"),
+        ),
+        (
+            "not a sink",
+            f.remote.route_v2ip_unit(not_a_sink, source, None, true),
+            ControlError::Unsupported("the device is not a OneIP output"),
+        ),
+        (
+            "only a mesh input",
+            f.remote.route_v2ip_unit(sink, lister, None, true),
+            ControlError::Unsupported("the device has no input of its own"),
+        ),
+    ];
+    for (what, result, expected) in cases {
+        assert_eq!(
+            format!("{result:?}"),
+            format!("{:?}", Err::<(), _>(expected)),
+            "{what}"
+        );
+    }
+    assert!(f.tap.frames().is_empty(), "a refused route was sent");
+}
+
 #[test]
 fn a_source_switch_names_one_stream_and_zeroes_the_other() {
     let f = Fixture::new();
@@ -5407,4 +5600,54 @@ fn an_empty_name_is_sent_and_waits_for_the_unit() {
     );
     f.feed(device, op::SYS_BAY_CONFIG, &report);
     assert_eq!(f.remote.bay(bay).expect("bay").user_name, "Samsung TV");
+}
+
+/// A route taking an output's audio return as the sink's audio names the
+/// source unit's own video and that output's audio return group, as a
+/// controller sends it, and is refused until the output has reported one.
+#[test]
+fn a_unit_route_can_take_an_outputs_audio_return() {
+    let f = Fixture::new();
+    f.connect();
+    let (sink, video, arc) = (uid_n(214), uid_n(215), uid_n(216));
+    f.everything(sink, 0x2F, "AR0001");
+    f.everything(video, 0x2F, "AR0002");
+    f.everything(arc, 0x2F, "AR0003");
+    f.tap.clear();
+    assert!(
+        matches!(
+            f.remote.route_v2ip_unit_with_arc(sink, video, arc, true),
+            Err(ControlError::NotReported(_))
+        ),
+        "routed before the output reported its audio return"
+    );
+    assert!(f.tap.frames().is_empty(), "a refused route was sent");
+
+    // A configuration without a usable audio return group names none.
+    let without = Cfg::addresses(arc, "239.7.216.1");
+    f.feed(arc, op::V2IP_DEVICE_CFG, &without.bytes_with_options());
+    assert!(
+        matches!(
+            f.remote.route_v2ip_unit_with_arc(sink, video, arc, true),
+            Err(ControlError::NotReported(_))
+        ),
+        "routed to an audio return group that is not one"
+    );
+
+    let mut cfg = Cfg::addresses(arc, "239.7.216.1");
+    cfg.arc_ip = "239.9.8.7";
+    cfg.arc_port = V2IP_PORT_AUDIO + 1;
+    f.feed(arc, op::V2IP_DEVICE_CFG, &cfg.bytes_with_options());
+
+    f.tap.clear();
+    f.remote
+        .route_v2ip_unit_with_arc(sink, video, arc, false)
+        .expect("both units have reported what the route names");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::V2IP_SOURCE_SWITCH.0.to_le_bytes());
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..16], sink.as_bytes(), "not addressed to the sink");
+    assert_eq!(&p[16..20], &[239, 7, 215, 1], "not the source unit's video");
+    assert_eq!(&p[20..24], &[239, 9, 8, 7], "not the output's audio return");
+    assert_eq!(&p[24..], &[0; 8], "the display was powered on");
 }

@@ -374,6 +374,9 @@ fn a_command_for_a_device_never_heard_from_is_not_found() {
         "the failure did not say what was missing: {}",
         last_error()
     );
+    // SAFETY: the handle is live.
+    let rc = unsafe { mxr_route_v2ip_unit_with_arc(handle, uid_n(9), uid_n(10), uid_n(11), true) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
     // SAFETY: the handle came from mxr_remote_new and is freed once.
     unsafe { mxr_remote_free(handle) };

@@ -300,6 +300,21 @@ fn acted_on(state: &State, uid: BayUid) -> Result<(&Device, &Bay), ControlError>
     Ok((device_of(state, owner.uid().device)?, owner))
 }
 
+/// The streams a unit advertises for an input of its own, rather than for a
+/// mesh bay standing for another unit's.
+fn own_source_streams(state: &State, uid: DeviceUid) -> Result<&V2ipStreamSources, ControlError> {
+    let device = device_of(state, uid)?;
+    let input = device
+        .first_input()
+        .filter(|b| b.is_local())
+        .ok_or(ControlError::Unsupported(
+            "the device has no input of its own",
+        ))?;
+    device
+        .v2ip_source_for(input)
+        .ok_or(ControlError::NotReported("the source's stream addresses"))
+}
+
 /// The streams the source bay on `port` advertises.
 fn source_streams(device: &Device, port: u16) -> Result<&V2ipStreamSources, ControlError> {
     let source = device
@@ -388,7 +403,7 @@ impl Remote {
             Ok(Command::new(
                 Addressee::device(device),
                 op::V2IP_SOURCE_SWITCH,
-                build_v2ip_source_switch(device.uid, streams.video.ip, audio),
+                build_v2ip_source_switch(device.uid, streams.video.ip, audio, true),
             ))
         })
     }
@@ -401,7 +416,100 @@ impl Remote {
             Ok(Command::new(
                 Addressee::device(device),
                 op::V2IP_SOURCE_SWITCH,
-                build_v2ip_source_switch(device.uid, Ipv4Addr::UNSPECIFIED, streams.audio.ip),
+                build_v2ip_source_switch(device.uid, Ipv4Addr::UNSPECIFIED, streams.audio.ip, true),
+            ))
+        })
+    }
+
+    /// Routes a OneIP sink unit to the streams a source unit advertises for
+    /// its own input, as a mesh controller does.
+    ///
+    /// The frame names the stream addresses, so the sink plays them whether
+    /// or not it lists the source. With `audio`, the audio comes from that
+    /// unit's own input in the same frame; without, it follows the video as
+    /// for [`Remote::select_video_source`]. `power_on` has the sink power its
+    /// display on with the switch. Refused unless the sink is a
+    /// OneIP output and each source has reported the streams of an input of
+    /// its own.
+    pub fn route_v2ip_unit(
+        &self,
+        sink: DeviceUid,
+        video: DeviceUid,
+        audio: Option<DeviceUid>,
+        power_on: bool,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let device = sdp_sink_of(state, sink)?;
+            let video = own_source_streams(state, video)?;
+            let audio = match audio {
+                Some(audio) => own_source_streams(state, audio)?.audio.ip,
+                None if device.hello.supported_protocol < AUDIO_FOLLOWS_SINCE => video.audio.ip,
+                None => Ipv4Addr::UNSPECIFIED,
+            };
+            Ok(Command::new(
+                Addressee::device(device),
+                op::V2IP_SOURCE_SWITCH,
+                build_v2ip_source_switch(device.uid, video.video.ip, audio, power_on),
+            ))
+        })
+    }
+
+    /// Routes a OneIP sink unit to a source unit's own video, with the audio
+    /// another unit's output returns to the mesh (its audio return group) as
+    /// the audio, as a mesh controller sends a route whose audio is an output
+    /// (`audio_mode` output in `/port/set_route`).
+    ///
+    /// The frame is the one for [`Remote::route_v2ip_unit`], with the audio
+    /// address set to the audio return group `arc_owner` last reported for its
+    /// output ([`DeviceV2ipDetails::arc`](crate::DeviceV2ipDetails::arc)).
+    /// `power_on` has the sink power its display on with the switch.
+    ///
+    /// No unit maps that group to a bay, as only inputs are looked up, so the
+    /// sink plays it as a manual stream on the default audio port, 50022,
+    /// while the output sends its audio return on 50023: such a route plays
+    /// no audio on current firmware. This sends exactly what a controller
+    /// does all the same.
+    ///
+    /// Refused unless the sink is a OneIP output, the source has reported the
+    /// streams of an input of its own, and `arc_owner` has reported a usable
+    /// audio return group.
+    pub fn route_v2ip_unit_with_arc(
+        &self,
+        sink: DeviceUid,
+        video: DeviceUid,
+        arc_owner: DeviceUid,
+        power_on: bool,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let device = sdp_sink_of(state, sink)?;
+            let video = own_source_streams(state, video)?;
+            let arc = device_of(state, arc_owner)?
+                .v2ip_details
+                .map(|d| d.arc)
+                .filter(|arc| arc.is_valid())
+                .ok_or(ControlError::NotReported("the output's audio return group"))?;
+            Ok(Command::new(
+                Addressee::device(device),
+                op::V2IP_SOURCE_SWITCH,
+                build_v2ip_source_switch(device.uid, video.video.ip, arc.ip, power_on),
+            ))
+        })
+    }
+
+    /// Unroutes a OneIP sink unit, as a mesh controller does: the frame names
+    /// no streams. Refused unless the sink is a OneIP output.
+    pub fn unroute_v2ip_unit(&self, sink: DeviceUid) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let device = sdp_sink_of(state, sink)?;
+            Ok(Command::new(
+                Addressee::device(device),
+                op::V2IP_SOURCE_SWITCH,
+                build_v2ip_source_switch(
+                    device.uid,
+                    Ipv4Addr::UNSPECIFIED,
+                    Ipv4Addr::UNSPECIFIED,
+                    true,
+                ),
             ))
         })
     }

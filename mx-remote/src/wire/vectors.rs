@@ -298,18 +298,19 @@ fn edid_request_frame() {
     );
 }
 
-/// Adjudicated against `mxr_v2ip_switch_data`: 24 bytes, no padding.
+/// Adjudicated against `mxr_v2ip_switch_data` (24 bytes, no padding) followed
+/// by `mxr_v2ip_switch_options`: one power-on byte padded to 8.
 ///
 /// The two addresses are big-endian and sit immediately after little-endian
 /// scalars, so they are given octets that differ from each other and read
-/// differently reversed. A receiver also accepts 32 bytes, carrying a power-on
-/// bit this client does not send.
+/// differently reversed.
 #[test]
 fn v2ip_source_switch_frame() {
     let payload = build_v2ip_source_switch(
         TEST_UID,
         Ipv4Addr::new(10, 8, 8, 9),
         Ipv4Addr::new(172, 20, 30, 40),
+        true,
     );
     let got = build_frame(
         TEST_UID,
@@ -319,7 +320,7 @@ fn v2ip_source_switch_frame() {
     );
     assert_eq!(
         hex_of(&got),
-        "50380600000102030405060708090a0b0c0d0e0f1f001800000102030405060708090a0b0c0d0e0f0a080809ac141e28"
+        "50380600000102030405060708090a0b0c0d0e0f1f002000000102030405060708090a0b0c0d0e0f0a080809ac141e280100000000000000"
     );
 }
 
