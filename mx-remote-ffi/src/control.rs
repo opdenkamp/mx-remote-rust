@@ -613,6 +613,10 @@ pub unsafe extern "C" fn mxr_select_source_addr(
 
 /// Renames a bay. The device stores the first 16 bytes.
 ///
+/// An empty name asks the unit to reset the bay to its default name. The unit
+/// picks that name and reports it in its next bay list, so the bay keeps its
+/// current name here until then.
+///
 /// # Safety
 ///
 /// `remote` is null or a live handle, and `name` is a NUL-terminated string.

@@ -5374,3 +5374,37 @@ fn a_bay_detection_goes_to_every_unit() {
     assert_eq!(frame.len(), HEADER_LEN, "a payload");
     assert_eq!(lock(&f.remote.shared.tx).both.last(), Some(&true));
 }
+
+/// An empty name asks the unit to reset the bay to its default. It is sent,
+/// and the bay keeps its name until the unit reports the new one in its next
+/// bay list.
+#[test]
+fn an_empty_name_is_sent_and_waits_for_the_unit() {
+    let f = Fixture::new();
+    let device = uid_n(213);
+    f.everything(device, 0x2F, "BN0003");
+    f.connect();
+    let bay = BayUid::new(device, 2);
+
+    f.tap.clear();
+    f.remote.set_bay_name(bay, "").expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[HEADER_LEN + 18..HEADER_LEN + 34], &[0; 16]);
+    assert_eq!(
+        f.remote.bay(bay).expect("bay").user_name,
+        "TV",
+        "renamed at once"
+    );
+
+    let report = bay_config_rec(
+        2,
+        1,
+        0,
+        "Output 1",
+        "Samsung TV",
+        BayStatus::NONE,
+        BayFeatures::HDMI_OUT | BayFeatures::AUDIO_AMP_OUT | BayFeatures::V2IP_SINK_LOCAL,
+    );
+    f.feed(device, op::SYS_BAY_CONFIG, &report);
+    assert_eq!(f.remote.bay(bay).expect("bay").user_name, "Samsung TV");
+}

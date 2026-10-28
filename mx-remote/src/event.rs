@@ -289,23 +289,36 @@ events! {
         EdidRequested => on_edid_requested(request: EdidRequest);
         /// A device answered with its EDID.
         EdidReceived => on_edid_received(edid: EdidRecord);
-        /// A peer asked a device to rename a bay.
+        /// Management asked a device to rename a bay, as a unit takes it. An
+        /// empty name, which asks the bay's owner to reset it to its default,
+        /// is reported only when this client owns the bay.
         BayNameChangeRequested => on_bay_name_change_requested(change: BayNameChange);
-        /// A peer asked a device to switch its EDID profile.
+        /// A peer asked a device to switch its EDID profile. One for this
+        /// client is reported only from management: the controller it
+        /// follows, or a management application.
         EdidProfileChangeRequested => on_edid_profile_change_requested(change: EdidProfileChange);
-        /// A peer asked a device to reboot.
+        /// A peer asked a device to reboot. One for this client or for every
+        /// unit is reported only from management: the controller this client
+        /// follows, or a management application.
         RebootRequested => on_reboot_requested(request: RebootRequest);
-        /// A peer sent a command to one unit.
+        /// A peer sent a command to one unit. One for this client is reported
+        /// only from management: the controller it follows, or a management
+        /// application.
         UnitCommandRequested => on_unit_command_requested(command: UnitCommand);
-        /// A peer asked devices to factory-reset.
+        /// A peer asked devices to factory-reset. One for this client or for
+        /// every unit is reported only from management: the controller this
+        /// client follows, or a management application.
         FactoryResetRequested => on_factory_reset_requested(request: FactoryResetRequest);
         /// A device told every unit to check for new firmware now.
         MonitoringPulse => on_monitoring_pulse();
-        /// A peer asked a device to upgrade its FPGA.
+        /// Management asked every unit to upgrade its FPGA: the controller
+        /// this client follows, or a management application.
         UpgradeFpgaRequested => on_upgrade_fpga_requested();
         /// A peer asked a device to re-detect its bays.
         DetectBaysRequested => on_detect_bays_requested();
-        /// A peer asked a sink to enter or leave power save.
+        /// A peer asked a sink to enter or leave power save. One for this
+        /// client or for every unit is reported only from management: the
+        /// controller this client follows, or a management application.
         PowerSaveRequested => on_power_save_requested(request: V2ipPowerSaveRequest);
         /// A peer asked a device to send a remote-control key.
         KeyTransmitRequested => on_key_transmit_requested(request: KeyTransmitRequest);

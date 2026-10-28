@@ -765,6 +765,8 @@ fn a_filter_status_lists_every_uid_past_the_target() {
 #[test]
 fn power_save_arrives_in_both_forms() {
     let mut h = command_device(50);
+    // Every unit takes these from management only.
+    h.sender = h.controller();
 
     h.feed(op::V2IP_POWER_SAVE, &[1]);
     assert!(
@@ -785,6 +787,8 @@ fn power_save_arrives_in_both_forms() {
 #[test]
 fn a_factory_reset_arrives_in_three_forms() {
     let mut h = command_device(51);
+    // Every unit takes these from management only.
+    h.sender = h.controller();
     let latest = |h: &Harness| {
         h.events
             .iter()
@@ -833,6 +837,8 @@ fn a_factory_reset_arrives_in_three_forms() {
 #[test]
 fn a_reboot_arrives_in_three_forms() {
     let mut h = command_device(57);
+    // Every unit takes these from management only.
+    h.sender = h.controller();
     let latest = |h: &Harness| {
         h.events
             .iter()
@@ -1016,6 +1022,8 @@ fn a_filter_list_lands_on_the_sink_it_names() {
 #[test]
 fn a_bay_name_is_read_as_a_unit_keeps_it() {
     let mut h = command_device(52);
+    let controller = h.controller();
+    h.sender = controller;
     let target = uid_n(57);
 
     let mut p = target.as_bytes().to_vec();
@@ -3902,4 +3910,97 @@ fn a_unit_reports_whether_it_is_located() {
     assert!(f.has(UnitFlag::LOCATE_SUPPORTED) && !f.has(UnitFlag::LOCATE));
     let f = report(&mut h, 1 << 17);
     assert!(f.has(UnitFlag::LOCATE) && !f.has(UnitFlag::LOCATE_SUPPORTED));
+}
+
+/// A rename is taken only from management, as a unit takes it. An empty
+/// name asks the owner to reset the bay, so only a rename for this client
+/// itself reports one; every other receiver ignores it.
+#[test]
+fn a_rename_follows_the_receiver_rules() {
+    let mut h = command_device(53);
+    let target = uid_n(53);
+    let rename = |target: DeviceUid, name: &str| {
+        let mut p = target.as_bytes().to_vec();
+        p.extend_from_slice(&2u16.to_le_bytes());
+        let mut field = [0u8; 16];
+        field[..name.len()].copy_from_slice(name.as_bytes());
+        p.extend_from_slice(&field);
+        p.extend_from_slice(&poisoned(6));
+        p
+    };
+    let renamed = |h: &Harness| h.saw(|e| matches!(e, Event::BayNameChangeRequested { .. }));
+
+    h.feed(op::CHANGE_BAY_NAME, &rename(target, "Kitchen"));
+    assert!(
+        !renamed(&h),
+        "a rename from an ordinary peer of a current unit"
+    );
+
+    let controller = h.controller();
+    h.feed_as(controller, op::CHANGE_BAY_NAME, &rename(target, ""));
+    assert!(!renamed(&h), "an empty name for another unit");
+    h.feed_as(controller, op::CHANGE_BAY_NAME, &rename(target, "Kitchen"));
+    assert!(renamed(&h));
+
+    h.events.clear();
+    let own = h.state.uid;
+    h.feed_as(controller, op::CHANGE_BAY_NAME, &rename(own, ""));
+    assert!(
+        h.saw(|e| matches!(e, Event::BayNameChangeRequested { change, .. }
+        if change.target == own && change.name.is_empty())),
+        "an empty name for this client was dropped"
+    );
+}
+
+/// A rename of this client's own bay is judged against the controller this
+/// client follows, as a unit judges one against its stored controller: that
+/// controller or a management application may rename it, and a peer merely
+/// announcing the controller role may not.
+#[test]
+fn a_rename_of_this_client_is_judged_against_its_controller() {
+    let mut h = command_device(54);
+    let own = h.state.uid;
+    let plain =
+        |name: &str, serial: &str, f: DeviceFeature| hello_payload(0x2F, name, serial, "4.8.0", f);
+    let followed = uid_n(0xC5);
+    let pretender = uid_n(0xC6);
+    h.feed_as(
+        followed,
+        op::SYS_HELLO,
+        &plain("Router", "RT0001", DeviceFeature::MESH),
+    );
+    h.feed_as(
+        pretender,
+        op::SYS_HELLO,
+        &plain(
+            "Other",
+            "RT0002",
+            DeviceFeature::MESH | DeviceFeature::MESH_MASTER,
+        ),
+    );
+    let mut rename = own.as_bytes().to_vec();
+    rename.extend_from_slice(&0u16.to_le_bytes());
+    rename.extend_from_slice(&[0; 16]);
+    rename.extend_from_slice(&poisoned(6));
+    let renamed = |h: &Harness| h.saw(|e| matches!(e, Event::BayNameChangeRequested { .. }));
+
+    h.feed_as(followed, op::CHANGE_BAY_NAME, &rename);
+    assert!(
+        !renamed(&h),
+        "taken from a controller this client does not follow"
+    );
+
+    h.state.mesh_controller = followed;
+    h.feed_as(pretender, op::CHANGE_BAY_NAME, &rename);
+    assert!(!renamed(&h), "taken from a peer announcing the role");
+    h.feed_as(followed, op::CHANGE_BAY_NAME, &rename);
+    assert!(
+        renamed(&h),
+        "refused from the controller this client follows"
+    );
+
+    h.events.clear();
+    let manager = h.controller();
+    h.feed_as(manager, op::CHANGE_BAY_NAME, &rename);
+    assert!(renamed(&h), "refused from a management application");
 }

@@ -38,6 +38,9 @@ use tree::Tree;
 pub(crate) struct State {
     /// This client's own identifier, so its own frames can be ignored.
     pub(crate) uid: DeviceUid,
+    /// The mesh controller this client follows, zero for none: what a unit
+    /// judges a write to itself against.
+    pub(crate) mesh_controller: DeviceUid,
     pub(crate) devices: HashMap<DeviceUid, Device>,
     pub(crate) links: BayLinks,
     /// How many frames from other senders have parsed, whatever they carried.
@@ -76,6 +79,7 @@ impl State {
     pub(crate) fn new(uid: DeviceUid) -> Self {
         Self {
             uid,
+            mesh_controller: DeviceUid::ZERO,
             devices: HashMap::new(),
             links: BayLinks::default(),
             frames_received: 0,
@@ -133,6 +137,16 @@ impl State {
         self.devices
             .values()
             .filter(move |d| d.uid != own && d.is_online(now))
+    }
+
+    /// Whether `sender` is management to this client, as a unit judges it
+    /// against its own stored controller: that controller, or a management
+    /// application.
+    pub(crate) fn manages_this_client(&self, sender: DeviceUid) -> bool {
+        sender == self.mesh_controller
+            || self
+                .device(sender)
+                .is_some_and(|d| d.hello.features.has(DeviceFeature::MANAGER))
     }
 
     pub(crate) fn device(&self, uid: DeviceUid) -> Option<&Device> {

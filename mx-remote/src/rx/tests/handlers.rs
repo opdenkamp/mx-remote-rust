@@ -562,7 +562,9 @@ fn command_handlers_reach_their_events() {
 
     h.feed(op::SYS_DISCOVER, &[]);
     h.feed(op::V2IP_DETECT_BAYS, &[]);
-    h.feed(op::V2IP_UPGRADE_FPGA, &[]);
+    // A unit takes an upgrade only from management.
+    let manager = h.controller();
+    h.feed_as(manager, op::V2IP_UPGRADE_FPGA, &[]);
     h.feed(op::SYS_MONITORING_PULSE, &[]);
     assert!(h.saw(|e| matches!(e, Event::DiscoverRequest { .. })));
     assert!(h.saw(|e| matches!(e, Event::DetectBaysRequested { .. })));

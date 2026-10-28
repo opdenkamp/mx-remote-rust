@@ -81,6 +81,11 @@ pub(super) fn unit_command(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
             .get(UNIT_COMMAND_SIZE..UNIT_COMMAND_SIZE + UNIT_NET_CONFIG_SIZE)
             .map(net_config),
     };
+    // A unit takes a command for itself only from management, and this
+    // client one for itself the same way.
+    if command.target == state.uid && !state.manages_this_client(rx.sender()) {
+        return;
+    }
     ev.push(Event::UnitCommandRequested {
         device: rx.sender(),
         command,

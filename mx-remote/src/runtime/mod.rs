@@ -419,6 +419,8 @@ impl Remote {
             let mut stored = lock(&self.shared.mesh_controller);
             std::mem::replace(&mut *stored, controller) != controller
         };
+        // What a write to this client is judged against.
+        lock(&self.shared.state).mesh_controller = controller;
         if changed {
             self.shared.announce();
         }

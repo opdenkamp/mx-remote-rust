@@ -1266,3 +1266,14 @@ fn the_device_tree_nests_by_topology() {
     assert_eq!(tree, vec![(remote.uid(), 0), (b, 0), (a, 1)]);
     assert_eq!(remote.devices(), vec![b, a]);
 }
+
+/// The controller this client follows is what its receive path judges
+/// management by.
+#[test]
+fn the_followed_controller_reaches_the_receive_path() {
+    let (remote, _) = client(255);
+    remote.set_mesh_controller(uid_n(3));
+    assert_eq!(lock(&remote.shared.state).mesh_controller, uid_n(3));
+    remote.set_mesh_controller(DeviceUid::ZERO);
+    assert_eq!(lock(&remote.shared.state).mesh_controller, DeviceUid::ZERO);
+}

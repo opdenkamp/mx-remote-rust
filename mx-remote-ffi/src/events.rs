@@ -574,23 +574,33 @@ pub struct mxr_callbacks_t {
     pub on_edid_requested: mxr_edid_request_cb,
     /// A device answered with its EDID.
     pub on_edid_received: mxr_edid_record_cb,
-    /// A peer asked a device to rename a bay.
+    /// Management asked a device to rename a bay. An empty name, which asks
+    /// the bay's owner to reset it to its default, is reported only when this
+    /// client owns the bay.
     pub on_bay_name_change_requested: mxr_bay_name_change_cb,
-    /// A peer asked a device to switch its EDID profile.
+    /// A peer asked a device to switch its EDID profile. One for this client
+    /// is reported only from management: the controller it follows, or a
+    /// management application.
     pub on_edid_profile_change_requested: mxr_edid_profile_change_cb,
     /// A peer asked a device to reboot. The second identifier is the device
     /// being asked, which is not always the sender, or zero when every unit
-    /// is asked.
+    /// is asked. One for this client or every unit is reported only from
+    /// management: the controller this client follows, or a management
+    /// application.
     pub on_reboot_requested: mxr_device_uid_cb,
-    /// A peer asked devices to factory-reset.
+    /// A peer asked devices to factory-reset. One for this client or every
+    /// unit is reported only from management, as for `on_reboot_requested`.
     pub on_factory_reset_requested: mxr_factory_reset_cb,
     /// A device told every unit to check for new firmware now.
     pub on_monitoring_pulse: mxr_device_cb,
-    /// A peer asked a device to upgrade its FPGA.
+    /// Management asked every unit to upgrade its FPGA: the controller this
+    /// client follows, or a management application.
     pub on_upgrade_fpga_requested: mxr_device_cb,
     /// A peer asked a device to re-detect its bays.
     pub on_detect_bays_requested: mxr_device_cb,
-    /// A peer asked a sink to enter or leave power save.
+    /// A peer asked a sink to enter or leave power save. One for this client
+    /// or every unit is reported only from management, as for
+    /// `on_reboot_requested`.
     pub on_power_save_requested: mxr_power_save_cb,
     /// A peer asked a device to send a remote-control key.
     pub on_key_transmit_requested: mxr_key_transmit_cb,

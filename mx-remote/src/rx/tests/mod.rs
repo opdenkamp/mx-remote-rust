@@ -6,6 +6,7 @@
 mod commands;
 mod handlers;
 mod listing;
+mod management;
 mod mesh_bays;
 mod osd;
 mod paths;

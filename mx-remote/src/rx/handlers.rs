@@ -478,11 +478,17 @@ pub(super) fn takes_command(state: &State, sender: DeviceUid, subject: DeviceUid
 /// judges it: the sender announces [`DeviceFeature::MANAGER`], or it is the
 /// controller the subject follows.
 ///
+/// This client judges a write about itself as a unit does one about itself:
+/// against the controller it follows.
+///
 /// Which controller that is comes from the mesh membership the subject
 /// reports. Until it has reported one, which is the case for as long as a
 /// broadcast period after this client starts, the controller's own
 /// announcement of [`DeviceFeature::MESH_MASTER`] stands in for it.
 pub(super) fn manages(state: &State, sender: DeviceUid, subject: DeviceUid) -> bool {
+    if subject == state.uid {
+        return state.manages_this_client(sender);
+    }
     let Some(from) = state.device(sender) else {
         return false;
     };

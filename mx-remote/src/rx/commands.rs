@@ -382,21 +382,42 @@ pub(super) fn change_bay_name(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event
     if p.len() < BAY_NAME_SIZE {
         return;
     }
+    // A unit takes a rename only from management, judged against its own
+    // stored controller; this client is judged against the one it follows.
+    // An empty name asks the bay's owner to reset it to its default, and
+    // every other receiver ignores it.
+    let target = uid_at(p, 0);
+    let name = cstr(&p[18..17 + DEVICE_NAME_LEN]);
+    if !takes_command(state, device, target) || (name.is_empty() && target != state.uid) {
+        return;
+    }
     ev.push(Event::BayNameChangeRequested {
         device,
         change: BayNameChange {
-            target: uid_at(p, 0),
+            target,
             port: u16_at(p, 16),
-            name: cstr(&p[18..17 + DEVICE_NAME_LEN]),
+            name,
         },
     });
+}
+
+/// Whether this client takes a command for `target` from `sender`, as a unit
+/// takes one for itself: one for this client, or for every unit (`None`),
+/// only from management. One for another unit is that unit's to judge, and
+/// reported whoever sent it.
+fn for_this_client(state: &State, sender: DeviceUid, target: Option<DeviceUid>) -> bool {
+    match target {
+        Some(target) if target != state.uid => true,
+        _ => state.manages_this_client(sender),
+    }
 }
 
 pub(super) fn reboot(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = from_known_device(state, rx) else {
         return;
     };
-    if let Some(target) = manage_target(rx.frame.payload()) {
+    let target = manage_target(rx.frame.payload());
+    if let Some(target) = target.filter(|t| for_this_client(state, device, *t)) {
         ev.push(Event::RebootRequested {
             device,
             request: RebootRequest {
@@ -413,8 +434,11 @@ pub(super) fn monitoring_pulse(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Even
     }
 }
 
+/// Reports a request to every unit to upgrade its video processor, which a
+/// unit takes only from management.
 pub(super) fn upgrade_fpga(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    if let Some(device) = from_known_device(state, rx) {
+    let device = from_known_device(state, rx).filter(|d| for_this_client(state, *d, None));
+    if let Some(device) = device {
         ev.push(Event::UpgradeFpgaRequested { device });
     }
 }
@@ -424,7 +448,7 @@ pub(super) fn edid_profile(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
         return;
     };
     let p = rx.frame.payload();
-    if p.len() < 18 {
+    if p.len() < 18 || !for_this_client(state, device, Some(uid_at(p, 0))) {
         return;
     }
     ev.push(Event::EdidProfileChangeRequested {
@@ -500,6 +524,9 @@ pub(super) fn factory_reset(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
     let Some(target) = manage_target(rx.frame.payload()) else {
         return;
     };
+    if !for_this_client(state, device, target) {
+        return;
+    }
     let request = FactoryResetRequest {
         all: target.is_none(),
         target,
@@ -553,6 +580,9 @@ pub(super) fn v2ip_power_save(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event
         },
         _ => return,
     };
+    if !for_this_client(state, device, request.target) {
+        return;
+    }
     ev.push(Event::PowerSaveRequested { device, request });
 }
 

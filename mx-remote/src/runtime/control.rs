@@ -531,6 +531,10 @@ impl Remote {
     // ---- bay settings ----
 
     /// Renames a bay.
+    ///
+    /// An empty name asks the unit to reset the bay to its default name. The
+    /// unit picks that name itself and reports it in its next bay list, so
+    /// the bay keeps its current name here until then.
     pub fn set_bay_name(&self, bay: BayUid, name: &str) -> Result<(), ControlError> {
         let name = stored_name(name);
         self.shared.command(move |state| {
@@ -540,6 +544,9 @@ impl Remote {
             Ok(
                 Command::new(Addressee::device(device), op::CHANGE_BAY_NAME, payload).then(
                     move |state, ev| {
+                        if name.is_empty() {
+                            return;
+                        }
                         if let Some(b) = state.bay_mut(bay) {
                             b.set_user_name(name, ev);
                         }

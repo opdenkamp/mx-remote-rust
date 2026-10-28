@@ -4422,21 +4422,28 @@ typedef struct {
    */
   mxr_edid_record_cb on_edid_received;
   /**
-   * A peer asked a device to rename a bay.
+   * Management asked a device to rename a bay. An empty name, which asks
+   * the bay's owner to reset it to its default, is reported only when this
+   * client owns the bay.
    */
   mxr_bay_name_change_cb on_bay_name_change_requested;
   /**
-   * A peer asked a device to switch its EDID profile.
+   * A peer asked a device to switch its EDID profile. One for this client
+   * is reported only from management: the controller it follows, or a
+   * management application.
    */
   mxr_edid_profile_change_cb on_edid_profile_change_requested;
   /**
    * A peer asked a device to reboot. The second identifier is the device
    * being asked, which is not always the sender, or zero when every unit
-   * is asked.
+   * is asked. One for this client or every unit is reported only from
+   * management: the controller this client follows, or a management
+   * application.
    */
   mxr_device_uid_cb on_reboot_requested;
   /**
-   * A peer asked devices to factory-reset.
+   * A peer asked devices to factory-reset. One for this client or every
+   * unit is reported only from management, as for `on_reboot_requested`.
    */
   mxr_factory_reset_cb on_factory_reset_requested;
   /**
@@ -4444,7 +4451,8 @@ typedef struct {
    */
   mxr_device_cb on_monitoring_pulse;
   /**
-   * A peer asked a device to upgrade its FPGA.
+   * Management asked every unit to upgrade its FPGA: the controller this
+   * client follows, or a management application.
    */
   mxr_device_cb on_upgrade_fpga_requested;
   /**
@@ -4452,7 +4460,9 @@ typedef struct {
    */
   mxr_device_cb on_detect_bays_requested;
   /**
-   * A peer asked a sink to enter or leave power save.
+   * A peer asked a sink to enter or leave power save. One for this client
+   * or every unit is reported only from management, as for
+   * `on_reboot_requested`.
    */
   mxr_power_save_cb on_power_save_requested;
   /**
@@ -6059,6 +6069,10 @@ mxr_result_t mxr_select_source_addr(const mxr_remote_t *remote,
 
 /**
  * Renames a bay. The device stores the first 16 bytes.
+ *
+ * An empty name asks the unit to reset the bay to its default name. The unit
+ * picks that name and reports it in its next bay list, so the bay keeps its
+ * current name here until then.
  *
  * # Safety
  *
