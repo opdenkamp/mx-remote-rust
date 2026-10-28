@@ -113,30 +113,29 @@ impl State {
         false
     }
 
-    /// Whether some live peer has to be reached by broadcast as well: it has
-    /// not been heard by multicast within the path window, or it reports that
-    /// its own multicast fails.
+    /// Whether some peer has to be reached by broadcast as well: it has not
+    /// been heard by multicast within the path window, or it reports that its
+    /// own multicast fails. Every registered peer counts, one gone silent
+    /// included, as a unit judges by every peer it knows.
     pub(crate) fn needs_broadcast(&self, now: Instant) -> bool {
-        self.peers(now).any(|d| {
+        self.peers().any(|d| {
             d.broadcast_only(now) || d.hello.features.has(DeviceFeature::STATUS_MCAST_FAULT)
         })
     }
 
-    /// Whether this client's own multicast fails: a live peer, not about to
+    /// Whether this client's own multicast fails: a peer, not about to
     /// reboot, is heard by broadcast but not by multicast.
     pub(crate) fn multicast_fault(&self, now: Instant) -> bool {
-        self.peers(now).any(|d| {
+        self.peers().any(|d| {
             !d.hello.features.has(DeviceFeature::STATUS_REBOOT)
                 && d.broadcast_only(now)
                 && d.heard_broadcast_lately(now)
         })
     }
 
-    fn peers(&self, now: Instant) -> impl Iterator<Item = &Device> + '_ {
+    fn peers(&self) -> impl Iterator<Item = &Device> + '_ {
         let own = self.uid;
-        self.devices
-            .values()
-            .filter(move |d| d.uid != own && d.is_online(now))
+        self.devices.values().filter(move |d| d.uid != own)
     }
 
     /// Whether `sender` is management to this client, as a unit judges it

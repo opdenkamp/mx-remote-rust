@@ -30,7 +30,6 @@ fn client(name: &CStr, uid: &CStr) -> *mut mxr_remote_t {
     let config = mxr_config_t {
         target_ip: ptr::null(),
         port: 0,
-        broadcast: false,
         local_ip: ptr::null(),
         interface: ptr::null(),
         name: name.as_ptr(),
@@ -40,7 +39,6 @@ fn client(name: &CStr, uid: &CStr) -> *mut mxr_remote_t {
         serial: ptr::null(),
         version: ptr::null(),
         mesh_device: false,
-        both_endpoints: false,
         capture_hello_mac: false,
     };
     // SAFETY: every pointer in the config is a live NUL-terminated string, and
@@ -388,7 +386,6 @@ fn a_configuration_that_cannot_be_read_yields_no_client() {
     let config = mxr_config_t {
         target_ip: ptr::null(),
         port: 0,
-        broadcast: false,
         local_ip: bad.as_ptr(),
         interface: ptr::null(),
         name: ptr::null(),
@@ -398,7 +395,6 @@ fn a_configuration_that_cannot_be_read_yields_no_client() {
         serial: ptr::null(),
         version: ptr::null(),
         mesh_device: false,
-        both_endpoints: false,
         capture_hello_mac: false,
     };
     // SAFETY: every non-null pointer in the config is a live NUL-terminated
@@ -2031,4 +2027,21 @@ fn the_device_tree_heads_with_the_client_itself() {
 
     // SAFETY: the handle came from mxr_remote_new and is freed once.
     unsafe { mxr_remote_free(handle) };
+}
+
+#[test]
+fn the_mesh_wide_calls_refuse_a_null_handle() {
+    // SAFETY: a null handle is allowed and refused.
+    unsafe {
+        assert_eq!(
+            mxr_reboot_all(ptr::null()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            mxr_factory_reset_all(ptr::null()),
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT
+        );
+        let rc = mxr_remote_update_config(ptr::null(), ptr::null());
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    }
 }

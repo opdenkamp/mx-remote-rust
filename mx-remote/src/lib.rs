@@ -41,9 +41,9 @@
 //! # Ok::<(), std::io::Error>(())
 //! ```
 //!
-//! [`Config::default`] discovers over multicast on the interface the host
-//! picks, which is the right answer on a single-homed machine and arbitrary on
-//! any other. `cargo run --example discover` is the program above, complete.
+//! [`Config::default`] runs both endpoints a unit has, the discovery group and
+//! the subnet broadcast address, on the interface the host picks, which is the
+//! right answer on a single-homed machine and arbitrary on any other. `cargo run --example discover` is the program above, complete.
 //!
 //! # Events say what moved
 //!

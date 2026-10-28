@@ -29,18 +29,19 @@ pub struct mxr_remote_t {
 
 /// How a client finds the network.
 ///
-/// Zeroing the whole struct asks for the default: multicast discovery on
-/// whichever interface the host picks, which is the right answer on a machine
-/// with one network and an arbitrary one on any other.
+/// Zeroing the whole struct asks for the default: both endpoints a unit has,
+/// the discovery group and the subnet broadcast address, on whichever
+/// interface the host picks, which is the right answer on a machine with one
+/// network and an arbitrary one on any other. A client always runs both.
 #[repr(C)]
 pub struct mxr_config_t {
-    /// Where to send. Null means the multicast group, or the interface's
-    /// broadcast address when `broadcast` is set.
+    /// For tests and development only: replaces both endpoints with one on
+    /// this address, so a test runs on a scratch group rather than a live
+    /// network. A production client leaves it null.
     pub target_ip: *const c_char,
-    /// UDP port. Zero means the default for the selected mode.
+    /// For tests and development only: the port of the one endpoint
+    /// `target_ip` opens, zero meaning 8812. Ignored without it.
     pub port: u16,
-    /// Use broadcast rather than multicast.
-    pub broadcast: bool,
     /// Selects the interface by address, as text. Null lets the host choose.
     ///
     /// It decides both which interface frames leave by and which one they are
@@ -80,13 +81,6 @@ pub struct mxr_config_t {
     /// takes as a member and can hand its controller role to. Units then take
     /// writes from it only while they follow it as their controller.
     pub mesh_device: bool,
-    /// Bind both endpoints a unit has rather than one: the discovery group,
-    /// and the broadcast address of the selected interface (or `target_ip`)
-    /// on `port`, zero meaning 8811. Frames every unit sends to both go to
-    /// both; every other frame goes to the group, and to the broadcast
-    /// address too while some live peer is not heard by multicast or reports
-    /// that its multicast fails. Takes precedence over `broadcast`.
-    pub both_endpoints: bool,
     /// Read the source hardware address of every hello into the `mac` of
     /// `mxr_device_info_t`, as a unit stores it. A UDP socket never sees that
     /// address, so this opens a packet socket taking a copy of every IPv4
@@ -152,7 +146,6 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.port = (c.port != 0).then_some(c.port);
     config.local_ip = local_ip;
     config.interface = interface.map(str::to_owned);
-    config.broadcast = c.broadcast;
     config.name = name.map(str::to_owned);
     config.serial = serial.map(str::to_owned);
     config.version = version.map(str::to_owned);
@@ -160,7 +153,6 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.uid_path = uid_path.map(PathBuf::from);
     config.logo_port = (c.logo_port != 0).then_some(c.logo_port);
     config.mesh_device = c.mesh_device;
-    config.both_endpoints = c.both_endpoints;
     config.capture_hello_mac = c.capture_hello_mac;
     Ok(config)
 }
@@ -807,7 +799,7 @@ unsafe fn write_bay(
     }
 }
 
-/// Reopens the socket on a different interface, or in the other mode.
+/// Reopens the sockets on a different interface, selected by address.
 ///
 /// `local_ip` may be null to let the host choose again.
 ///
@@ -819,7 +811,6 @@ unsafe fn write_bay(
 pub unsafe extern "C" fn mxr_remote_update_config(
     remote: *const mxr_remote_t,
     local_ip: *const c_char,
-    broadcast: bool,
 ) -> mxr_result_t {
     // SAFETY: the caller guarantees a live handle or null.
     let handle = unsafe { remote.as_ref() };
@@ -829,7 +820,7 @@ pub unsafe extern "C" fn mxr_remote_update_config(
             Ok(ip) => ip,
             Err(code) => return code,
         };
-        from_io(r.remote.update_config(ip, broadcast))
+        from_io(r.remote.update_config(ip))
     })
 }
 

@@ -18,6 +18,7 @@ use socket2::{Domain, InterfaceIndexOrAddress, Protocol, SockAddr, Socket, Type}
 
 use super::constants::{MULTICAST_IP, MULTICAST_PORT};
 use super::netif;
+use super::tx::Endpoints;
 
 /// How long a receive waits before returning empty-handed.
 ///
@@ -258,19 +259,28 @@ impl Conn {
         self.secondary.is_some()
     }
 
-    /// Writes a frame to the wire: to the first endpoint, and to the second as
-    /// well when `both` is set and there is one.
+    /// Writes a frame to the wire, by the endpoints [`Endpoints`] names: the
+    /// group is the first endpoint, and broadcast the second.
     ///
     /// The only call to the sockets in this library. Every frame reaches it
     /// through [`Tx::send`](super::tx::Tx::send), which is what makes the
     /// protocol-floor check unskippable; a second write anywhere would bypass
     /// that gate rather than merely duplicate this function.
-    pub(super) fn send(&self, data: &[u8], both: bool) -> io::Result<usize> {
-        let sent = self.primary.socket.send_to(data, self.primary.target)?;
-        if let Some(second) = self.secondary.as_ref().filter(|_| both) {
-            second.socket.send_to(data, second.target)?;
+    ///
+    /// With one endpoint bound, every frame goes by it.
+    pub(super) fn send(&self, data: &[u8], endpoints: Endpoints) -> io::Result<usize> {
+        let Some(second) = &self.secondary else {
+            return self.primary.socket.send_to(data, self.primary.target);
+        };
+        match endpoints {
+            Endpoints::Multicast => self.primary.socket.send_to(data, self.primary.target),
+            Endpoints::Broadcast => second.socket.send_to(data, second.target),
+            Endpoints::Both => {
+                let sent = self.primary.socket.send_to(data, self.primary.target)?;
+                second.socket.send_to(data, second.target)?;
+                Ok(sent)
+            }
         }
-        Ok(sent)
     }
 
     /// Waits for a datagram on the first endpoint, for at most

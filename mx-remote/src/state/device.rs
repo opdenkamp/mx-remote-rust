@@ -386,6 +386,16 @@ impl Device {
             .is_some_and(|t| now.saturating_duration_since(t) < PATH_WINDOW)
     }
 
+    /// The path this device is heard by, as a unit picks the one endpoint for
+    /// a frame meant for it alone: broadcast while it is broadcast-only.
+    pub(crate) fn heard_path(&self, now: Instant) -> Path {
+        if self.broadcast_only(now) {
+            Path::Broadcast
+        } else {
+            Path::Multicast
+        }
+    }
+
     /// Whether a frame from this device arrived by broadcast within
     /// [`PATH_WINDOW`].
     pub(crate) fn heard_broadcast_lately(&self, now: Instant) -> bool {

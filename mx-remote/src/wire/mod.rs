@@ -67,3 +67,5 @@ pub(crate) use uid::UID_LEN;
 pub(crate) use netif::default_local_ip;
 #[cfg(test)]
 pub(crate) use opcode::protocol_for;
+#[cfg(test)]
+pub(crate) use tx::Endpoints;

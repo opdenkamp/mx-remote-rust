@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use crate::testing::{bay_config_rec, datagram, fixed_str, uid_n};
 use crate::types::MeshOperation;
 use crate::wire::{
-    op, protocol_for, BayFeatures, BayStatus, DeviceFeature, DeviceUid, Path, HEADER_LEN,
-    PROTOCOL_VERSION,
+    op, protocol_for, BayFeatures, BayStatus, DeviceFeature, DeviceUid, Endpoints, Path,
+    HEADER_LEN, PROTOCOL_VERSION,
 };
 
 use super::schedule::{next_hello_interval, HELLO_BASE, HELLO_JITTER};
@@ -425,7 +425,13 @@ fn the_announcement_carries_the_identity_and_role_it_was_given() {
 #[test]
 fn a_frame_goes_to_both_endpoints_when_a_unit_would_send_it_there() {
     let (remote, _tap) = client(212);
-    let last = |remote: &Remote| *lock(&remote.shared.tx).both.last().expect("nothing sent");
+    let last = |remote: &Remote| {
+        *lock(&remote.shared.tx)
+            .sent_on
+            .last()
+            .expect("nothing sent")
+            == Endpoints::Both
+    };
 
     remote.shared.announce();
     assert!(last(&remote), "a hello goes to both endpoints");
@@ -1276,4 +1282,146 @@ fn the_followed_controller_reaches_the_receive_path() {
     assert_eq!(lock(&remote.shared.state).mesh_controller, uid_n(3));
     remote.set_mesh_controller(DeviceUid::ZERO);
     assert_eq!(lock(&remote.shared.state).mesh_controller, DeviceUid::ZERO);
+}
+
+/// A client always runs both endpoints a unit has; only a test or
+/// development setup naming an address of its own runs one, on that address.
+#[test]
+fn a_client_always_runs_both_endpoints() {
+    let plan = |config: Config| {
+        let remote = Remote::new(config, Arc::new(())).expect("a client given its own uid");
+        let plan = lock(&remote.shared.network).plan();
+        plan
+    };
+    let uid = Some(uid_n(247));
+    assert_eq!(
+        plan(Config {
+            uid,
+            ..Config::default()
+        }),
+        Plan::Both
+    );
+    let group = Ipv4Addr::new(239, 255, 77, 90);
+    assert_eq!(
+        plan(Config {
+            uid,
+            target_ip: Some(group),
+            port: Some(18890),
+            ..Config::default()
+        }),
+        Plan::One(group, 18890)
+    );
+    assert_eq!(
+        plan(Config {
+            uid,
+            target_ip: Some(group),
+            ..Config::default()
+        }),
+        Plan::One(group, MULTICAST_PORT)
+    );
+}
+
+/// The hello goes to both endpoints when it is the first since the sockets
+/// opened or the last on broadcast went 30 s ago or more, and otherwise to the
+/// group alone, unless some peer needs broadcast.
+#[test]
+fn the_hello_reaches_broadcast_at_least_every_30_seconds() {
+    let (remote, _) = client(248);
+    let on = |remote: &Remote| {
+        remote.shared.announce();
+        *lock(&remote.shared.tx)
+            .sent_on
+            .last()
+            .expect("nothing sent")
+    };
+    assert_eq!(on(&remote), Endpoints::Both, "the first hello");
+    assert_eq!(on(&remote), Endpoints::Multicast, "a hello inside 30 s");
+
+    let back = |secs| {
+        Instant::now()
+            .checked_sub(Duration::from_secs(secs))
+            .expect("the test clock cannot predate the process")
+    };
+    *lock(&remote.shared.hello_on_broadcast) = Some(back(29));
+    assert_eq!(on(&remote), Endpoints::Multicast, "29 s after the last");
+    *lock(&remote.shared.hello_on_broadcast) = Some(back(30));
+    assert_eq!(on(&remote), Endpoints::Both, "30 s after the last");
+    assert_eq!(on(&remote), Endpoints::Multicast);
+
+    remote
+        .shared
+        .broadcast_needed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(on(&remote), Endpoints::Both, "a peer needing broadcast");
+}
+
+/// A ping goes by the one endpoint its device is heard by.
+#[test]
+fn a_ping_goes_by_the_endpoint_its_device_is_heard_by() {
+    let (remote, _) = client(249);
+    let peer = uid_n(250);
+    // A peer on protocol 0x2A, the first that takes a ping.
+    let heard = |serial: &str, path: Path| {
+        let hello =
+            crate::testing::hello_payload(0x2A, "Peer", serial, "1.0.0", DeviceFeature::MESH);
+        remote.shared.process_datagram_on(
+            &datagram(peer, op::SYS_HELLO, protocol_for(op::SYS_HELLO), &hello),
+            FROM,
+            Some(path),
+        );
+    };
+    heard("PG0001", Path::Broadcast);
+    heard("PG0002", Path::Broadcast);
+    let on = |remote: &Remote| {
+        let _ = remote.ping(peer);
+        *lock(&remote.shared.tx)
+            .sent_on
+            .last()
+            .expect("nothing sent")
+    };
+    assert_eq!(
+        on(&remote),
+        Endpoints::Broadcast,
+        "heard by broadcast alone"
+    );
+    heard("PG0003", Path::Multicast);
+    assert_eq!(on(&remote), Endpoints::Multicast, "heard by multicast");
+}
+
+/// A client that comes to hear a peer only by broadcast announces its
+/// multicast fault at once, as a unit announces a change to its features.
+#[test]
+fn a_multicast_fault_is_announced_as_it_appears() {
+    let (remote, tap) = client(251);
+    let peer = uid_n(252);
+    remote.shared.process_datagram_on(
+        &hello_datagram(peer, "Peer", "MF0001"),
+        FROM,
+        Some(Path::Broadcast),
+    );
+    tap.clear();
+    remote.shared.process_datagram_on(
+        &hello_datagram(peer, "Peer", "MF0002"),
+        FROM,
+        Some(Path::Broadcast),
+    );
+    assert!(
+        tap.opcodes().contains(&op::SYS_HELLO.0),
+        "the fault was not announced when it appeared"
+    );
+    assert!(remote.features().has(DeviceFeature::STATUS_MCAST_FAULT));
+}
+
+/// The hello is due on broadcast 30 s after the last one there, to the
+/// moment, and at once when none has gone since the sockets opened.
+#[test]
+fn the_hello_is_due_on_broadcast_30_seconds_after_the_last() {
+    let last = Instant::now();
+    let edge = last + Duration::from_secs(30);
+    assert!(super::hello_due_on_broadcast(None, last));
+    assert!(!super::hello_due_on_broadcast(
+        Some(last),
+        edge - Duration::from_nanos(1)
+    ));
+    assert!(super::hello_due_on_broadcast(Some(last), edge));
 }

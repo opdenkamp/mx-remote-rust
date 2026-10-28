@@ -34,8 +34,7 @@ use crate::state::{Device, State, CONFIG_GRACE};
 use crate::types::*;
 use crate::wire::{
     build_hello, op, Addressee, BayUid, Capture, Conn, DeviceFeature, DeviceUid, FirmwareType,
-    Opcode, Path, SendError, Tx, V2ipFpgaFeature, MULTICAST_IP, MULTICAST_PORT, PROTOCOL_VERSION,
-    VERSION,
+    Opcode, Path, SendError, Tx, V2ipFpgaFeature, MULTICAST_PORT, PROTOCOL_VERSION, VERSION,
 };
 
 pub use control::ControlError;
@@ -66,6 +65,18 @@ const PROBE_TICK: Duration = Duration::from_secs(1);
 /// How often that thread looks up from waiting to see whether it should stop.
 const SHUTDOWN_POLL: Duration = Duration::from_millis(50);
 
+/// Longest a unit leaves its hello off the broadcast endpoint.
+const HELLO_BROADCAST: Duration = Duration::from_secs(30);
+
+/// Whether a hello at `now` goes to the broadcast endpoint whatever peers
+/// need: the first since the sockets opened, or [`HELLO_BROADCAST`] or more
+/// after the last one there.
+fn hello_due_on_broadcast(last: Option<Instant>, now: Instant) -> bool {
+    last.map_or(true, |last| {
+        now.saturating_duration_since(last) >= HELLO_BROADCAST
+    })
+}
+
 /// Shortest gap between two discovers to every device.
 ///
 /// Every unit answers one with everything it holds, so each costs the whole
@@ -92,16 +103,30 @@ const DISCOVER_COVERS: Duration = Duration::from_secs(60);
 
 /// How a [`Remote`] finds the network.
 ///
-/// [`Config::default`] discovers over multicast on the interface the host
-/// picks, which is the right answer on a single-homed machine and arbitrary on
-/// any other.
-#[derive(Clone, Debug, Default)]
+/// A client always runs both endpoints a unit has: the discovery group
+/// 224.8.8.8 on 8812, and the subnet broadcast address on 8811, on the
+/// interface the host picks unless one is selected, which is the right answer
+/// on a single-homed machine and arbitrary on any other.
+///
+/// It picks each frame's endpoints as a unit does. A frame for every unit at
+/// once goes to both, and the hello does at least every 30 seconds. A frame
+/// meant for one device alone, such as a ping, goes by the endpoint that
+/// device is heard by. Every other frame goes to the group, and to the
+/// broadcast address as well while some peer has not been heard by multicast
+/// for two minutes or reports that its multicast fails. A peer heard only by
+/// broadcast in that time has this client announce that its own multicast
+/// fails. A datagram arriving by both endpoints within 100ms is acted on
+/// once.
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Config {
-    /// Where to send. Unset means the multicast group, or the interface's
-    /// broadcast address when [`Config::broadcast`] is set.
+    /// For tests and development only: replaces both endpoints with one on
+    /// this address, so a test runs on a scratch group rather than a live
+    /// network. A production client leaves it unset, and always runs both
+    /// endpoints a unit has.
     pub target_ip: Option<Ipv4Addr>,
-    /// UDP port. Unset means the default for the selected mode.
+    /// For tests and development only: the port of the one endpoint
+    /// [`Config::target_ip`] opens, 8812 when unset. Ignored without it.
     pub port: Option<u16>,
     /// Selects the interface by address.
     ///
@@ -118,21 +143,6 @@ pub struct Config {
     /// An interface with no address of its own - a tagged VLAN - can only be
     /// named this way, and only on Linux.
     pub interface: Option<String>,
-    /// Use broadcast rather than multicast.
-    pub broadcast: bool,
-    /// Bind both endpoints a unit has, rather than one: the discovery group,
-    /// and the broadcast address of the selected interface (or
-    /// [`Config::target_ip`]) on [`Config::port`], default 8811.
-    ///
-    /// What every unit sends to both, such as the hello, goes to both. Every
-    /// other frame goes to the group, and to the broadcast address as well
-    /// while some live peer has not been heard by multicast for two minutes
-    /// or reports that its multicast fails. A peer heard only by broadcast in
-    /// that time has this client announce that its own multicast fails. A
-    /// datagram arriving by both endpoints within 100ms is acted on once.
-    ///
-    /// Takes precedence over [`Config::broadcast`].
-    pub both_endpoints: bool,
     /// The name this client advertises. Unset means `MXR Rust`.
     pub name: Option<String>,
     /// The serial number this client advertises. Unset means `P9SN00000000`.
@@ -167,6 +177,27 @@ pub struct Config {
     pub capture_hello_mac: bool,
 }
 
+impl Default for Config {
+    /// Both endpoints a unit has, on the interface the host picks, with
+    /// every other setting unset.
+    fn default() -> Self {
+        Self {
+            target_ip: None,
+            port: None,
+            local_ip: None,
+            interface: None,
+            name: None,
+            serial: None,
+            version: None,
+            uid: None,
+            uid_path: None,
+            logo_port: None,
+            mesh_device: false,
+            capture_hello_mac: false,
+        }
+    }
+}
+
 /// Everything the threads share.
 struct Shared {
     uid: DeviceUid,
@@ -190,8 +221,11 @@ struct Shared {
     osd_queued: Condvar,
     logo_port: Option<u16>,
     closing: AtomicBool,
-    /// Whether some live peer has to be reached by broadcast as well.
+    /// Whether some peer has to be reached by broadcast as well.
     broadcast_needed: AtomicBool,
+    /// When a hello last went to the broadcast endpoint, `None` since the
+    /// sockets opened.
+    hello_on_broadcast: Mutex<Option<Instant>>,
     /// Whether a live peer is heard by broadcast but not by multicast.
     multicast_fault: AtomicBool,
 }
@@ -203,54 +237,43 @@ struct Network {
     port: Option<u16>,
     local_ip: Option<Ipv4Addr>,
     interface: Option<String>,
-    broadcast: bool,
-    both_endpoints: bool,
+}
+
+/// Which endpoints a client opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Plan {
+    /// Both a unit has: the discovery group and the subnet broadcast address.
+    Both,
+    /// One endpoint on this address and port, for tests and development.
+    One(Ipv4Addr, u16),
 }
 
 impl Network {
-    /// The address to send to: what the caller asked for, else the multicast
-    /// group, else - in broadcast mode - the chosen interface's own broadcast
-    /// address.
-    fn target(&self) -> io::Result<Ipv4Addr> {
-        if let Some(ip) = self.target_ip {
-            return Ok(ip);
+    /// The endpoints to open: both a unit has, unless a test or development
+    /// setup named one of its own.
+    fn plan(&self) -> Plan {
+        match self.target_ip {
+            Some(ip) => Plan::One(ip, self.port.unwrap_or(MULTICAST_PORT)),
+            None => Plan::Both,
         }
-        if !self.broadcast {
-            return Ok(MULTICAST_IP);
-        }
-        Ok(crate::wire::broadcast_address(self.local_ip).unwrap_or(MULTICAST_IP))
-    }
-
-    fn port(&self) -> u16 {
-        self.port.unwrap_or(if self.broadcast {
-            crate::wire::BROADCAST_PORT
-        } else {
-            MULTICAST_PORT
-        })
     }
 
     fn open(&self) -> io::Result<Conn> {
-        if self.both_endpoints {
-            let broadcast = match self.target_ip {
-                Some(ip) => ip,
-                None => crate::wire::broadcast_address(
+        match self.plan() {
+            Plan::One(ip, port) => Conn::open(ip, port, self.local_ip, self.interface.as_deref()),
+            Plan::Both => {
+                let broadcast = crate::wire::broadcast_address(
                     self.local_ip
                         .or_else(|| self.interface.as_deref().and_then(crate::wire::address_of)),
-                )?,
-            };
-            return Conn::open_both(
-                broadcast,
-                self.port.unwrap_or(crate::wire::BROADCAST_PORT),
-                self.local_ip,
-                self.interface.as_deref(),
-            );
+                )?;
+                Conn::open_both(
+                    broadcast,
+                    crate::wire::BROADCAST_PORT,
+                    self.local_ip,
+                    self.interface.as_deref(),
+                )
+            }
         }
-        Conn::open(
-            self.target()?,
-            self.port(),
-            self.local_ip,
-            self.interface.as_deref(),
-        )
     }
 }
 
@@ -295,14 +318,13 @@ impl Remote {
                     port: config.port,
                     local_ip: config.local_ip,
                     interface: config.interface,
-                    broadcast: config.broadcast,
-                    both_endpoints: config.both_endpoints,
                 }),
                 osd: Mutex::new(OsdSender::new()),
                 osd_queued: Condvar::new(),
                 logo_port: config.logo_port,
                 closing: AtomicBool::new(false),
                 broadcast_needed: AtomicBool::new(false),
+                hello_on_broadcast: Mutex::new(None),
                 multicast_fault: AtomicBool::new(false),
             }),
             workers: Mutex::new(Vec::new()),
@@ -323,6 +345,8 @@ impl Remote {
         };
         let conn = lock(&self.shared.network).open()?;
         lock(&self.shared.tx).set_conn(Some(conn));
+        // The first hello on new sockets goes to both endpoints.
+        *lock(&self.shared.hello_on_broadcast) = None;
         self.shared.closing.store(false, Ordering::SeqCst);
         self.spawn_workers(capture)?;
         self.shared.announce();
@@ -450,14 +474,6 @@ impl Remote {
     /// The address frames are being sent to, once started.
     pub fn target(&self) -> Option<std::net::SocketAddrV4> {
         lock(&self.shared.tx).conn().map(|conn| conn.target())
-    }
-
-    /// The broadcast endpoint's address, once started with
-    /// [`Config::both_endpoints`].
-    pub fn broadcast_target(&self) -> Option<std::net::SocketAddrV4> {
-        lock(&self.shared.tx)
-            .conn()
-            .and_then(|conn| conn.secondary_target())
     }
 
     // ---- reading the registry ----
@@ -768,22 +784,23 @@ impl Remote {
 
     // ---- reconfiguring ----
 
-    /// Changes the interface and the multicast/broadcast mode while running,
-    /// reopening the socket when either differs from what is in use.
-    pub fn update_config(&self, local_ip: Option<Ipv4Addr>, broadcast: bool) -> io::Result<()> {
+    /// Changes the interface by address while running, reopening the sockets
+    /// when it differs from the one in use. `None` lets the host choose again.
+    pub fn update_config(&self, local_ip: Option<Ipv4Addr>) -> io::Result<()> {
         let network = {
             let mut network = lock(&self.shared.network);
-            if network.local_ip == local_ip && network.broadcast == broadcast {
+            if network.local_ip == local_ip {
                 return Ok(());
             }
             network.local_ip = local_ip;
-            network.broadcast = broadcast;
             network.clone()
         };
         // Opened before the old one is dropped, so a bind that fails leaves the
         // client on the socket it had rather than on none.
         let conn = network.open()?;
         lock(&self.shared.tx).set_conn(Some(conn));
+        // The first hello on new sockets goes to both endpoints.
+        *lock(&self.shared.hello_on_broadcast) = None;
         self.shared.announce();
         let _ = self.shared.discover();
         Ok(())
@@ -847,10 +864,10 @@ impl Shared {
             let mut state = lock(&self.state);
             let now = Instant::now();
             let events = process_frame_on(&mut state, data, Some(from), path, now);
-            self.judge_paths(&state, now);
+            let fault_changed = self.judge_paths(&state, now);
             (
                 events,
-                std::mem::take(&mut state.hello_requested),
+                std::mem::take(&mut state.hello_requested) || fault_changed,
                 std::mem::take(&mut state.state_requests),
                 std::mem::take(&mut state.osd_requests),
             )
@@ -908,12 +925,14 @@ impl Shared {
     }
 
     /// Re-judges, as of `now`, whether frames must reach some peer by
-    /// broadcast too, and whether this client's own multicast fails.
-    fn judge_paths(&self, state: &State, now: Instant) {
+    /// broadcast too, and whether this client's own multicast fails, and
+    /// returns whether the second changed: a unit announces a change to its
+    /// features at once.
+    fn judge_paths(&self, state: &State, now: Instant) -> bool {
         self.broadcast_needed
             .store(state.needs_broadcast(now), Ordering::SeqCst);
-        self.multicast_fault
-            .store(state.multicast_fault(now), Ordering::SeqCst);
+        let fault = state.multicast_fault(now);
+        self.multicast_fault.swap(fault, Ordering::SeqCst) != fault
     }
 
     fn discover(&self) -> Result<(), SendError> {
@@ -949,6 +968,10 @@ impl Shared {
     /// most.
     ///
     /// What it announces is [`Self::features`].
+    ///
+    /// The hello goes to both endpoints when it is the first since the
+    /// sockets opened, or the last one on broadcast went [`HELLO_BROADCAST`]
+    /// ago or more, as a unit's does; otherwise as any other frame.
     fn announce(&self) {
         let payload = build_hello(
             PROTOCOL_VERSION,
@@ -957,8 +980,21 @@ impl Shared {
             &self.version,
             self.features().bits(),
         );
-        match self.send(&Addressee::Broadcast, op::SYS_HELLO, &payload) {
-            Ok(n) if n > 0 => lock(&self.schedule).announced(Instant::now()),
+        let now = Instant::now();
+        let on_broadcast = hello_due_on_broadcast(*lock(&self.hello_on_broadcast), now)
+            || self.broadcast_needed.load(Ordering::SeqCst);
+        let sent = lock(&self.tx).send(
+            &Addressee::Broadcast,
+            self.uid,
+            op::SYS_HELLO,
+            &payload,
+            on_broadcast,
+        );
+        if on_broadcast {
+            *lock(&self.hello_on_broadcast) = Some(now);
+        }
+        match sent {
+            Ok(n) if n > 0 => lock(&self.schedule).announced(now),
             _ => {}
         }
     }
@@ -1079,7 +1115,7 @@ impl Shared {
     /// because a discover to every device covers it is not counted.
     pub(super) fn probe_once(&self, now: Instant) {
         let covered = lock(&self.schedule).discover_covers(now);
-        let (none_known, owed) = self.mutate(|state, ev| {
+        let (none_known, owed, fault_changed) = self.mutate(|state, ev| {
             let mut owed = Vec::new();
             for device in state.devices.values_mut() {
                 device.check_online(now, ev);
@@ -1104,12 +1140,12 @@ impl Shared {
                 }
             }
             state.forget_silent(now, ev);
-            self.judge_paths(state, now);
-            (state.devices.is_empty(), owed)
+            let fault_changed = self.judge_paths(state, now);
+            (state.devices.is_empty(), owed, fault_changed)
         });
 
         let discover_due = lock(&self.schedule).discover_due(now);
-        if self.announce_due(now) {
+        if fault_changed || self.announce_due(now) {
             self.announce();
         }
         if none_known && discover_due {

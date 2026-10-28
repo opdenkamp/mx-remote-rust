@@ -16,7 +16,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::types::{
     OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncRequest, OsdSyncSlot, OsdSyncValue,
@@ -164,8 +164,15 @@ impl OsdSender {
 }
 
 impl Shared {
+    /// A unit addressed alone, by the endpoint it is heard by, as a unit
+    /// sends an overlay frame meant for one unit.
     fn addressee(&self, unit: DeviceUid) -> Option<Addressee> {
-        self.read(|state| state.device(unit).map(|d| Addressee::device(d)))
+        let now = Instant::now();
+        self.read(|state| {
+            state
+                .device(unit)
+                .map(|d| Addressee::direct(d, d.heard_path(now)))
+        })
     }
 
     /// Answers the overlay sync requests a frame raised.

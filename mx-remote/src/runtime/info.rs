@@ -75,9 +75,9 @@ pub struct DeviceInfo {
     ///
     /// Every frame with a valid header counts, the second copy of one sent to
     /// both endpoints and one from a device gone silent included, but not the
-    /// frame that registered the device, as on a unit. `None` unless this
-    /// client binds both endpoints
-    /// ([`Config::both_endpoints`](crate::Config::both_endpoints)).
+    /// frame that registered the device, as on a unit. `None` before the
+    /// client has started, and on one running a single test endpoint
+    /// ([`Config::target_ip`](crate::Config::target_ip)).
     pub multicast: Option<bool>,
     /// The source hardware address of the device's hellos, as a unit stores
     /// it with each one it takes.

@@ -6,7 +6,7 @@
 use std::fmt;
 use std::io;
 
-use super::conn::Conn;
+use super::conn::{Conn, Path};
 use super::frame::build_frame;
 use super::opcode::{op, stamp_for, Opcode};
 use super::uid::DeviceUid;
@@ -108,6 +108,9 @@ pub(crate) enum Addressee {
         serial: String,
         /// The version the device reports.
         protocol: u16,
+        /// The path the device is heard by, for a frame that goes by that
+        /// endpoint alone; `None` for one that goes as any other does.
+        heard_by: Option<Path>,
     },
     /// No single recipient: discovery, hello, the monitoring pulse and the
     /// signal-status request that asks every bay on the network to report.
@@ -120,24 +123,73 @@ impl Addressee {
         Self::Device {
             serial: target.serial().to_owned(),
             protocol: target.supported_protocol(),
+            heard_by: None,
+        }
+    }
+
+    /// Addresses a frame to a device by the one endpoint it is heard by, as a
+    /// unit sends a frame meant for one unit alone (`MX_TX_DIRECT`).
+    pub(crate) fn direct(target: &dyn ProtocolTarget, heard_by: Path) -> Self {
+        Self::Device {
+            serial: target.serial().to_owned(),
+            protocol: target.supported_protocol(),
+            heard_by: Some(heard_by),
         }
     }
 }
 
-/// Whether every unit sends `opcode` to both endpoints, whatever its peers
-/// need: what announces a device or asks for one, and what acts on every unit
-/// at once.
-pub(crate) fn to_both_endpoints(opcode: Opcode) -> bool {
-    matches!(
-        opcode,
-        op::SYS_HELLO
-            | op::SYS_DISCOVER
-            | op::SYS_REBOOT
-            | op::SYS_FACTORY_RESET
-            | op::SYS_MONITORING_PULSE
-            | op::V2IP_DETECT_BAYS
-            | op::V2IP_UPGRADE_FPGA
-    )
+/// Which of the two endpoints a frame leaves by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Endpoints {
+    /// The discovery group alone, or the one endpoint a client has.
+    Multicast,
+    /// The broadcast endpoint alone, or the one endpoint a client has.
+    Broadcast,
+    /// Both, where both are bound.
+    Both,
+}
+
+/// The endpoints a frame goes by, as a unit picks them.
+///
+/// A frame for every unit at once goes to both (`MX_TX_ALL`), and one for a
+/// device by the endpoint it is heard by (`MX_TX_DIRECT`). Any other goes to
+/// the group, and to the broadcast endpoint as well while `broadcast_needed`
+/// says some peer needs it (`MX_TX_ACTIVE`).
+pub(crate) fn endpoints_for(
+    to: &Addressee,
+    opcode: Opcode,
+    payload: &[u8],
+    broadcast_needed: bool,
+) -> Endpoints {
+    match to {
+        Addressee::Device {
+            heard_by: Some(Path::Broadcast),
+            ..
+        } => Endpoints::Broadcast,
+        Addressee::Device {
+            heard_by: Some(Path::Multicast),
+            ..
+        } => Endpoints::Multicast,
+        _ if broadcast_needed || for_every_unit(opcode, payload) => Endpoints::Both,
+        _ => Endpoints::Multicast,
+    }
+}
+
+/// Whether a unit sends this frame to both endpoints whatever its peers need
+/// (`MX_TX_ALL`): a discover, reboot or factory reset of every unit - an
+/// empty payload, or the single byte 0xFF - the monitoring pulse, the bay
+/// detection and the FPGA upgrade. One naming a unit goes as any other frame.
+///
+/// The hello is not among them: it reaches the broadcast endpoint on a
+/// clock of its own, which [`Tx::send`]'s caller keeps.
+fn for_every_unit(opcode: Opcode, payload: &[u8]) -> bool {
+    let to_all = matches!(payload, [] | [0xFF]);
+    match opcode {
+        op::SYS_DISCOVER => payload.is_empty(),
+        op::SYS_REBOOT | op::SYS_FACTORY_RESET => to_all,
+        op::SYS_MONITORING_PULSE | op::V2IP_DETECT_BAYS | op::V2IP_UPGRADE_FPGA => true,
+        _ => false,
+    }
 }
 
 /// A tap on the transmit path.
@@ -159,9 +211,9 @@ pub(crate) struct Tx {
     /// is how a test reads back what would go on the wire.
     #[cfg(test)]
     tap: Option<TxTap>,
-    /// Whether each frame that passed the gate was meant for both endpoints.
+    /// The endpoints each frame that passed the gate was meant for.
     #[cfg(test)]
-    pub(crate) both: Vec<bool>,
+    pub(crate) sent_on: Vec<Endpoints>,
 }
 
 impl Tx {
@@ -195,18 +247,21 @@ impl Tx {
     /// same stamp: a receiver drops what is stamped above its own version, so
     /// checking anything else would leave the hole the gate exists to close.
     ///
-    /// `both` asks for the second endpoint too, where one is bound; an opcode
-    /// every unit sends to both endpoints goes to both whatever it says.
+    /// `broadcast_needed` says some peer has to be reached by broadcast too;
+    /// [`endpoints_for`] decides what that means for this frame.
     pub(crate) fn send(
         &mut self,
         to: &Addressee,
         uid: DeviceUid,
         opcode: Opcode,
         payload: &[u8],
-        both: bool,
+        broadcast_needed: bool,
     ) -> Result<usize, SendError> {
         let need = stamp_for(opcode).ok_or(SendError::UnknownOpcode { opcode: opcode.0 })?;
-        if let Addressee::Device { serial, protocol } = to {
+        if let Addressee::Device {
+            serial, protocol, ..
+        } = to
+        {
             // A device that has not reported a version is let through: not
             // knowing is not the same as knowing it is too old.
             if *protocol != 0 && *protocol < need {
@@ -219,16 +274,94 @@ impl Tx {
             }
         }
 
-        let both = both || to_both_endpoints(opcode);
+        let endpoints = endpoints_for(to, opcode, payload, broadcast_needed);
         let frame = build_frame(uid, opcode, need, payload);
         #[cfg(test)]
         {
             if let Some(tap) = &self.tap {
                 tap(&frame);
             }
-            self.both.push(both);
+            self.sent_on.push(endpoints);
         }
         let conn = self.conn.as_ref().ok_or(SendError::NotConnected)?;
-        Ok(conn.send(&frame, both)?)
+        Ok(conn.send(&frame, endpoints)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Unit;
+
+    impl ProtocolTarget for Unit {
+        fn serial(&self) -> &str {
+            "EP0001"
+        }
+
+        fn supported_protocol(&self) -> u16 {
+            0x31
+        }
+    }
+
+    fn active(opcode: Opcode, payload: &[u8], broadcast_needed: bool) -> Endpoints {
+        endpoints_for(&Addressee::Broadcast, opcode, payload, broadcast_needed)
+    }
+
+    /// A frame to every unit at once goes to both endpoints: a discover, a
+    /// reboot or factory reset of every unit, the pulse, the bay detection
+    /// and the FPGA upgrade.
+    #[test]
+    fn a_frame_for_every_unit_goes_to_both() {
+        for (opcode, payload) in [
+            (op::SYS_DISCOVER, &[][..]),
+            (op::SYS_REBOOT, &[][..]),
+            (op::SYS_REBOOT, &[0xFF][..]),
+            (op::SYS_FACTORY_RESET, &[][..]),
+            (op::SYS_FACTORY_RESET, &[0xFF][..]),
+            (op::SYS_MONITORING_PULSE, &[][..]),
+            (op::V2IP_DETECT_BAYS, &[][..]),
+            (op::V2IP_UPGRADE_FPGA, &[][..]),
+        ] {
+            assert_eq!(
+                active(opcode, payload, false),
+                Endpoints::Both,
+                "{opcode:?} {payload:?}"
+            );
+        }
+    }
+
+    /// A discover, reboot or factory reset naming one unit, and a hello, go
+    /// as any other frame: to the group, and to broadcast too only while a
+    /// peer needs it.
+    #[test]
+    fn a_frame_naming_one_unit_goes_as_any_other() {
+        let uid = [0x5A; 16];
+        for (opcode, payload) in [
+            (op::SYS_DISCOVER, &uid[..]),
+            (op::SYS_REBOOT, &uid[..]),
+            (op::SYS_FACTORY_RESET, &uid[..]),
+            (op::SYS_HELLO, &[0; 54][..]),
+            (op::MESH_OPERATION, &[0; 40][..]),
+        ] {
+            assert_eq!(
+                active(opcode, payload, false),
+                Endpoints::Multicast,
+                "{opcode:?}"
+            );
+            assert_eq!(active(opcode, payload, true), Endpoints::Both, "{opcode:?}");
+        }
+    }
+
+    /// A frame for one device alone goes by the one endpoint it is heard by,
+    /// whatever other peers need.
+    #[test]
+    fn a_direct_frame_goes_by_the_devices_own_endpoint() {
+        for needed in [false, true] {
+            let by =
+                |path| endpoints_for(&Addressee::direct(&Unit, path), op::SYS_PING, &[], needed);
+            assert_eq!(by(Path::Broadcast), Endpoints::Broadcast);
+            assert_eq!(by(Path::Multicast), Endpoints::Multicast);
+        }
     }
 }

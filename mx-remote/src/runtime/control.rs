@@ -26,7 +26,7 @@
 
 use std::fmt;
 use std::net::Ipv4Addr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
@@ -714,7 +714,7 @@ impl Remote {
         self.shared.command(move |state| {
             let (device, b) = acted_on(state, bay)?;
             Ok(Command::new(
-                Addressee::device(device),
+                Addressee::direct(device, device.heard_path(Instant::now())),
                 op::RC_TX_ACTION,
                 build_rc_action(device.uid, b.port, action),
             ))
@@ -731,7 +731,7 @@ impl Remote {
         self.shared.command(move |state| {
             let (device, b) = acted_on(state, bay)?;
             Ok(Command::new(
-                Addressee::device(device),
+                Addressee::direct(device, device.heard_path(Instant::now())),
                 op::RC_TX_KEY,
                 build_rc_key(device.uid, b.port, key),
             ))
@@ -758,7 +758,7 @@ impl Remote {
             let (device, b) = acted_on(state, bay)?;
             let bay = b.uid();
             Ok(Command::new(
-                Addressee::device(device),
+                Addressee::direct(device, device.heard_path(Instant::now())),
                 op::RC_TX_ACTION,
                 build_rc_action(device.uid, bay.port, action),
             )
@@ -1113,6 +1113,41 @@ impl Remote {
         })
     }
 
+    /// Asks every unit to reboot, as a unit's own `/network/remote/reboot`
+    /// does before it reboots itself: the single byte 0xFF, to both
+    /// endpoints.
+    ///
+    /// A unit takes it only from its mesh controller or a management
+    /// application.
+    pub fn reboot_all(&self) -> Result<(), ControlError> {
+        self.shared
+            .send(&Addressee::Broadcast, op::SYS_REBOOT, &[0xFF])?;
+        Ok(())
+    }
+
+    /// Asks every unit of the mesh to reboot, as a mesh controller's mesh
+    /// reboot does before it reboots itself: no payload, to both endpoints.
+    ///
+    /// A unit takes it only from its mesh controller or a management
+    /// application.
+    pub fn reboot_mesh(&self) -> Result<(), ControlError> {
+        self.shared
+            .send(&Addressee::Broadcast, op::SYS_REBOOT, &[])?;
+        Ok(())
+    }
+
+    /// Asks every unit to factory-reset and reboot, as a unit's own
+    /// `/network/remote/factoryreset` does before it resets itself: the
+    /// single byte 0xFF, to both endpoints.
+    ///
+    /// A unit takes it only from its mesh controller or a management
+    /// application.
+    pub fn factory_reset_all(&self) -> Result<(), ControlError> {
+        self.shared
+            .send(&Addressee::Broadcast, op::SYS_FACTORY_RESET, &[0xFF])?;
+        Ok(())
+    }
+
     /// Asks a device to announce itself now.
     ///
     /// Its hello marks it online again, so a device suspected to be gone is
@@ -1123,7 +1158,7 @@ impl Remote {
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
             Ok(Command::new(
-                Addressee::device(d),
+                Addressee::direct(d, d.heard_path(Instant::now())),
                 op::SYS_PING,
                 build_target_only(d.uid),
             ))
@@ -1556,7 +1591,7 @@ impl Remote {
                 ));
             }
             Ok(Command::new(
-                Addressee::device(d),
+                Addressee::direct(d, d.heard_path(Instant::now())),
                 op::V2IP_OSD_SYNC,
                 build_osd_message(kind, d.uid, flags, logo, priority, text),
             ))
@@ -2600,7 +2635,7 @@ impl Remote {
                 ));
             }
             Ok(Command::new(
-                Addressee::device(d),
+                Addressee::direct(d, d.heard_path(Instant::now())),
                 op::V2IP_TESTCARD,
                 build_v2ip_testcard(d.uid, kind, parts, &testcard),
             ))

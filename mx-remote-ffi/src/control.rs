@@ -1191,6 +1191,49 @@ pub unsafe extern "C" fn mxr_reboot(
     with(handle, |r| from_control(r.remote.reboot(device.into())))
 }
 
+/// Asks every unit to reboot: 0x28 with the single byte 0xFF, to both
+/// endpoints, as a unit's own `/network/remote/reboot` sends it. A unit takes it only
+/// from its mesh controller or a management application.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_reboot_all(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| from_control(r.remote.reboot_all()))
+}
+
+/// Asks every unit of the mesh to reboot: 0x28 with no payload, to both
+/// endpoints, as a mesh controller's mesh reboot sends it. A unit takes it
+/// only from its mesh controller or a management application.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_reboot_mesh(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| from_control(r.remote.reboot_mesh()))
+}
+
+/// Asks every unit to factory-reset and reboot: 0x3A with the single byte
+/// 0xFF, to both endpoints, as a unit's own `/network/remote/factoryreset`
+/// sends it. A unit takes it only from its mesh controller or a management
+/// application.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_factory_reset_all(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| from_control(r.remote.factory_reset_all()))
+}
+
 /// Asks a device to announce itself now, so a device suspected to be gone is
 /// confirmed or ruled out within a second or two.
 ///

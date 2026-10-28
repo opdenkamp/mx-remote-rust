@@ -3303,8 +3303,9 @@ typedef struct {
    * Whether a frame from the device arrived by multicast within the last
    * two minutes, the frame that registered it excepted: one sent to a
    * multicast group, as a unit judges it, which on Linux is read from each
-   * datagram and elsewhere from the endpoint that took it. Unknown unless
-   * the client binds both endpoints (`both_endpoints` in its config).
+   * datagram and elsewhere from the endpoint that took it. Unknown before
+   * the client has started, and on one running a single test endpoint
+   * (`target_ip` in its config).
    */
   mxr_tribool_t multicast;
   /**
@@ -3606,24 +3607,23 @@ typedef struct {
 /**
  * How a client finds the network.
  *
- * Zeroing the whole struct asks for the default: multicast discovery on
- * whichever interface the host picks, which is the right answer on a machine
- * with one network and an arbitrary one on any other.
+ * Zeroing the whole struct asks for the default: both endpoints a unit has,
+ * the discovery group and the subnet broadcast address, on whichever
+ * interface the host picks, which is the right answer on a machine with one
+ * network and an arbitrary one on any other. A client always runs both.
  */
 typedef struct {
   /**
-   * Where to send. Null means the multicast group, or the interface's
-   * broadcast address when `broadcast` is set.
+   * For tests and development only: replaces both endpoints with one on
+   * this address, so a test runs on a scratch group rather than a live
+   * network. A production client leaves it null.
    */
   const char *target_ip;
   /**
-   * UDP port. Zero means the default for the selected mode.
+   * For tests and development only: the port of the one endpoint
+   * `target_ip` opens, zero meaning 8812. Ignored without it.
    */
   uint16_t port;
-  /**
-   * Use broadcast rather than multicast.
-   */
-  bool broadcast;
   /**
    * Selects the interface by address, as text. Null lets the host choose.
    *
@@ -3681,15 +3681,6 @@ typedef struct {
    * writes from it only while they follow it as their controller.
    */
   bool mesh_device;
-  /**
-   * Bind both endpoints a unit has rather than one: the discovery group,
-   * and the broadcast address of the selected interface (or `target_ip`)
-   * on `port`, zero meaning 8811. Frames every unit sends to both go to
-   * both; every other frame goes to the group, and to the broadcast
-   * address too while some live peer is not heard by multicast or reports
-   * that its multicast fails. Takes precedence over `broadcast`.
-   */
-  bool both_endpoints;
   /**
    * Read the source hardware address of every hello into the `mac` of
    * `mxr_device_info_t`, as a unit stores it. A UDP socket never sees that
@@ -6406,6 +6397,40 @@ mxr_result_t mxr_subscribe_v2ip_stats(const mxr_remote_t *remote, mxr_uid_t devi
 mxr_result_t mxr_reboot(const mxr_remote_t *remote, mxr_uid_t device);
 
 /**
+ * Asks every unit to reboot: 0x28 with the single byte 0xFF, to both
+ * endpoints, as a unit's own `/network/remote/reboot` sends it. A unit takes it only
+ * from its mesh controller or a management application.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_reboot_all(const mxr_remote_t *remote);
+
+/**
+ * Asks every unit of the mesh to reboot: 0x28 with no payload, to both
+ * endpoints, as a mesh controller's mesh reboot sends it. A unit takes it
+ * only from its mesh controller or a management application.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_reboot_mesh(const mxr_remote_t *remote);
+
+/**
+ * Asks every unit to factory-reset and reboot: 0x3A with the single byte
+ * 0xFF, to both endpoints, as a unit's own `/network/remote/factoryreset`
+ * sends it. A unit takes it only from its mesh controller or a management
+ * application.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_factory_reset_all(const mxr_remote_t *remote);
+
+/**
  * Asks a device to announce itself now, so a device suspected to be gone is
  * confirmed or ruled out within a second or two.
  *
@@ -7925,7 +7950,7 @@ mxr_result_t mxr_bay_by_stream_ip(const mxr_remote_t *remote,
                                   mxr_bay_uid_t *out);
 
 /**
- * Reopens the socket on a different interface, or in the other mode.
+ * Reopens the sockets on a different interface, selected by address.
  *
  * `local_ip` may be null to let the host choose again.
  *
@@ -7934,9 +7959,7 @@ mxr_result_t mxr_bay_by_stream_ip(const mxr_remote_t *remote,
  * `remote` is null or a live handle, and `local_ip` is null or a
  * NUL-terminated string.
  */
-mxr_result_t mxr_remote_update_config(const mxr_remote_t *remote,
-                                      const char *local_ip,
-                                      bool broadcast);
+mxr_result_t mxr_remote_update_config(const mxr_remote_t *remote, const char *local_ip);
 
 /**
  * Asks every device on the network to announce itself.

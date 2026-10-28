@@ -27,14 +27,14 @@ use crate::types::{
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
     Addressee, BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile,
-    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
-    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
-    MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr, UnitFlag, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel,
-    V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag, HEADER_LEN,
-    PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS, V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET,
-    V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
-    V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
+    Endpoints, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
+    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
+    MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr,
+    UnitFlag, V2ipColourSpace, V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode,
+    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
+    V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
+    V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -5565,7 +5565,10 @@ fn a_bay_detection_goes_to_every_unit() {
     assert_eq!(&frame[20..22], &op::V2IP_DETECT_BAYS.0.to_le_bytes());
     assert_eq!(&frame[2..4], &0x06u16.to_le_bytes(), "the stamp");
     assert_eq!(frame.len(), HEADER_LEN, "a payload");
-    assert_eq!(lock(&f.remote.shared.tx).both.last(), Some(&true));
+    assert_eq!(
+        lock(&f.remote.shared.tx).sent_on.last(),
+        Some(&Endpoints::Both)
+    );
 }
 
 /// An empty name asks the unit to reset the bay to its default. It is sent,
@@ -5650,4 +5653,50 @@ fn a_unit_route_can_take_an_outputs_audio_return() {
     assert_eq!(&p[16..20], &[239, 7, 215, 1], "not the source unit's video");
     assert_eq!(&p[20..24], &[239, 9, 8, 7], "not the output's audio return");
     assert_eq!(&p[24..], &[0; 8], "the display was powered on");
+}
+
+/// A reboot of every unit is 0x28, and a factory reset of every unit 0x3A,
+/// each with the single byte 0xFF and to both endpoints, as
+/// a unit's own /network/remote/reboot and factoryreset send them.
+#[test]
+fn a_reboot_or_factory_reset_of_every_unit_goes_to_both_endpoints() {
+    let f = Fixture::new();
+    f.connect();
+    let sent = |f: &Fixture, op: Opcode, stamp: u16| {
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[20..22], &op.0.to_le_bytes());
+        assert_eq!(&frame[2..4], &stamp.to_le_bytes(), "the stamp");
+        assert_eq!(
+            lock(&f.remote.shared.tx).sent_on.last(),
+            Some(&Endpoints::Both)
+        );
+        f.tap.clear();
+        frame[HEADER_LEN..].to_vec()
+    };
+    f.tap.clear();
+    f.remote.reboot_all().expect("a frame every unit takes");
+    assert_eq!(sent(&f, op::SYS_REBOOT, 0x01), vec![0xFF]);
+    f.remote
+        .factory_reset_all()
+        .expect("a frame every unit takes");
+    assert_eq!(sent(&f, op::SYS_FACTORY_RESET, 0x0F), vec![0xFF]);
+}
+
+/// A mesh reboot is 0x28 with no payload, to both endpoints, as a mesh
+/// controller's mesh reboot sends it.
+#[test]
+fn a_mesh_reboot_is_an_empty_reboot_to_both_endpoints() {
+    let f = Fixture::new();
+    f.connect();
+    f.tap.clear();
+    f.remote.reboot_mesh().expect("a frame every unit takes");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::SYS_REBOOT.0.to_le_bytes());
+    assert_eq!(&frame[2..4], &0x01u16.to_le_bytes(), "the stamp");
+    assert_eq!(&frame[22..24], &0u16.to_le_bytes(), "the length");
+    assert_eq!(frame.len(), HEADER_LEN, "a payload");
+    assert_eq!(
+        lock(&f.remote.shared.tx).sent_on.last(),
+        Some(&Endpoints::Both)
+    );
 }

@@ -131,8 +131,30 @@ fn a_peer_heard_only_by_broadcast_needs_broadcast() {
     let mut gone = Harness::new(63);
     let quiet = hello(uid_n(63), "PB0003", DeviceFeature::MESH);
     process_frame_on(&mut gone.state, &quiet, None, Some(Path::Broadcast), t0);
+    // Gone long enough to be forgotten, which is what drops it from the count.
+    let long_gone = t0 + Duration::from_secs(600);
+    gone.state.forget_silent(long_gone, &mut Vec::new());
     assert!(
-        !gone.state.needs_broadcast(t0 + Duration::from_secs(600)),
+        !gone.state.needs_broadcast(long_gone),
         "a peer long gone still needed broadcast"
     );
+}
+
+/// Every registered peer counts towards broadcast and the multicast fault,
+/// one gone silent but not yet forgotten included: a unit judges by every
+/// peer it knows.
+#[test]
+fn a_silent_peer_still_counts_for_broadcast() {
+    let mut h = Harness::new(62);
+    let t0 = Instant::now();
+    let first = hello(h.sender, "PS0001", DeviceFeature::MESH);
+    process_frame_on(&mut h.state, &first, None, Some(Path::Broadcast), t0);
+    let again = hello(h.sender, "PS0002", DeviceFeature::MESH);
+    let t1 = t0 + Duration::from_secs(1);
+    process_frame_on(&mut h.state, &again, None, Some(Path::Broadcast), t1);
+    // The protocol 0x2F hello gives a 60 s offline window.
+    let later = t1 + Duration::from_secs(61);
+    assert!(!h.device().is_online(later), "still online");
+    assert!(h.state.needs_broadcast(later), "a silent peer was left out");
+    assert!(h.state.multicast_fault(later), "a silent peer was left out");
 }

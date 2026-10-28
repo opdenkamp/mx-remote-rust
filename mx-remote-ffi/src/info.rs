@@ -267,8 +267,9 @@ pub struct mxr_device_info_t {
     /// Whether a frame from the device arrived by multicast within the last
     /// two minutes, the frame that registered it excepted: one sent to a
     /// multicast group, as a unit judges it, which on Linux is read from each
-    /// datagram and elsewhere from the endpoint that took it. Unknown unless
-    /// the client binds both endpoints (`both_endpoints` in its config).
+    /// datagram and elsewhere from the endpoint that took it. Unknown before
+    /// the client has started, and on one running a single test endpoint
+    /// (`target_ip` in its config).
     pub multicast: mxr_tribool_t,
     /// Whether the source hardware address of the device's hellos is known:
     /// only a client that sets `capture_hello_mac` in its config captures it.

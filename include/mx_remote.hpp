@@ -776,6 +776,12 @@ public:
     mxr_result_t reboot(Uid device) const {
         return mxr_reboot(h_, device);
     }
+    mxr_result_t reboot_all() const {
+        return mxr_reboot_all(h_);
+    }
+    mxr_result_t factory_reset_all() const {
+        return mxr_factory_reset_all(h_);
+    }
     mxr_result_t ping(Uid device) const {
         return mxr_ping(h_, device);
     }
@@ -893,8 +899,8 @@ public:
     mxr_result_t bay_by_stream_ip(const char *ip, bool audio, BayUid &out) const {
         return mxr_bay_by_stream_ip(h_, ip, audio, &out.raw);
     }
-    mxr_result_t remote_update_config(const char *local_ip, bool broadcast) const {
-        return mxr_remote_update_config(h_, local_ip, broadcast);
+    mxr_result_t remote_update_config(const char *local_ip) const {
+        return mxr_remote_update_config(h_, local_ip);
     }
     mxr_result_t discover() const {
         return mxr_discover(h_);
