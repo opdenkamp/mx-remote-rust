@@ -41,6 +41,7 @@ fn client(name: &CStr, uid: &CStr) -> *mut mxr_remote_t {
         version: ptr::null(),
         mesh_device: false,
         both_endpoints: false,
+        capture_hello_mac: false,
     };
     // SAFETY: every pointer in the config is a live NUL-terminated string, and
     // a null callback table asks for no callbacks.
@@ -395,6 +396,7 @@ fn a_configuration_that_cannot_be_read_yields_no_client() {
         version: ptr::null(),
         mesh_device: false,
         both_endpoints: false,
+        capture_hello_mac: false,
     };
     // SAFETY: every non-null pointer in the config is a live NUL-terminated
     // string, and a null callback table asks for no callbacks.
@@ -1955,4 +1957,75 @@ fn the_overlay_sync_calls_check_their_arguments_first() {
 
     // SAFETY: the handle came from mxr_remote_new and is freed once.
     unsafe { mxr_remote_free(remote) };
+}
+
+#[test]
+fn the_controller_role_is_announced_only_with_bays_mapped() {
+    let name = CString::new("controller").expect("no NUL");
+    let uid_text = CString::new("0000000A.00000000.00000000.a5000000").expect("no NUL");
+    let handle = client(&name, &uid_text);
+    let features = |handle| {
+        let mut out = 0u32;
+        // SAFETY: the handle is live and the output is writable.
+        let rc = unsafe { mxr_remote_features(handle, &mut out) };
+        assert_eq!(rc, mxr_result_t::MXR_OK);
+        out
+    };
+    let master = |bits: u32| bits & MXR_FEATURE_MESH_MASTER != 0;
+
+    assert_ne!(features(handle) & MXR_FEATURE_MANAGER, 0);
+    // SAFETY: the handle is live.
+    let rc = unsafe { mxr_remote_set_mesh_controller(handle, uid_n(10)) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+    assert!(!master(features(handle)), "a controller with no bays");
+    // SAFETY: the handle is live.
+    let rc = unsafe { mxr_remote_set_mesh_bays_mapped(handle, true) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+    assert!(master(features(handle)));
+    // SAFETY: the handle is live.
+    unsafe { mxr_remote_set_mesh_bays_mapped(handle, false) };
+    assert!(!master(features(handle)), "a controller whose bays went");
+
+    // SAFETY: the handle is live, and a null output is allowed and refused.
+    let rc = unsafe { mxr_remote_features(handle, ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a null handle is allowed and refused.
+    let rc = unsafe { mxr_remote_set_mesh_bays_mapped(ptr::null(), true) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(handle) };
+}
+
+#[test]
+fn the_device_tree_heads_with_the_client_itself() {
+    let name = CString::new("tree").expect("no NUL");
+    let uid_text = CString::new("0000000B.00000000.00000000.a5000000").expect("no NUL");
+    let handle = client(&name, &uid_text);
+
+    // SAFETY: the handle is live, and a null buffer with a zero capacity sizes it.
+    let count = unsafe { mxr_device_tree(handle, ptr::null_mut(), 0) };
+    assert_eq!(count, 1);
+    let mut out = [mxr_device_tree_entry_t {
+        uid: uid_n(0xEE),
+        depth: 7,
+    }];
+    // SAFETY: the handle is live and the buffer holds one entry.
+    let count = unsafe { mxr_device_tree(handle, out.as_mut_ptr(), out.len()) };
+    assert_eq!(count, 1);
+    assert_eq!(
+        out[0],
+        mxr_device_tree_entry_t {
+            uid: uid_n(11),
+            depth: 0
+        }
+    );
+    // SAFETY: a null handle is allowed and refused.
+    assert_eq!(
+        unsafe { mxr_device_tree(ptr::null(), ptr::null_mut(), 0) },
+        0
+    );
+
+    // SAFETY: the handle came from mxr_remote_new and is freed once.
+    unsafe { mxr_remote_free(handle) };
 }

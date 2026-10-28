@@ -247,6 +247,22 @@ pub(crate) fn put_str(dst: &mut [c_char], text: &str) {
     }
 }
 
+/// Copies `bytes` into a fixed-width field as they are, NUL-terminated and
+/// NUL-padded, cutting what does not fit before the terminator.
+///
+/// For a value that is not text this library decoded but bytes a device sent,
+/// which are passed on unexamined.
+pub(crate) fn put_bytes(dst: &mut [c_char], bytes: &[u8]) {
+    let room = dst.len().saturating_sub(1);
+    let taken = bytes.get(..room).unwrap_or(bytes);
+    for (slot, byte) in dst.iter_mut().zip(taken) {
+        *slot = *byte as c_char;
+    }
+    for slot in dst.iter_mut().skip(taken.len()) {
+        *slot = 0;
+    }
+}
+
 /// Reads a caller's string, treating null as absent.
 ///
 /// # Safety
@@ -373,4 +389,34 @@ pub unsafe extern "C" fn mxr_uid_from_string(
             Err(e) => fail(mxr_result_t::MXR_ERR_INVALID_ARGUMENT, &e.to_string()),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A field's bytes, whichever sign `c_char` has on the target.
+    fn bytes(field: &[c_char]) -> Vec<u8> {
+        field.iter().map(|c| c.to_ne_bytes()[0]).collect()
+    }
+
+    /// Bytes outside ASCII pass through, a value filling the field keeps every
+    /// byte with the terminator behind it, and what follows is cleared.
+    #[test]
+    fn bytes_are_copied_as_they_are() {
+        let mut dst: [c_char; 17] = [0x5A; 17];
+        put_bytes(&mut dst, b"Caf\xE9 lounge 1234");
+        assert_eq!(bytes(&dst), b"Caf\xE9 lounge 1234\0");
+
+        put_bytes(&mut dst, b"ab");
+        assert_eq!(bytes(&dst[..2]), b"ab");
+        assert!(
+            dst.iter().skip(2).all(|&c| c == 0),
+            "the old value showed through"
+        );
+
+        let mut short: [c_char; 4] = [0x5A; 4];
+        put_bytes(&mut short, b"abcdef");
+        assert_eq!(bytes(&short), b"abc\0");
+    }
 }

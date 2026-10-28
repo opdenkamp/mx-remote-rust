@@ -128,9 +128,32 @@ fn a_datagram_is_decoded_and_does_not_provoke_an_announcement() {
     );
 }
 
-/// A ping addressed to this client is answered with a hello at once, whoever
-/// sent it: a device that hears nothing back within about 1.5s takes this
-/// client offline, and the scheduled hello can be seconds away.
+/// A client with one endpoint, or none yet, cannot tell which endpoint a
+/// frame arrived by, so it does not claim to know whether a device is reached
+/// by multicast.
+#[test]
+fn reaching_a_device_by_multicast_is_unknown_without_both_endpoints() {
+    let (remote, _) = client(205);
+    let peer = uid_n(206);
+    remote.shared.process_datagram_on(
+        &hello_datagram(peer, "Peer", "PR0002"),
+        FROM,
+        Some(Path::Multicast),
+    );
+    remote.shared.process_datagram_on(
+        &hello_datagram(peer, "Peer", "PR0002"),
+        FROM,
+        Some(Path::Multicast),
+    );
+    let device = remote.device(peer).expect("the datagram was not processed");
+    assert_eq!(device.multicast, None);
+}
+
+/// A ping addressed to this client from a known device is answered with a
+/// hello at once: a device that hears nothing back within about 1.5s takes
+/// this client offline, and the scheduled hello can be seconds away. A unit
+/// drops a ping from a sender it has not registered, as it does every frame
+/// but a hello and a discover.
 #[test]
 fn a_ping_for_this_client_is_answered_with_a_hello() {
     let (remote, tap) = client(202);
@@ -138,7 +161,7 @@ fn a_ping_for_this_client_is_answered_with_a_hello() {
     let ping = |target: DeviceUid| datagram(peer, op::SYS_PING, 0x2A, target.as_bytes());
 
     remote.shared.process_datagram(&ping(uid_n(202)), FROM);
-    assert_eq!(tap.opcodes(), vec![op::SYS_HELLO.0], "from a stranger");
+    assert!(tap.opcodes().is_empty(), "answered a stranger");
 
     remote
         .shared
@@ -248,7 +271,7 @@ fn the_probe_loop_announces() {
     lock(&remote.shared.schedule).set_hello_timer(Some(Instant::now()), Duration::from_millis(1));
 
     remote
-        .spawn_workers()
+        .spawn_workers(None)
         .expect("the worker threads could not start");
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline && !tap.opcodes().contains(&op::SYS_HELLO.0) {
@@ -369,9 +392,20 @@ fn the_announcement_carries_the_identity_and_role_it_was_given() {
     remote.set_mesh_controller(remote.uid());
     assert_eq!(
         role(heard(&peer).features),
+        (true, false),
+        "the role was announced with no bays mapped"
+    );
+
+    tap.clear();
+    remote.set_mesh_bays_mapped(true);
+    assert_eq!(
+        role(heard(&peer).features),
         (true, true),
         "taking the role was not announced"
     );
+    tap.clear();
+    remote.set_mesh_bays_mapped(true);
+    assert!(tap.frames().is_empty(), "unchanged bays were re-announced");
 
     tap.clear();
     remote.set_mesh_controller(remote.uid());
@@ -740,13 +774,14 @@ fn hello_with(remote: &Remote, peer: DeviceUid, features: DeviceFeature) {
     );
 }
 
-/// Moves the last time `peer` was heard far enough back to count as offline.
+/// Moves the last time `peer` was heard far enough back to count as offline,
+/// and not so far that it is forgotten.
 fn silence(remote: &Remote, peer: DeviceUid) {
     remote.shared.mutate(|state, _| {
         let device = state.device_mut(peer).expect("peer not registered");
         device.last_ping = device
             .last_ping
-            .checked_sub(Duration::from_secs(600))
+            .checked_sub(Duration::from_secs(90))
             .expect("the test clock cannot predate the process");
     });
 }
@@ -948,8 +983,13 @@ fn the_asks_start_over_once_a_device_is_described() {
     assert!(remote
         .shared
         .mutate(|state, _| state.devices[&peer].have_config));
-    silence(&remote, peer);
-    remote.shared.probe_once(start + Duration::from_secs(181));
+    // Silent long enough to go offline before the hello below, which arrives
+    // now, and not long enough to be forgotten.
+    let silent = start
+        .checked_sub(Duration::from_secs(61))
+        .expect("the test clock cannot predate the process");
+    keep_alive(&remote, peer, silent);
+    remote.shared.probe_once(start);
     hello_with(&remote, peer, DeviceFeature::VIDEO_ROUTING);
     tap.clear();
 
@@ -981,4 +1021,248 @@ fn every_device_is_discovered_only_while_none_is_known() {
         remote.shared.probe_once(at);
     }
     assert_eq!(empty(&tap), 0, "while a device is known");
+}
+
+/// Collects the devices a client forgets.
+#[derive(Default)]
+struct Forgetting(Mutex<Vec<DeviceUid>>);
+
+impl EventHandler for Forgetting {
+    fn on_device_unregistered(&self, device: DeviceUid) {
+        self.0.lock().expect("test handler").push(device);
+    }
+}
+
+/// Announces `peer` with the given hello protocol, which sets its offline
+/// window.
+fn hello_at(remote: &Remote, peer: DeviceUid, protocol: u16) {
+    let hello =
+        crate::testing::hello_payload(protocol, "ONEIP", "FG0001", "1.0.0", DeviceFeature::MESH);
+    remote.shared.process_datagram(
+        &datagram(peer, op::SYS_HELLO, protocol_for(op::SYS_HELLO), &hello),
+        FROM,
+    );
+}
+
+/// Devices are listed in the order this client first heard them, however
+/// their identifiers sort, and hearing one again does not move it.
+#[test]
+fn devices_are_listed_in_the_order_first_heard() {
+    let (remote, _) = client(240);
+    let order: Vec<DeviceUid> = [37, 12, 250, 3, 99, 41, 180, 7].map(uid_n).to_vec();
+    for &peer in &order {
+        hello_at(&remote, peer, 0x2A);
+    }
+    hello_at(&remote, order[0], 0x2A);
+    hello_at(&remote, order[3], 0x2A);
+    assert_eq!(remote.devices(), order);
+}
+
+/// A device silent for three times its offline window is forgotten by the
+/// probe pass, and not a moment before: 60s at protocol 0x2A and later, 15s
+/// from 0x20, 180s below that. One heard again is registered anew, at the
+/// end of the list.
+#[test]
+fn a_device_silent_for_three_offline_windows_is_forgotten() {
+    let seen = Arc::new(Forgetting::default());
+    let (remote, _) = client_with(241, Arc::clone(&seen) as Arc<dyn EventHandler>);
+    let peers = [
+        (uid_n(242), 0x29, 45),
+        (uid_n(243), 0x2A, 180),
+        (uid_n(244), 0x1F, 540),
+    ];
+    let t0 = Instant::now();
+    for (peer, protocol, _) in peers {
+        hello_at(&remote, peer, protocol);
+    }
+    for (peer, _, forget_s) in peers {
+        remote
+            .shared
+            .probe_once(t0 + Duration::from_secs(forget_s - 1));
+        assert!(
+            remote.device(peer).is_some(),
+            "forgotten inside three offline windows"
+        );
+        remote
+            .shared
+            .probe_once(Instant::now() + Duration::from_secs(forget_s));
+        assert!(
+            remote.device(peer).is_none(),
+            "kept past three offline windows"
+        );
+        assert!(!remote.devices().contains(&peer), "still listed");
+        assert_eq!(seen.0.lock().expect("test handler").last(), Some(&peer));
+    }
+
+    hello_at(&remote, uid_n(245), 0x2A);
+    hello_at(&remote, uid_n(242), 0x2A);
+    assert_eq!(remote.devices(), vec![uid_n(245), uid_n(242)]);
+}
+
+/// A forgotten device's link configuration goes with it, so the same link
+/// reported after it is heard again is a new link.
+#[test]
+fn a_forgotten_device_takes_its_links_with_it() {
+    let linked = Arc::new(Linking::default());
+    let (remote, _) = client_with(246, Arc::clone(&linked) as Arc<dyn EventHandler>);
+    let peer = uid_n(247);
+    let link = datagram(
+        peer,
+        op::SYS_LINKS,
+        PROTOCOL_VERSION,
+        &crate::testing::link_rec(1, "AMP00001", "Zone 1", 0),
+    );
+    matrix_with_one_bay(&remote, peer);
+    remote.shared.process_datagram(&link, FROM);
+    assert_eq!(*linked.0.lock().expect("test handler"), 1);
+
+    remote
+        .shared
+        .probe_once(Instant::now() + Duration::from_secs(600));
+    assert!(remote.device(peer).is_none());
+    matrix_with_one_bay(&remote, peer);
+    remote.shared.process_datagram(&link, FROM);
+    assert_eq!(
+        *linked.0.lock().expect("test handler"),
+        2,
+        "the link of a forgotten device was remembered"
+    );
+}
+
+/// Counts the links reported.
+#[derive(Default)]
+struct Linking(Mutex<usize>);
+
+impl EventHandler for Linking {
+    fn on_bay_linked(
+        &self,
+        _bay: crate::wire::BayUid,
+        _linked_serial: String,
+        _bay_name: String,
+        _features: crate::wire::LinkFeature,
+    ) {
+        *self.0.lock().expect("test handler") += 1;
+    }
+}
+
+/// The features this client reports announcing are those its hello carries,
+/// whatever role, overlay sync or multicast fault it is announcing.
+#[test]
+fn the_reported_features_are_those_the_hello_carries() {
+    let (remote, tap) = client(248);
+    let announced = |remote: &Remote| {
+        tap.clear();
+        remote.shared.announce();
+        let frame = tap.frames().pop().expect("nothing was announced");
+        let bits = frame
+            .get(HEADER_LEN + 50..HEADER_LEN + 54)
+            .and_then(|b| <[u8; 4]>::try_from(b).ok())
+            .map(u32::from_le_bytes)
+            .expect("a hello carries its features");
+        DeviceFeature::from_bits(bits)
+    };
+    assert_eq!(remote.features(), announced(&remote));
+    assert!(remote.features().has(DeviceFeature::MANAGER));
+
+    remote.set_mesh_controller(remote.uid());
+    remote.set_mesh_bays_mapped(true);
+    remote.shared.multicast_fault.store(true, Ordering::SeqCst);
+    let features = remote.features();
+    assert_eq!(features, announced(&remote));
+    for bit in [
+        DeviceFeature::MESH_MASTER,
+        DeviceFeature::MESH_MEMBER,
+        DeviceFeature::STATUS_MCAST_FAULT,
+    ] {
+        assert!(features.has(bit), "{bit:?} not reported");
+    }
+}
+
+/// The source address a hello was captured from, a moment before or after
+/// its UDP copy registered the device, is the device's address. A frame to
+/// another port, a frame that is not a hello and a hello shorter than a unit
+/// takes leave it alone. A forgotten device's address goes with it.
+#[test]
+fn a_hello_is_captured_with_its_source_address() {
+    let (remote, _) = client(249);
+    let peer = uid_n(250);
+    let mac = [0x02, 0x1A, 0x2B, 0x3C, 0x4D, 0x5E];
+    let other = [0x02, 0x99, 0x88, 0x77, 0x66, 0x55];
+    let hello = hello_datagram(peer, "Peer", "MA0001");
+    let ports = [MULTICAST_PORT, 8811];
+
+    remote
+        .shared
+        .note_link_frame_on(&crate::testing::ethernet(mac, 8811, &hello), &ports);
+    remote.shared.process_datagram(&hello, FROM);
+    let seen = |remote: &Remote| remote.device(peer).expect("registered").mac;
+    assert_eq!(
+        seen(&remote),
+        Some(MacAddress(mac)),
+        "captured before it registered"
+    );
+
+    let bays = datagram(peer, op::SYS_BAY_CONFIG, 1, &crate::testing::poisoned(61));
+    let mut short = hello.clone();
+    short.pop();
+    short[22..24].copy_from_slice(&53u16.to_le_bytes());
+    for (port, frame) in [(8813, &hello), (MULTICAST_PORT, &bays), (8811, &short)] {
+        remote
+            .shared
+            .note_link_frame_on(&crate::testing::ethernet(other, port, frame), &ports);
+    }
+    assert_eq!(seen(&remote), Some(MacAddress(mac)));
+
+    remote.shared.note_link_frame_on(
+        &crate::testing::ethernet(other, MULTICAST_PORT, &hello),
+        &ports,
+    );
+    assert_eq!(seen(&remote), Some(MacAddress(other)), "a later hello");
+
+    remote
+        .shared
+        .probe_once(Instant::now() + Duration::from_secs(600));
+    remote.shared.process_datagram(&hello, FROM);
+    assert_eq!(seen(&remote), None, "kept for a forgotten device");
+}
+
+/// A client asked to capture what it cannot fails to start, and opens no
+/// endpoint first.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn capturing_off_linux_fails_to_start() {
+    let remote = Remote::new(
+        Config {
+            uid: Some(uid_n(251)),
+            capture_hello_mac: true,
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    let err = remote.start().expect_err("started without a capture");
+    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    assert!(remote.target().is_none(), "an endpoint was opened");
+}
+
+/// The tree a client reports heads with itself, and nests a device under
+/// the one whose topology report lists it.
+#[test]
+fn the_device_tree_nests_by_topology() {
+    let (remote, _) = client(252);
+    let (a, b) = (uid_n(253), uid_n(254));
+    hello_at(&remote, a, 0x2A);
+    hello_at(&remote, b, 0x2A);
+    let mut list = crate::testing::poisoned(24);
+    list[..16].copy_from_slice(a.as_bytes());
+    remote
+        .shared
+        .process_datagram(&datagram(b, op::TOPOLOGY, 0x06, &list), FROM);
+    let tree: Vec<(DeviceUid, usize)> = remote
+        .device_tree()
+        .into_iter()
+        .map(|e| (e.uid, e.depth))
+        .collect();
+    assert_eq!(tree, vec![(remote.uid(), 0), (b, 0), (a, 1)]);
+    assert_eq!(remote.devices(), vec![b, a]);
 }

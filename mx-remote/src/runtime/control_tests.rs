@@ -5357,3 +5357,20 @@ fn a_mesh_write_is_refused_before_it_is_sent() {
     let _ = f.remote.set_rc_settings(&rc);
     assert_eq!(f.tap.frames().len(), 1, "the longest text was not sent");
 }
+
+/// A mesh detect asks every unit to detect its bays: 0x21, empty, stamped
+/// 0x06, to both endpoints.
+#[test]
+fn a_bay_detection_goes_to_every_unit() {
+    let f = Fixture::new();
+    f.connect();
+    f.tap.clear();
+    f.remote
+        .send_v2ip_detect_bays()
+        .expect("a frame every unit takes");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &op::V2IP_DETECT_BAYS.0.to_le_bytes());
+    assert_eq!(&frame[2..4], &0x06u16.to_le_bytes(), "the stamp");
+    assert_eq!(frame.len(), HEADER_LEN, "a payload");
+    assert_eq!(lock(&f.remote.shared.tx).both.last(), Some(&true));
+}

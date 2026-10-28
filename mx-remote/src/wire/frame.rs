@@ -160,6 +160,14 @@ impl<'a> Frame<'a> {
         self.slice(idx, len).map(cstr)
     }
 
+    /// Reads a fixed-width string field as its bytes, cut at the first NUL and
+    /// otherwise untouched: all `len` of them when the value fills the field.
+    pub(crate) fn raw_str(&self, idx: usize, len: usize) -> Option<Vec<u8>> {
+        let field = self.slice(idx, len)?;
+        let end = field.iter().position(|&c| c == 0).unwrap_or(field.len());
+        field.get(..end).map(<[u8]>::to_vec)
+    }
+
     /// Reads an ASCII string running from `idx` to the end of the datagram.
     pub(crate) fn str_to_end(&self, idx: usize) -> Option<String> {
         self.bytes_from(idx).map(cstr)

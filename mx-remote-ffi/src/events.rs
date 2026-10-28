@@ -679,6 +679,10 @@ pub struct mxr_callbacks_t {
     /// `on_mesh_master_changed` covers, or a controller report, which
     /// `on_mesh_controller_report_changed` covers.
     pub on_mesh_operation_received: mxr_mesh_operation_cb,
+    /// The device was forgotten, as a unit forgets one: nothing was heard
+    /// from it for three times the silence that takes it offline. It is no
+    /// longer listed, and a hello from it later registers it as a new device.
+    pub on_device_unregistered: mxr_device_cb,
 }
 
 /// The caller's cookie, which this library carries and never reads.
@@ -823,6 +827,10 @@ impl EventHandler for Bridge {
 
     fn on_mesh_controller_report_changed(&self, device: DeviceUid, _report: MeshControllerReport) {
         forward!(self.on_mesh_controller_report_changed(device.into()));
+    }
+
+    fn on_device_unregistered(&self, device: DeviceUid) {
+        forward!(self.on_device_unregistered(device.into()));
     }
 
     fn on_mesh_operation_received(&self, device: DeviceUid, operation: MeshOperation) {

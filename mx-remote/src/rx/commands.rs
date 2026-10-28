@@ -59,9 +59,9 @@ pub(super) fn discover_request(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Even
 /// A device on protocol 0x2A pings a peer it suspects is gone, and takes it
 /// offline when no frame comes back within about 1.5s - sooner than this
 /// client's next scheduled hello. A ping for another device asks nothing of
-/// this one.
+/// this one, and a unit takes one only at exactly the uid's 16 bytes.
 pub(super) fn ping(state: &mut State, rx: &Rx<'_>, _ev: &mut [Event]) {
-    if rx.frame.uid(0) == Some(state.uid) {
+    if rx.frame.payload().len() == UID_LEN && rx.frame.uid(0) == Some(state.uid) {
         state.hello_requested = true;
     }
 }

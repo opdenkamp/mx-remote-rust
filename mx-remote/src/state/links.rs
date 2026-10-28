@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::wire::BayUid;
+use crate::wire::{BayUid, DeviceUid};
 
 /// A link from one bay to a bay on another device: an amplifier output wired
 /// to a OneIP sink, say.
@@ -41,5 +41,10 @@ impl BayLinks {
 
     pub(crate) fn insert(&mut self, key: BayUid, link: BayLink) {
         self.links.insert(key, link);
+    }
+
+    /// Drops every link reported for a bay of `device`.
+    pub(crate) fn forget_device(&mut self, device: DeviceUid) {
+        self.links.retain(|key, _| key.device != device);
     }
 }

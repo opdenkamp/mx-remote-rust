@@ -299,3 +299,27 @@ pub(crate) fn datagram(sender: DeviceUid, op: Opcode, protocol: u16, payload: &[
     data.extend_from_slice(payload);
     data
 }
+
+/// An Ethernet frame from `source` carrying `payload` over IPv4 and UDP to
+/// `port`, with poisoned padding behind it as a short frame is sent with.
+///
+/// Composed from the Ethernet, IPv4 and UDP layouts, not captured.
+pub(crate) fn ethernet(source: [u8; 6], port: u16, payload: &[u8]) -> Vec<u8> {
+    let mut f = vec![0x01, 0x00, 0x5E, 0x08, 0x08, 0x08];
+    f.extend_from_slice(&source);
+    f.extend_from_slice(&0x0800u16.to_be_bytes());
+    let mut ip = poisoned(20);
+    ip[0] = 0x45;
+    let total = u16::try_from(20 + 8 + payload.len()).unwrap_or(u16::MAX);
+    ip[2..4].copy_from_slice(&total.to_be_bytes());
+    ip[6..8].copy_from_slice(&0x4000u16.to_be_bytes());
+    ip[9] = 17;
+    f.extend_from_slice(&ip);
+    f.extend_from_slice(&0xC350u16.to_be_bytes());
+    f.extend_from_slice(&port.to_be_bytes());
+    f.extend_from_slice(&(total - 20).to_be_bytes());
+    f.extend_from_slice(&[0xA5, 0x5A]);
+    f.extend_from_slice(payload);
+    f.extend_from_slice(&poisoned(16));
+    f
+}

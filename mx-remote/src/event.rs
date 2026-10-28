@@ -175,6 +175,11 @@ events! {
         DeviceConfigComplete => on_device_config_complete();
         /// The device started or stopped answering.
         DeviceOnlineChanged => on_device_online_changed(online: bool);
+        /// The device was forgotten, as a unit forgets one: nothing was heard
+        /// from it for three times the silence that takes it offline. It is
+        /// no longer listed, and a hello from it later registers it as a new
+        /// device.
+        DeviceUnregistered => on_device_unregistered();
         /// The device reported new temperatures.
         DeviceTemperatureChanged => on_device_temperature_changed(temperatures: Vec<i8>);
         /// A firmware component reported its version.
@@ -197,7 +202,9 @@ events! {
         /// The device reported a different audio endpoint tree, or an
         /// endpoint's status changed.
         AudioEndpointsChanged => on_audio_endpoints_changed(endpoints: AudioEndpoints);
-        /// The device reported its mesh master.
+        /// The device reported its mesh master for the first time, or a
+        /// different one. A first report naming none fires too, which is what
+        /// tells a device in no mesh from one that has not reported yet.
         MeshMasterChanged => on_mesh_master_changed(master: DeviceUid);
         /// The device announced itself as a mesh controller differently.
         MeshControllerReportChanged => on_mesh_controller_report_changed(report: MeshControllerReport);

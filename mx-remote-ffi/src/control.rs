@@ -1236,6 +1236,19 @@ pub unsafe extern "C" fn mxr_send_mesh_operation(
     })
 }
 
+/// Asks every unit to detect its bays, as a mesh controller's detect does.
+/// Current firmware takes the frame and does nothing with it.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_v2ip_detect_bays(remote: *const mxr_remote_t) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| from_control(r.remote.send_v2ip_detect_bays()))
+}
+
 /// Tells every unit to check its update server for new firmware now.
 ///
 /// # Safety

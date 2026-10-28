@@ -36,6 +36,13 @@ fn topology_parses() {
     assert_eq!(topo.len(), 2);
     assert_eq!((topo[0].uid, topo[0].mask), (one, 0xABCD));
     assert_eq!((topo[1].uid, topo[1].mask), (two, 0x0102));
+
+    // A list that is not whole entries is ignored, as a unit ignores it.
+    let mut ragged = p.clone();
+    ragged[0..16].copy_from_slice(uid_n(10).as_bytes());
+    ragged.push(0);
+    h.feed(op::TOPOLOGY, &ragged);
+    assert_eq!(h.device().topology[0].uid, one, "a ragged list was taken");
 }
 
 #[test]

@@ -57,11 +57,17 @@ fn rc_bay_and_value(f: &Frame) -> Option<(u16, u16)> {
 
 pub(super) fn hello(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let f = &rx.frame;
+    if !super::is_hello(f) {
+        return;
+    }
     let hello = HelloInfo {
         supported_protocol: f.u16(0).unwrap_or(0),
         name: f.str(2, 16).unwrap_or_default(),
         serial: f.str(18, 16).unwrap_or_default(),
         version: f.str(34, 16).unwrap_or_default(),
+        raw_name: f.raw_str(2, 16).unwrap_or_default(),
+        raw_version: f.raw_str(34, 16).unwrap_or_default(),
+        raw_serial: f.raw_str(18, 16).unwrap_or_default(),
         features: DeviceFeature::from_bits(f.u32(50).unwrap_or(0)),
         address: rx.address,
     };
@@ -96,6 +102,11 @@ pub(super) fn bay_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     // not yet described itself.
     if rx.frame.opcode() == op::SYS_BAY_CONFIG {
         device.note_bay_config(rx.timestamp, ev);
+        // A unit takes a OneIP device's bays as arrived with its source list
+        // instead, and no primary list without a record.
+        if !device.is_v2ip() && !payload.is_empty() {
+            device.bays_arrived = true;
+        }
     }
 }
 
@@ -308,6 +319,11 @@ pub(super) fn v2ip_sources(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) 
         .collect();
     if let Some(device) = state.device_mut(rx.sender()) {
         device.merge_v2ip_sources(first, total, &sources, ev);
+        // Whatever it lists, as a unit takes it: a device that is not a OneIP
+        // one is not brought online by this frame.
+        if device.is_v2ip() {
+            device.bays_arrived = true;
+        }
     }
 }
 
@@ -1178,6 +1194,10 @@ pub(super) fn v2ip_testcard(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
 const TOPOLOGY_ENTRY: usize = 24;
 
 pub(super) fn topology(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
+    // A unit takes whole entries only, and none from a ragged list.
+    if rx.frame.payload().len() % TOPOLOGY_ENTRY != 0 {
+        return;
+    }
     let topology: Vec<TopologyEntry> = rx
         .frame
         .payload()
@@ -1187,6 +1207,17 @@ pub(super) fn topology(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             mask: u32_at(entry, 16),
         })
         .collect();
+    let Some(device) = state.device_mut(rx.sender()) else {
+        return;
+    };
+    // Only a list differing byte for byte from the last reshapes the tree,
+    // as on a unit.
+    let raw = rx.frame.payload();
+    if device.topology_raw != raw {
+        device.topology_raw = raw.to_vec();
+        let listed: Vec<DeviceUid> = topology.iter().map(|e| e.uid).collect();
+        state.apply_topology(rx.sender(), &listed);
+    }
     if let Some(device) = state.device_mut(rx.sender()) {
         device.set_topology(topology, ev);
     }

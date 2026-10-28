@@ -295,6 +295,40 @@ fn a_mesh_report_below_its_own_gate_is_not_a_master() {
     assert_eq!(h.device().mesh_master, master);
 }
 
+/// A device's first membership report is news even when it names no master:
+/// before it, the zero master is only what nothing has been heard yet reads
+/// as. A repeat of the same report is not.
+#[test]
+fn a_first_mesh_report_naming_no_master_is_reported() {
+    let mut h = Harness::new(5);
+    h.hello(
+        0x2F,
+        "ONEIP",
+        "MR0001",
+        DeviceFeature::V2IP_SINK | DeviceFeature::MESH,
+    );
+    let mut mesh = poisoned(40);
+    mesh[0] = 0xFF;
+    mesh[4..20].fill(0);
+
+    let reported = |h: &Harness| {
+        h.saw(|e| {
+            matches!(e, Event::MeshMasterChanged { device, master }
+                if *device == h.sender && master.is_zero())
+        })
+    };
+    h.events.clear();
+    h.feed(op::MESH_OPERATION, &mesh);
+    assert!(
+        reported(&h),
+        "a first report naming no master was swallowed"
+    );
+
+    h.events.clear();
+    h.feed(op::MESH_OPERATION, &mesh);
+    assert!(!reported(&h), "an unchanged report fired again");
+}
+
 /// Every mesh operation other than the two reports reaches the caller as it
 /// arrived, so a controller can follow promotions and registrations it did not
 /// send, and an operation this library has no name for is passed on rather

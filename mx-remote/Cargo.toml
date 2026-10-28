@@ -30,3 +30,10 @@ if-addrs = "0.15"
 # The client's own identifier has to be unique on the network and is written to
 # disk, so it comes from the OS entropy source rather than from the clock.
 getrandom = "0.2"
+
+# Which address a datagram was sent to, which a unit judges its path by: a
+# frame to a multicast group came by multicast, and one to a unicast address
+# did not, whichever port it arrived on. Only recvmsg with IP_PKTINFO says so,
+# and nix reads that control message without unsafe code here.
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.29", default-features = false, features = ["socket", "uio", "net"] }

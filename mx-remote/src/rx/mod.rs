@@ -30,8 +30,10 @@ use std::time::Instant;
 
 use crate::event::Event;
 use crate::state::{Device, State};
+use crate::types::MacAddress;
 use crate::wire::{
-    op, DeviceFeature, DeviceUid, Frame, Opcode, Path, HEADER_LEN, PROTOCOL_VERSION,
+    op, udp_in_ethernet, DeviceFeature, DeviceUid, Frame, Opcode, Path, HEADER_LEN,
+    PROTOCOL_VERSION,
 };
 
 pub use svd::{lookup_svd, Svd};
@@ -74,6 +76,43 @@ pub(crate) fn process_frame(
     process_frame_on(state, data, address, None, timestamp)
 }
 
+/// The frame a datagram carries, if a unit would take it at all.
+///
+/// A unit drops a datagram whose length is not the header's exactly, and a
+/// frame stamped with a layout newer than the one it knows, or with the
+/// version a broken revision once stamped.
+fn accepted(data: &[u8]) -> Option<Frame<'_>> {
+    let frame = Frame::parse(data).ok()?;
+    let whole = data.len() == HEADER_LEN + usize::from(frame.payload_len());
+    let readable = frame.protocol() <= PROTOCOL_VERSION && frame.protocol() != BROKEN_PROTOCOL;
+    (whole && readable).then_some(frame)
+}
+
+/// The first opcode past a unit's table (`MX_OP_NB`). A frame at or above it
+/// has no valid header to a unit, which drops it before either timer is
+/// touched.
+const OPCODE_LIMIT: u16 = 0x55;
+
+/// The shortest hello a unit takes. A shorter one is ignored whole, and a
+/// longer one read by its first this many bytes.
+const HELLO_LEN: usize = 54;
+
+/// Whether a frame is a hello a unit takes.
+pub(super) fn is_hello(frame: &Frame<'_>) -> bool {
+    frame.opcode() == op::SYS_HELLO && frame.payload().len() >= HELLO_LEN
+}
+
+/// The sender of the hello an Ethernet frame carries to one of `ports`, and
+/// the frame's source address, when it carries one a unit would take.
+///
+/// A unit stores that address with every hello it takes, from any sender.
+pub(crate) fn hello_source(frame: &[u8], ports: &[u16]) -> Option<(DeviceUid, MacAddress)> {
+    let link = udp_in_ethernet(frame)?;
+    let hello = accepted(link.payload)?;
+    let taken = ports.contains(&link.port) && is_hello(&hello);
+    taken.then(|| (hello.remote_id(), MacAddress(link.source)))
+}
+
 /// Decodes one datagram into events, updating the registry.
 ///
 /// `timestamp` is when the datagram arrived, which is what the sending device
@@ -92,18 +131,9 @@ pub(crate) fn process_frame_on(
     path: Option<Path>,
     timestamp: Instant,
 ) -> Vec<Event> {
-    let Ok(frame) = Frame::parse(data) else {
+    let Some(frame) = accepted(data) else {
         return Vec::new();
     };
-    // A unit drops a datagram whose length is not the header's exactly, and a
-    // frame stamped with a layout newer than the one it knows, or with the
-    // version a broken revision once stamped.
-    if data.len() != HEADER_LEN + usize::from(frame.payload_len())
-        || frame.protocol() > PROTOCOL_VERSION
-        || frame.protocol() == BROKEN_PROTOCOL
-    {
-        return Vec::new();
-    }
     let sender = frame.remote_id();
     if sender == state.uid {
         return Vec::new();
@@ -112,13 +142,23 @@ pub(crate) fn process_frame_on(
     // sender put on the wire. This client's own multicast is looped back by
     // the host whichever interface was selected, so counting that would answer
     // "did anything reach this interface" with yes on every interface.
-    if let Some(path) = path {
-        if let Some(device) = state.device_mut(sender) {
+    // A frame from a known sender proves its path whether or not the sender
+    // is alive, and keeps an alive one so whatever it carries: a second copy
+    // and an opcode no handler takes included. Once a sender has gone
+    // silent, only a hello brings it back.
+    // An opcode past a unit's table is no valid header to it, so it touches
+    // neither timer; this client still hands an application's message on.
+    let in_table = frame.opcode().0 < OPCODE_LIMIT;
+    if let Some(device) = state.device_mut(sender).filter(|_| in_table) {
+        if let Some(path) = path {
             device.heard_on(path, timestamp);
         }
-        if state.is_duplicate(data, timestamp) {
-            return Vec::new();
+        if device.is_online(timestamp) {
+            device.last_ping = timestamp;
         }
+    }
+    if path.is_some() && state.is_duplicate(data, timestamp) {
+        return Vec::new();
     }
     state.frames_received = state.frames_received.saturating_add(1);
     // A device drops every frame from a uid it has no record of, so acting on
@@ -127,12 +167,12 @@ pub(crate) fn process_frame_on(
     // window is a device's announcement interval at worst, and this client
     // shortens it by soliciting on connect.
     //
-    // Hello, discover and ping are exempt because they are what closes the
-    // window: a hello is how a sender stops being unknown, and a discover or a
-    // ping is how a stranger asks to be told.
+    // Hello and discover are exempt because they are what closes the window:
+    // a hello is how a sender stops being unknown, and a discover is how a
+    // stranger asks to be told. A unit drops a stranger's ping.
     let known = state.device(sender).is_some();
     let opcode = frame.opcode();
-    if !known && opcode != op::SYS_HELLO && opcode != op::SYS_DISCOVER && opcode != op::SYS_PING {
+    if !known && opcode != op::SYS_HELLO && opcode != op::SYS_DISCOVER {
         return Vec::new();
     }
     let before = state.device(sender).map(|d| Heard::of(d, timestamp));
@@ -146,7 +186,7 @@ pub(crate) fn process_frame_on(
     // A source unit's video processor picks a new key generator every boot,
     // and the reports it sent while this client could not hear it are lost,
     // so what it reported before would decrypt its new streams as noise.
-    if opcode == op::SYS_HELLO {
+    if is_hello(&frame) {
         if let (Some(b), Some(device)) = (&before, state.device_mut(sender)) {
             if b.may_have_restarted(device) {
                 device.set_v2ip_privacy(None, &mut ev);
@@ -157,7 +197,7 @@ pub(crate) fn process_frame_on(
     // keeps it: online detection must not rest on hello frames alone. Once
     // it has gone silent long enough to count as offline, only a hello brings
     // it back.
-    let revives = frame.opcode() == op::SYS_HELLO || !before.as_ref().is_some_and(|b| b.away);
+    let revives = in_table && (is_hello(&frame) || !before.as_ref().is_some_and(|b| b.away));
     if let Some(device) = state.device_mut(sender).filter(|_| revives) {
         device.touch(timestamp, Instant::now(), &mut ev);
         if Heard::missed_state(before, device) {

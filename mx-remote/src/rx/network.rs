@@ -3,6 +3,8 @@
 
 //! Network port status reports.
 
+use std::net::Ipv4Addr;
+
 use crate::event::Event;
 use crate::state::State;
 use crate::types::{MacAddress, NetworkPortStatus, UtpCableStatus, UtpLinkErrors, VctStatus};
@@ -180,8 +182,33 @@ pub(super) fn parse_modern(d: &[u8]) -> Option<NetworkPortStatus> {
     Some(status)
 }
 
+/// The length a unit requires of a report before it takes the querier.
+const UPLINK_REPORT_LEN: usize = 144;
+
+/// The IGMP querier an uplink report names, as a unit stores it: `None`
+/// inside for one that does not support IGMP or names 0.0.0.0. `None` for a
+/// report a unit does not take the querier from: not the uplink, shorter
+/// than [`UPLINK_REPORT_LEN`], or stamped below [`MODERN_LAYOUT`].
+fn uplink_querier(d: &[u8], protocol: u16) -> Option<Option<Ipv4Addr>> {
+    if protocol < MODERN_LAYOUT || d.len() < UPLINK_REPORT_LEN {
+        return None;
+    }
+    let features = byte(d, 2);
+    if features & (1 << 6) == 0 {
+        return None;
+    }
+    let querier = ipv4_at(d, 32);
+    Some((features & (1 << 3) != 0 && !querier.is_unspecified()).then_some(querier))
+}
+
 pub(super) fn network_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let protocol = rx.frame.protocol();
+    if let (Some(querier), Some(device)) = (
+        uplink_querier(rx.frame.payload(), protocol),
+        state.device_mut(rx.sender()),
+    ) {
+        device.igmp_querier = querier;
+    }
     let parsed = if protocol < MODERN_LAYOUT {
         parse_legacy(rx.frame.payload(), protocol)
     } else {

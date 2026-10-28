@@ -55,6 +55,9 @@ const SILENCE_LIMIT_SLOW_HELLO: Duration = Duration::from_secs(60);
 /// The version from which [`SILENCE_LIMIT_SLOW_HELLO`] applies.
 const SLOW_HELLO_PROTOCOL: u16 = 0x2A;
 
+/// How many offline windows of silence a device is forgotten after.
+const FORGET_WINDOWS: u32 = 3;
+
 /// How long a device is given to finish describing itself.
 ///
 /// Past this its link configuration stops being waited for, and it is asked for
@@ -72,6 +75,12 @@ pub(crate) struct HelloInfo {
     pub(crate) name: String,
     pub(crate) serial: String,
     pub(crate) version: String,
+    /// The name field as announced, up to its first NUL.
+    pub(crate) raw_name: Vec<u8>,
+    /// The version field as announced, up to its first NUL.
+    pub(crate) raw_version: Vec<u8>,
+    /// The serial field as announced, up to its first NUL.
+    pub(crate) raw_serial: Vec<u8>,
     pub(crate) features: DeviceFeature,
     pub(crate) address: Option<Ipv4Addr>,
 }
@@ -84,6 +93,9 @@ impl HelloInfo {
             && self.name == other.name
             && self.serial == other.serial
             && self.version == other.version
+            && self.raw_name == other.raw_name
+            && self.raw_version == other.raw_version
+            && self.raw_serial == other.raw_serial
             && self.features == other.features
     }
 }
@@ -121,6 +133,11 @@ pub(crate) struct Device {
     /// Every unit sends that list whatever else it sends, so it is the one
     /// thing whose arrival can be required of any device.
     pub(crate) bay_config_received: bool,
+    /// Whether the device's bays have come into use, as a unit judges it: by
+    /// a OneIP device's source list, or by any other device's primary bay
+    /// list, since it registered, last announced a reboot or last went
+    /// offline.
+    pub(crate) bays_arrived: bool,
 
     pub(crate) v2ip_sources: Option<Vec<V2ipStreamSources>>,
     /// Source records by their position in the sender's list.
@@ -175,10 +192,17 @@ pub(crate) struct Device {
     pub(crate) audio_select: Option<AudioChangeSource>,
     pub(crate) firmware: BTreeMap<FirmwareType, FirmwareVersion>,
     pub(crate) mesh_master: DeviceUid,
+    /// Whether `mesh_master` came from a report rather than the default.
+    mesh_master_reported: bool,
     pub(crate) mesh_controller_report: Option<MeshControllerReport>,
     pub(crate) network: BTreeMap<u16, NetworkPortStatus>,
     pub(crate) sys_status: Option<(u16, String)>,
     pub(crate) topology: Vec<TopologyEntry>,
+    /// The last topology list as it arrived, padding included, which is
+    /// what a unit compares the next one against.
+    pub(crate) topology_raw: Vec<u8>,
+    /// The IGMP querier the last uplink report named, as a unit stores it.
+    pub(crate) igmp_querier: Option<Ipv4Addr>,
     pub(crate) audio: Option<AudioEndpoints>,
     /// Whether the device's audio module uses the layout of released firmware
     /// up to 4.4.2, as its own features report showed; `None` before one.
@@ -209,6 +233,7 @@ impl Device {
             last_owed_ask: None,
             link_config_received: false,
             bay_config_received: false,
+            bays_arrived: false,
             v2ip_sources: None,
             v2ip_source_pages: BTreeMap::new(),
             v2ip_details: None,
@@ -238,10 +263,13 @@ impl Device {
             audio_select: None,
             firmware: BTreeMap::new(),
             mesh_master: DeviceUid::ZERO,
+            mesh_master_reported: false,
             mesh_controller_report: None,
             network: BTreeMap::new(),
             sys_status: None,
             topology: Vec::new(),
+            topology_raw: Vec::new(),
+            igmp_querier: None,
             audio: None,
             multiviewer: None,
             dolby_settings: None,
@@ -365,15 +393,26 @@ impl Device {
             .is_some_and(|t| now.saturating_duration_since(t) < PATH_WINDOW)
     }
 
-    pub(crate) fn is_online(&self, now: Instant) -> bool {
-        let limit = if self.hello.supported_protocol >= SLOW_HELLO_PROTOCOL {
+    /// How long the device may stay silent before it counts as offline, which
+    /// a unit sets by the protocol the device announces.
+    fn offline_window(&self) -> Duration {
+        if self.hello.supported_protocol >= SLOW_HELLO_PROTOCOL {
             SILENCE_LIMIT_SLOW_HELLO
         } else if self.hello.supported_protocol >= MODERN_PROTOCOL {
             SILENCE_LIMIT_MODERN
         } else {
             SILENCE_LIMIT
-        };
-        now.saturating_duration_since(self.last_ping) < limit
+        }
+    }
+
+    pub(crate) fn is_online(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.last_ping) < self.offline_window()
+    }
+
+    /// Whether the device has been silent for [`FORGET_WINDOWS`] offline
+    /// windows, after which a unit forgets it.
+    pub(crate) fn is_forgotten(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.last_ping) >= self.offline_window() * FORGET_WINDOWS
     }
 
     pub(crate) fn is_rebooting(&self, now: Instant) -> bool {
@@ -624,7 +663,6 @@ impl Device {
     /// standing for another unit: what it says about that unit's bay is never
     /// refreshed, and the bay is built from the bay mappings instead.
     pub(crate) fn apply_bay_config(&mut self, cfg: &BayConfig, now: Instant, ev: &mut Vec<Event>) {
-        self.last_ping = now;
         if cfg.bay_name.is_empty()
             || cfg.features.has(BayFeatures::V2IP_SOURCE_REMOTE)
             || cfg.features.has(BayFeatures::V2IP_SINK_REMOTE)
@@ -755,6 +793,7 @@ impl Device {
     fn await_config(&mut self) {
         self.have_config = false;
         self.bay_config_received = false;
+        self.bays_arrived = false;
     }
 
     /// Notes that the device has sent its primary bay configuration.
@@ -800,6 +839,11 @@ impl Device {
 
     pub(crate) fn check_online(&mut self, now: Instant, ev: &mut Vec<Event>) {
         let online = self.is_online(now);
+        // A bay list from a device gone silent still brings its bays online,
+        // and a unit's next pass takes them offline again.
+        if !online {
+            self.bays_arrived = false;
+        }
         if online == self.online {
             return;
         }
@@ -979,9 +1023,10 @@ impl Device {
     }
 
     pub(crate) fn set_mesh_master(&mut self, master: DeviceUid, ev: &mut Vec<Event>) {
-        if self.mesh_master == master {
+        if self.mesh_master_reported && self.mesh_master == master {
             return;
         }
+        self.mesh_master_reported = true;
         self.mesh_master = master;
         ev.push(Event::MeshMasterChanged {
             device: self.uid,

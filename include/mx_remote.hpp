@@ -137,7 +137,8 @@ inline std::string last_error() { return std::string(mxr_last_error()); }
     X(on_monitoring_pulse) \
     X(on_upgrade_fpga_requested) \
     X(on_detect_bays_requested) \
-    X(on_mesh_controller_report_changed)
+    X(on_mesh_controller_report_changed) \
+    X(on_device_unregistered)
 
 #define MXR_EVENTS_DEVICE_BOOL(X) \
     X(on_device_online_changed) \
@@ -586,6 +587,20 @@ public:
         return mxr_remote_set_mesh_controller(h_, controller.raw);
     }
 
+    /// Sets whether the caller has mesh bays mapped, without which the mesh
+    /// controller role is not announced.
+    mxr_result_t set_mesh_bays_mapped(bool mapped) const {
+        return mxr_remote_set_mesh_bays_mapped(h_, mapped);
+    }
+
+    /// The features this client announces in its hello, as `MXR_FEATURE_*`
+    /// bits.
+    uint32_t features() const {
+        uint32_t out = 0;
+        mxr_remote_features(h_, &out);
+        return out;
+    }
+
     /// The mesh controller this client announces it follows, zero for none.
     Uid mesh_controller() const {
         Uid out;
@@ -606,6 +621,14 @@ public:
         std::vector<mxr_uid_t> raw(mxr_devices(h_, nullptr, 0));
         trim(raw, raw.empty() ? 0 : mxr_devices(h_, raw.data(), raw.size()));
         return std::vector<Uid>(raw.begin(), raw.end());
+    }
+
+    /// Every device and this client, as a unit keeps its registry: a tree
+    /// walked depth first, a parent before its children, each with its depth.
+    std::vector<mxr_device_tree_entry_t> device_tree() const {
+        std::vector<mxr_device_tree_entry_t> raw(mxr_device_tree(h_, nullptr, 0));
+        trim(raw, raw.empty() ? 0 : mxr_device_tree(h_, raw.data(), raw.size()));
+        return raw;
     }
 
     /// A device's bays, in port order.
@@ -758,6 +781,9 @@ public:
     }
     mxr_result_t send_monitoring_pulse() const {
         return mxr_send_monitoring_pulse(h_);
+    }
+    mxr_result_t send_v2ip_detect_bays() const {
+        return mxr_send_v2ip_detect_bays(h_);
     }
     mxr_result_t set_multiviewer_view_mode(Uid device, uint8_t mode) const {
         return mxr_set_multiviewer_view_mode(h_, device, mode);

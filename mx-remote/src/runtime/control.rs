@@ -1680,6 +1680,16 @@ impl Remote {
         Ok(())
     }
 
+    /// Asks every unit to detect its bays, as a mesh controller's detect does.
+    ///
+    /// Current firmware takes the frame and does nothing with it; it still
+    /// counts as traffic from this client.
+    pub fn send_v2ip_detect_bays(&self) -> Result<(), ControlError> {
+        self.shared
+            .send(&Addressee::Broadcast, op::V2IP_DETECT_BAYS, &[])?;
+        Ok(())
+    }
+
     /// Tells every unit to check its update server for new firmware now.
     pub fn send_monitoring_pulse(&self) -> Result<(), ControlError> {
         self.shared

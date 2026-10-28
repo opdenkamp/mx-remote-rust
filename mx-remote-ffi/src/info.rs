@@ -23,7 +23,8 @@ use mx_remote::{
 };
 
 use crate::abi::{
-    bay_or_zero, fail, guard, mxr_bay_uid_t, mxr_result_t, mxr_tribool_t, mxr_uid_t, put_str,
+    bay_or_zero, fail, guard, mxr_bay_uid_t, mxr_result_t, mxr_tribool_t, mxr_uid_t, put_bytes,
+    put_str,
 };
 use crate::bits::mxr_signal_type_t;
 use crate::remote::{mxr_remote_t, with, MXR_IP_STRING_LEN};
@@ -44,6 +45,10 @@ pub const MXR_MODEL_LEN: usize = 48;
 ///
 /// The wire field is 128 bytes and is not NUL-terminated when full.
 pub const MXR_VERSION_LEN: usize = 129;
+
+/// Bytes a hello string field needs as it was announced, the terminator
+/// included: the wire field is 16 bytes and is not NUL-terminated when full.
+pub const MXR_HELLO_FIELD_LEN: usize = 17;
 
 /// Bytes a signal description such as `1080p60 444 8` needs, the terminator
 /// included.
@@ -244,6 +249,36 @@ pub struct mxr_device_info_t {
     /// The installer id its members take, zero for none; meaningful only when
     /// `has_mesh_controller_report` is set.
     pub mesh_controller_installer: u16,
+    /// The name exactly as the device announced it: the bytes of its hello's
+    /// name field up to the first NUL, NUL-terminated here. Empty before the
+    /// device has said, never substituted, and not necessarily UTF-8.
+    pub raw_name: [c_char; MXR_HELLO_FIELD_LEN],
+    /// The firmware version exactly as the device announced it, read as
+    /// `raw_name` is.
+    pub raw_version: [c_char; MXR_HELLO_FIELD_LEN],
+    /// The serial exactly as the device announced it, read as `raw_name` is.
+    pub raw_serial: [c_char; MXR_HELLO_FIELD_LEN],
+    /// Whether the device is online as a unit judges it: `online` is set, and
+    /// its bays have arrived since it was first heard, last announced a reboot
+    /// or last went offline - a OneIP device's with its source list, any
+    /// other's with its primary bay list. Until then a unit uses none of the
+    /// device's bays, links or routes.
+    pub bays_online: bool,
+    /// Whether a frame from the device arrived by multicast within the last
+    /// two minutes, the frame that registered it excepted: one sent to a
+    /// multicast group, as a unit judges it, which on Linux is read from each
+    /// datagram and elsewhere from the endpoint that took it. Unknown unless
+    /// the client binds both endpoints (`both_endpoints` in its config).
+    pub multicast: mxr_tribool_t,
+    /// Whether the source hardware address of the device's hellos is known:
+    /// only a client that sets `capture_hello_mac` in its config captures it.
+    pub has_mac: bool,
+    /// The source hardware address of the device's hellos, as a unit stores
+    /// it with each one it takes; meaningful only when `has_mac` is set.
+    pub mac: [u8; 6],
+    /// The IGMP querier the device's last uplink report names, as a unit
+    /// stores it; empty while it names none.
+    pub igmp_querier: [c_char; MXR_IP_STRING_LEN],
 }
 
 /// What a bay is, and what is connected to it.
@@ -340,6 +375,13 @@ pub struct mxr_bay_info_t {
     pub v2ip_uid: mxr_uid_t,
     /// How many devices `mxr_bay_filtered()` would return.
     pub filtered_count: usize,
+    /// Whether the device has sent the bay's status word.
+    pub has_status: bool,
+    /// The bay's whole status word as the device last sent it, as
+    /// `MXR_BAY_STATUS_*` bits with the remote-control type in bits 16-19 and
+    /// the source's HDCP mode in bits 22-23; meaningful only when `has_status`
+    /// is set.
+    pub status: u32,
 }
 
 /// Bytes in one EDID: a base block and exactly one extension block.
@@ -539,7 +581,21 @@ impl mxr_device_info_t {
             has_mesh_controller_report: info.mesh_controller_report.is_some(),
             mesh_controller_priority: info.mesh_controller_report.map_or(0, |r| r.priority),
             mesh_controller_installer: info.mesh_controller_report.map_or(0, |r| r.installer),
+            raw_name: [0; MXR_HELLO_FIELD_LEN],
+            raw_version: [0; MXR_HELLO_FIELD_LEN],
+            raw_serial: [0; MXR_HELLO_FIELD_LEN],
+            bays_online: info.bays_online,
+            multicast: info.multicast.into(),
+            has_mac: info.mac.is_some(),
+            mac: info.mac.unwrap_or_default().0,
+            igmp_querier: [0; MXR_IP_STRING_LEN],
         };
+        if let Some(querier) = info.igmp_querier {
+            put_str(&mut out.igmp_querier, &querier.to_string());
+        }
+        put_bytes(&mut out.raw_name, &info.raw_name);
+        put_bytes(&mut out.raw_version, &info.raw_version);
+        put_bytes(&mut out.raw_serial, &info.raw_serial);
         put_str(&mut out.name, &info.name);
         put_str(&mut out.serial, &info.serial);
         put_str(&mut out.model, &info.model);
@@ -596,6 +652,8 @@ impl mxr_bay_info_t {
             linked_bay: bay_or_zero(info.linked_bay),
             v2ip_uid: info.v2ip_uid.into(),
             filtered_count: info.filtered.len(),
+            has_status: info.status.is_some(),
+            status: info.status.map_or(0, |s| s.bits()),
         };
         put_str(&mut out.port_name, &info.port_name);
         put_str(&mut out.user_name, &info.user_name);

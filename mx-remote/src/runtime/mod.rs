@@ -29,16 +29,17 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::event::{Event, EventHandler};
-use crate::rx::process_frame_on;
+use crate::rx::{hello_source, process_frame_on};
 use crate::state::{Device, State, CONFIG_GRACE};
 use crate::types::*;
 use crate::wire::{
-    build_hello, op, Addressee, BayUid, Conn, DeviceFeature, DeviceUid, FirmwareType, Opcode, Path,
-    SendError, Tx, V2ipFpgaFeature, MULTICAST_IP, MULTICAST_PORT, PROTOCOL_VERSION, VERSION,
+    build_hello, op, Addressee, BayUid, Capture, Conn, DeviceFeature, DeviceUid, FirmwareType,
+    Opcode, Path, SendError, Tx, V2ipFpgaFeature, MULTICAST_IP, MULTICAST_PORT, PROTOCOL_VERSION,
+    VERSION,
 };
 
 pub use control::ControlError;
-pub use info::{BayInfo, DeviceInfo};
+pub use info::{BayInfo, DeviceInfo, DeviceTreeEntry};
 use osd::OsdSender;
 use schedule::Schedule;
 
@@ -156,6 +157,14 @@ pub struct Config {
     /// Units then take writes from it only while they follow it as their
     /// controller.
     pub mesh_device: bool,
+    /// Read the source hardware address of every hello, as a unit stores it,
+    /// into [`DeviceInfo::mac`].
+    ///
+    /// A UDP socket never sees that address, so this opens a packet socket
+    /// taking a copy of every IPv4 frame on every interface, which
+    /// [`Remote::start`] fails without. Linux only, and it needs
+    /// `CAP_NET_RAW`. Only a hello to one of this client's own ports counts.
+    pub capture_hello_mac: bool,
 }
 
 /// Everything the threads share.
@@ -165,8 +174,12 @@ struct Shared {
     serial: String,
     version: String,
     mesh_device: bool,
+    capture_hello_mac: bool,
     /// The mesh controller this client follows, zero for none.
     mesh_controller: Mutex<DeviceUid>,
+    /// Whether the caller has mesh bays mapped, without which a controller
+    /// does not announce the role.
+    mesh_bays_mapped: AtomicBool,
     handler: Arc<dyn EventHandler>,
     state: Mutex<State>,
     tx: Mutex<Tx>,
@@ -270,7 +283,9 @@ impl Remote {
                 serial,
                 version,
                 mesh_device: config.mesh_device,
+                capture_hello_mac: config.capture_hello_mac,
                 mesh_controller: Mutex::new(DeviceUid::ZERO),
+                mesh_bays_mapped: AtomicBool::new(false),
                 handler,
                 state: Mutex::new(State::new(uid)),
                 tx: Mutex::new(Tx::default()),
@@ -299,10 +314,17 @@ impl Remote {
     /// Returns once the receive thread is running; discovery continues in the
     /// background.
     pub fn start(&self) -> io::Result<()> {
+        // Opened first, so a client that cannot capture what it was asked to
+        // has opened nothing else either.
+        let capture = if self.shared.capture_hello_mac {
+            Some(Capture::open()?)
+        } else {
+            None
+        };
         let conn = lock(&self.shared.network).open()?;
         lock(&self.shared.tx).set_conn(Some(conn));
         self.shared.closing.store(false, Ordering::SeqCst);
-        self.spawn_workers()?;
+        self.spawn_workers(capture)?;
         self.shared.announce();
         let _ = self.shared.discover();
         Ok(())
@@ -324,10 +346,18 @@ impl Remote {
         lock(&self.shared.tx).set_conn(None);
     }
 
-    fn spawn_workers(&self) -> io::Result<()> {
+    fn spawn_workers(&self, capture: Option<Capture>) -> io::Result<()> {
         let mut workers = lock(&self.workers);
         if !workers.is_empty() {
             return Ok(());
+        }
+        if let Some(capture) = capture {
+            let shared = Arc::clone(&self.shared);
+            workers.push(
+                std::thread::Builder::new()
+                    .name("mxr-capture".to_owned())
+                    .spawn(move || shared.capture_loop(&capture))?,
+            );
         }
         for (name, body) in [
             ("mxr-rx", Shared::receive_loop as fn(&Shared)),
@@ -379,7 +409,8 @@ impl Remote {
     /// uid for none, and its own uid while it is the controller.
     ///
     /// The hello then announces mesh membership while there is one, and the
-    /// mesh controller role while it is this client. Only the announcement
+    /// mesh controller role while it is this client and
+    /// [`Remote::set_mesh_bays_mapped`] says it has bays. Only the announcement
     /// changes: membership reports, and the units that follow this client,
     /// are the caller's to keep in step. A change is announced at once rather
     /// than at the next scheduled hello.
@@ -391,6 +422,27 @@ impl Remote {
         if changed {
             self.shared.announce();
         }
+    }
+
+    /// Sets whether the caller has mesh bays mapped: the inputs and outputs of
+    /// the units in its mesh, which a controller keeps.
+    ///
+    /// A unit announces the mesh controller role only while it is its own
+    /// controller and has bays mapped, so a freshly promoted controller with
+    /// none does not, and neither does this client until this is set. A
+    /// change is announced at once.
+    pub fn set_mesh_bays_mapped(&self, mapped: bool) {
+        let before = self.shared.features();
+        self.shared.mesh_bays_mapped.store(mapped, Ordering::SeqCst);
+        if self.shared.features() != before {
+            self.shared.announce();
+        }
+    }
+
+    /// The features this client announces in its hello as of now, which is
+    /// what a peer lists it with.
+    pub fn features(&self) -> DeviceFeature {
+        self.shared.features()
     }
 
     /// The address frames are being sent to, once started.
@@ -408,17 +460,47 @@ impl Remote {
 
     // ---- reading the registry ----
 
-    /// Every device heard from, in no particular order.
+    /// Every device heard from, in the order a unit lists them: the
+    /// [`Remote::device_tree`] walk without this client.
+    ///
+    /// A device silent for three times the window that takes it offline is
+    /// forgotten, as a unit forgets one, and one heard after that is listed
+    /// last, as a new device.
     pub fn devices(&self) -> Vec<DeviceUid> {
-        self.shared
-            .read(|state| state.devices.keys().copied().collect())
+        self.shared.read(State::devices_in_order)
+    }
+
+    /// Every device heard from and this client, as a unit keeps its registry:
+    /// a tree, walked depth first, a parent before its children.
+    ///
+    /// This client heads the root, and each device joins the end of it when
+    /// first heard. A device another one's topology report lists moves to the
+    /// end of that one's children, unless it is below it already, and back to
+    /// the end of the root once a later report leaves it out. Only a report
+    /// differing byte for byte from that device's last reshapes the tree, and
+    /// only for devices registered by then; a device not registered is
+    /// skipped. A device the sender sits below, the sender itself included,
+    /// stays where it is. A forgotten device's children move to the end of
+    /// its parent's.
+    pub fn device_tree(&self) -> Vec<DeviceTreeEntry> {
+        self.shared.read(|state| {
+            state
+                .device_tree()
+                .into_iter()
+                .map(|(uid, depth)| DeviceTreeEntry { uid, depth })
+                .collect()
+        })
     }
 
     /// A snapshot of one device.
     pub fn device(&self, uid: DeviceUid) -> Option<DeviceInfo> {
         let now = Instant::now();
-        self.shared
-            .read(|state| state.device(uid).map(|d| DeviceInfo::of(d, now)))
+        let paths_known = lock(&self.shared.tx).conn().is_some_and(|c| c.is_dual());
+        self.shared.read(|state| {
+            let mut info = DeviceInfo::of(state.device(uid)?, now, paths_known);
+            info.mac = state.hello_source(uid);
+            Some(info)
+        })
     }
 
     /// The device with the given serial number.
@@ -783,6 +865,40 @@ impl Shared {
         }
     }
 
+    /// Takes one frame captured below the IP stack, recording the source
+    /// address of a hello it carries to one of `ports`.
+    fn note_link_frame_on(&self, frame: &[u8], ports: &[u16]) {
+        if let Some((sender, mac)) = hello_source(frame, ports) {
+            lock(&self.state).note_hello_source(sender, mac, Instant::now());
+        }
+    }
+
+    /// Takes one frame captured below the IP stack, against the ports this
+    /// client's endpoints are bound to.
+    fn note_link_frame(&self, frame: &[u8]) {
+        let Some(conn) = lock(&self.tx).conn() else {
+            return;
+        };
+        let ports: Vec<u16> = std::iter::once(conn.target())
+            .chain(conn.secondary_target())
+            .map(|target| target.port())
+            .collect();
+        self.note_link_frame_on(frame, &ports);
+    }
+
+    /// Reads captured frames until the client is closing or the capture
+    /// fails.
+    fn capture_loop(&self, capture: &Capture) {
+        let mut buf = vec![0u8; RECV_BUFFER];
+        while !self.closing.load(Ordering::SeqCst) {
+            match capture.recv(&mut buf) {
+                Ok(Some(frame)) => self.note_link_frame(frame),
+                Ok(None) => {}
+                Err(_) => break,
+            }
+        }
+    }
+
     /// Sends a frame, refusing one the addressee cannot decode.
     fn send(&self, to: &Addressee, opcode: Opcode, payload: &[u8]) -> Result<usize, SendError> {
         let both = self.broadcast_needed.load(Ordering::SeqCst);
@@ -830,6 +946,23 @@ impl Shared {
     /// startup and after a network blip: exactly when being heard is worth the
     /// most.
     ///
+    /// What it announces is [`Self::features`].
+    fn announce(&self) {
+        let payload = build_hello(
+            PROTOCOL_VERSION,
+            &self.name,
+            &self.serial,
+            &self.version,
+            self.features().bits(),
+        );
+        match self.send(&Addressee::Broadcast, op::SYS_HELLO, &payload) {
+            Ok(n) if n > 0 => lock(&self.schedule).announced(Instant::now()),
+            _ => {}
+        }
+    }
+
+    /// The features this client announces as of now.
+    ///
     /// It announces `CONFIG_INITIALISED` because a unit uses the scaling
     /// fields of a 0x3C write only from a sender that does, and this client
     /// zeroes every field it does not set.
@@ -837,7 +970,10 @@ impl Shared {
     /// While it holds an overlay sync it also announces itself as the mesh's
     /// overlay sync manager, which is what has the controller leave units'
     /// requests for a new sync to it.
-    fn announce(&self) {
+    ///
+    /// It announces the mesh controller role as a unit does: only while it is
+    /// its own controller and the caller has bays mapped.
+    fn features(&self) -> DeviceFeature {
         let mut features = DeviceFeature::CONFIG_INITIALISED;
         features |= if self.mesh_device {
             DeviceFeature::MESH
@@ -854,20 +990,10 @@ impl Shared {
         if !controller.is_zero() {
             features |= DeviceFeature::MESH_MEMBER;
         }
-        if controller == self.uid {
+        if controller == self.uid && self.mesh_bays_mapped.load(Ordering::SeqCst) {
             features |= DeviceFeature::MESH_MASTER;
         }
-        let payload = build_hello(
-            PROTOCOL_VERSION,
-            &self.name,
-            &self.serial,
-            &self.version,
-            features.bits(),
-        );
-        match self.send(&Addressee::Broadcast, op::SYS_HELLO, &payload) {
-            Ok(n) if n > 0 => lock(&self.schedule).announced(Instant::now()),
-            _ => {}
-        }
+        features
     }
 
     /// Waits out one tick, reporting whether the client is still running.
@@ -902,9 +1028,13 @@ impl Shared {
             let Some(conn) = lock(&self.tx).conn() else {
                 break;
             };
-            let path = conn.is_dual().then(|| conn.paths().0);
+            // Only a client with both endpoints judges paths, as only it has
+            // a second one to fall back on.
+            let dual = conn.is_dual();
             match conn.recv(&mut buf) {
-                Ok(Some((data, from))) => self.process_datagram_on(data, from, path),
+                Ok(Some((data, from, path))) => {
+                    self.process_datagram_on(data, from, dual.then_some(path));
+                }
                 Ok(None) => {}
                 Err(_) => break,
             }
@@ -919,12 +1049,12 @@ impl Shared {
             let Some(conn) = lock(&self.tx).conn() else {
                 break;
             };
-            let Some(path) = conn.paths().1 else {
+            if conn.paths().1.is_none() {
                 std::thread::sleep(SHUTDOWN_POLL);
                 continue;
-            };
+            }
             match conn.recv_secondary(&mut buf) {
-                Ok(Some((data, from))) => self.process_datagram_on(data, from, Some(path)),
+                Ok(Some((data, from, path))) => self.process_datagram_on(data, from, Some(path)),
                 Ok(None) => {}
                 Err(_) => break,
             }
@@ -971,6 +1101,7 @@ impl Shared {
                     owed.push(device.uid);
                 }
             }
+            state.forget_silent(now, ev);
             self.judge_paths(state, now);
             (state.devices.is_empty(), owed)
         });

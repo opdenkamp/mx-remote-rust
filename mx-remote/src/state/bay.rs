@@ -27,6 +27,8 @@ pub(crate) struct Bay {
     /// The direction the bay's record gives: 0 an input, 1 an output.
     pub(crate) mode: u8,
     pub(crate) status_mask: BayStatus,
+    /// The status word the device last sent for the bay, by any report.
+    pub(crate) status_word: Option<BayStatus>,
     /// The bay number the device's own API and topology use, once a bay config
     /// has reported it. Until then [`Bay::bay_num`] reads it off the port name.
     pub(crate) mbay_id: Option<u8>,
@@ -68,6 +70,7 @@ impl Bay {
     pub(crate) fn new(device: DeviceUid, cfg: &BayConfig) -> Self {
         Self {
             status_mask: cfg.status,
+            status_word: None,
             ..Self::blank(
                 device,
                 u16::from(cfg.port),
@@ -119,6 +122,7 @@ impl Bay {
             features,
             mode,
             status_mask: BayStatus::NONE,
+            status_word: None,
             mbay_id: None,
             video_source: None,
             audio_source: None,
@@ -511,6 +515,7 @@ impl Bay {
     /// Applies a bay status word: the flag bits, then the power state and the
     /// audio return channel it encodes.
     pub(crate) fn apply_bay_status(&mut self, data: BayStatus, ev: &mut Vec<Event>) {
+        self.status_word = Some(data);
         let uid = self.uid();
         macro_rules! flag {
             ($field:ident, $bit:ident, $event:ident { $arg:ident }) => {

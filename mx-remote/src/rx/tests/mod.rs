@@ -5,6 +5,7 @@
 
 mod commands;
 mod handlers;
+mod listing;
 mod mesh_bays;
 mod osd;
 mod paths;
@@ -13,6 +14,7 @@ mod proto28;
 mod state;
 mod subsystems;
 mod third_party;
+mod tree;
 
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};

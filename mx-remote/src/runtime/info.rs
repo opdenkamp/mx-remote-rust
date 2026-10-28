@@ -13,10 +13,10 @@ use std::time::Instant;
 use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, ArcStatus, BayContentField, BayMirrorStatus, BaySignalDetails, DeviceStatus,
-    MeshControllerReport, PowerStatus, VolumeMuteStatus,
+    MacAddress, MeshControllerReport, PowerStatus, VolumeMuteStatus,
 };
 use crate::wire::{
-    BayFeatures, BayUid, DeviceFeature, DeviceUid, EdidProfile, MxrSignalType, RcType,
+    BayFeatures, BayStatus, BayUid, DeviceFeature, DeviceUid, EdidProfile, MxrSignalType, RcType,
 };
 
 /// What a device is, and what it is doing.
@@ -34,6 +34,17 @@ pub struct DeviceInfo {
     pub model: String,
     /// Firmware version string from the hello frame.
     pub version: String,
+    /// The name exactly as the device announced it: the bytes of its hello's
+    /// name field up to the first NUL, or all sixteen when the name fills the
+    /// field. Empty before the device has said, and never substituted or
+    /// re-encoded as [`DeviceInfo::name`] is.
+    pub raw_name: Vec<u8>,
+    /// The firmware version exactly as the device announced it, read as
+    /// [`DeviceInfo::raw_name`] is.
+    pub raw_version: Vec<u8>,
+    /// The serial exactly as the device announced it, read as
+    /// [`DeviceInfo::raw_name`] is.
+    pub raw_serial: Vec<u8>,
     /// The highest protocol version the device can decode, or zero before it
     /// has said.
     pub supported_protocol: u16,
@@ -46,6 +57,40 @@ pub struct DeviceInfo {
     /// Whether the device has been heard from recently enough to count as
     /// present.
     pub online: bool,
+    /// Whether the device is online as a unit judges it: it is
+    /// [`online`](DeviceInfo::online), and its bays have arrived since it was
+    /// first heard, last announced a reboot or last went offline. A OneIP
+    /// device's bays arrive with its source list, and any other device's with
+    /// its primary bay list. Until then a unit uses none of the device's
+    /// bays, links or routes.
+    pub bays_online: bool,
+    /// Whether a frame from the device arrived by multicast within the last
+    /// two minutes, which is what a unit means by reaching it by multicast.
+    ///
+    /// A frame arrived by multicast when it was sent to a multicast group, as
+    /// a unit judges it by the frame's destination hardware address: one sent
+    /// to this host's own address is not, even on the discovery port. On
+    /// Linux that is read from each datagram; elsewhere the endpoint that
+    /// took it stands in, which counts such a unicast frame as multicast.
+    ///
+    /// Every frame with a valid header counts, the second copy of one sent to
+    /// both endpoints and one from a device gone silent included, but not the
+    /// frame that registered the device, as on a unit. `None` unless this
+    /// client binds both endpoints
+    /// ([`Config::both_endpoints`](crate::Config::both_endpoints)).
+    pub multicast: Option<bool>,
+    /// The source hardware address of the device's hellos, as a unit stores
+    /// it with each one it takes.
+    ///
+    /// A UDP socket never sees it, so it is read from a copy of each frame
+    /// taken below the IP stack, which only
+    /// [`Config::capture_hello_mac`](crate::Config::capture_hello_mac) opens.
+    /// `None` until a hello from the device has been captured.
+    pub mac: Option<MacAddress>,
+    /// The IGMP querier the device's last uplink report names, as a unit
+    /// stores it; `None` while it names none, its report does not support
+    /// IGMP, or it has sent no uplink report of the current layout.
+    pub igmp_querier: Option<Ipv4Addr>,
     /// Whether every part of the device's configuration has arrived.
     ///
     /// A device that withholds its link configuration is reported complete
@@ -89,18 +134,27 @@ pub struct DeviceInfo {
 }
 
 impl DeviceInfo {
-    pub(crate) fn of(device: &Device, now: Instant) -> Self {
+    /// `paths_known` says whether frames are told apart by the endpoint they
+    /// arrived by.
+    pub(crate) fn of(device: &Device, now: Instant, paths_known: bool) -> Self {
         Self {
             uid: device.uid,
             name: device.name().to_owned(),
             serial: device.serial().to_owned(),
             model: device.model_name().to_owned(),
             version: device.hello.version.clone(),
+            raw_name: device.hello.raw_name.clone(),
+            raw_version: device.hello.raw_version.clone(),
+            raw_serial: device.hello.raw_serial.clone(),
             supported_protocol: device.hello.supported_protocol,
             features: device.hello.features,
             address: device.hello.address,
             status: device.status(now),
             online: device.is_online(now),
+            bays_online: device.bays_arrived && device.is_online(now),
+            multicast: paths_known.then(|| !device.broadcast_only(now)),
+            mac: None,
+            igmp_querier: device.igmp_querier,
             configuration_complete: device.configuration_complete(now),
             config_initialised: device.config_initialised(),
             temperatures: device.temperatures.clone(),
@@ -113,6 +167,17 @@ impl DeviceInfo {
             bays: device.bays.values().map(Bay::uid).collect(),
         }
     }
+}
+
+/// One device's place in the tree a unit lists its registry as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DeviceTreeEntry {
+    /// The device, or this client itself.
+    pub uid: DeviceUid,
+    /// How deep it sits: zero at the root, one under a device whose topology
+    /// report listed it, and so on.
+    pub depth: usize,
 }
 
 /// What a bay is, and what is connected to it.
@@ -160,6 +225,12 @@ pub struct BayInfo {
     pub audio_source: Option<BayUid>,
     /// Power state of what is connected.
     pub power_status: Option<PowerStatus>,
+    /// The bay's whole status word as the device last sent it, in its bay
+    /// list, a status report or a signal report; `None` before any. It carries what no
+    /// other field does, such as
+    /// [`ENCODER_ERROR`](BayStatus::ENCODER_ERROR) and the source's HDCP mode
+    /// ([`BayStatus::hdcp`]).
+    pub status: Option<BayStatus>,
     /// Whether the bay is hidden from the installation's user interface.
     pub hidden: Option<bool>,
     /// Whether the device reports the bay as faulty.
@@ -237,6 +308,7 @@ impl BayInfo {
             video_source: d.video_source,
             audio_source: d.effective_audio_source(),
             power_status: d.power_status,
+            status: d.status_word,
             hidden: d.hidden,
             faulty: d.faulty,
             zone_powered: d.zone_powered,

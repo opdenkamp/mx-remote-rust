@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use mx_remote::{Config, DeviceUid, EventHandler, Remote};
+use mx_remote::{Config, DeviceTreeEntry, DeviceUid, EventHandler, Remote};
 
 use crate::abi::{
     fail, from_io, from_send, guard, mxr_bay_uid_t, mxr_result_t, mxr_uid_t, opt_str, put_str,
@@ -87,6 +87,12 @@ pub struct mxr_config_t {
     /// address too while some live peer is not heard by multicast or reports
     /// that its multicast fails. Takes precedence over `broadcast`.
     pub both_endpoints: bool,
+    /// Read the source hardware address of every hello into the `mac` of
+    /// `mxr_device_info_t`, as a unit stores it. A UDP socket never sees that
+    /// address, so this opens a packet socket taking a copy of every IPv4
+    /// frame on every interface, which `mxr_remote_start()` fails without.
+    /// Linux only, and it needs `CAP_NET_RAW`.
+    pub capture_hello_mac: bool,
 }
 
 /// Reads an address argument, where null means "not set".
@@ -155,6 +161,7 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.logo_port = (c.logo_port != 0).then_some(c.logo_port);
     config.mesh_device = c.mesh_device;
     config.both_endpoints = c.both_endpoints;
+    config.capture_hello_mac = c.capture_hello_mac;
     Ok(config)
 }
 
@@ -356,7 +363,9 @@ pub unsafe extern "C" fn mxr_remote_name(
 /// for none, and its own uid while it is the controller.
 ///
 /// The hello then announces mesh membership while there is one, and the mesh
-/// controller role while it is this client. Only the announcement changes:
+/// controller role while it is this client and
+/// `mxr_remote_set_mesh_bays_mapped()` says it has bays. Only the announcement
+/// changes:
 /// membership reports, and the units that follow this client, are the
 /// caller's to keep in step. A change is announced at once.
 ///
@@ -372,6 +381,57 @@ pub unsafe extern "C" fn mxr_remote_set_mesh_controller(
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
         r.remote.set_mesh_controller(controller.into());
+        mxr_result_t::MXR_OK
+    })
+}
+
+/// Sets whether the caller has mesh bays mapped: the inputs and outputs of the
+/// units in its mesh, which a controller keeps.
+///
+/// A unit announces the mesh controller role only while it is its own
+/// controller and has bays mapped, so a freshly promoted controller with none
+/// does not, and neither does this client until this is set. A change is
+/// announced at once.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_remote_set_mesh_bays_mapped(
+    remote: *const mxr_remote_t,
+    mapped: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        r.remote.set_mesh_bays_mapped(mapped);
+        mxr_result_t::MXR_OK
+    })
+}
+
+/// Writes the features this client announces in its hello as of now, as
+/// `MXR_FEATURE_*` bits: what a peer lists it with.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `uint32_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_remote_features(
+    remote: *const mxr_remote_t,
+    out: *mut u32,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if out.is_null() {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "features output pointer is null",
+            );
+        }
+        // SAFETY: checked non-null just above.
+        unsafe { *out = r.remote.features().bits() };
         mxr_result_t::MXR_OK
     })
 }
@@ -484,7 +544,12 @@ pub unsafe extern "C" fn mxr_frames_received(
     })
 }
 
-/// Writes every device heard from, and returns how many there are.
+/// Writes every device heard from, in the order a unit lists them - the
+/// `mxr_device_tree()` walk without this client - and returns how many there
+/// are.
+///
+/// A device silent for three times the window that takes it offline is
+/// forgotten, as a unit forgets one, and one heard after that is listed last.
 ///
 /// Returns the full count even when it exceeds `cap`, so calling with `cap`
 /// zero sizes the buffer. Returns zero on a null handle.
@@ -510,6 +575,66 @@ pub unsafe extern "C" fn mxr_devices(
         };
         // SAFETY: the caller guarantees cap writable elements at out.
         unsafe { copy_out(&r.remote.devices(), out, cap) }
+    })
+}
+
+/// One device's place in the tree a unit lists its registry as.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct mxr_device_tree_entry_t {
+    /// The device, or this client itself.
+    pub uid: mxr_uid_t,
+    /// How deep it sits: zero at the root, one under a device whose topology
+    /// report listed it, and so on.
+    pub depth: u32,
+}
+
+impl From<DeviceTreeEntry> for mxr_device_tree_entry_t {
+    fn from(e: DeviceTreeEntry) -> Self {
+        Self {
+            uid: e.uid.into(),
+            depth: u32::try_from(e.depth).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+/// Writes every device heard from and this client, as a unit keeps its
+/// registry: a tree walked depth first, a parent before its children, each
+/// with its depth. Returns how many there are.
+///
+/// This client heads the root, and each device joins the end of it when first
+/// heard. A device another one's topology report lists moves to the end of
+/// that one's children, unless it is below it already, and back to the end of
+/// the root once a later report leaves it out. Only a report differing byte
+/// for byte from that device's last reshapes the tree, and only for devices
+/// registered by then; a device not registered is skipped. A device the sender
+/// sits below, the sender itself included, stays where it is. A forgotten
+/// device's children move to the end of its parent's.
+///
+/// Returns the full count even when it exceeds `cap`, so calling with `cap`
+/// zero sizes the buffer. Returns zero on a null handle.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` is null or points at `cap`
+/// writable [`mxr_device_tree_entry_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_device_tree(
+    remote: *const mxr_remote_t,
+    out: *mut mxr_device_tree_entry_t,
+    cap: usize,
+) -> usize {
+    guard(0, || {
+        // SAFETY: the caller guarantees a live handle or null.
+        let Some(r) = (unsafe { remote.as_ref() }) else {
+            fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "the client handle is null",
+            );
+            return 0;
+        };
+        // SAFETY: the caller guarantees cap writable elements at out.
+        unsafe { copy_out(&r.remote.device_tree(), out, cap) }
     })
 }
 

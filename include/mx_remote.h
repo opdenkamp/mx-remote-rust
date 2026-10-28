@@ -1988,6 +1988,12 @@
 #define MXR_VERSION_LEN 129
 
 /**
+ * Bytes a hello string field needs as it was announced, the terminator
+ * included: the wire field is 16 bytes and is not NUL-terminated when full.
+ */
+#define MXR_HELLO_FIELD_LEN 17
+
+/**
  * Bytes a signal description such as `1080p60 444 8` needs, the terminator
  * included.
  */
@@ -3270,6 +3276,52 @@ typedef struct {
    * `has_mesh_controller_report` is set.
    */
   uint16_t mesh_controller_installer;
+  /**
+   * The name exactly as the device announced it: the bytes of its hello's
+   * name field up to the first NUL, NUL-terminated here. Empty before the
+   * device has said, never substituted, and not necessarily UTF-8.
+   */
+  char raw_name[MXR_HELLO_FIELD_LEN];
+  /**
+   * The firmware version exactly as the device announced it, read as
+   * `raw_name` is.
+   */
+  char raw_version[MXR_HELLO_FIELD_LEN];
+  /**
+   * The serial exactly as the device announced it, read as `raw_name` is.
+   */
+  char raw_serial[MXR_HELLO_FIELD_LEN];
+  /**
+   * Whether the device is online as a unit judges it: `online` is set, and
+   * its bays have arrived since it was first heard, last announced a reboot
+   * or last went offline - a OneIP device's with its source list, any
+   * other's with its primary bay list. Until then a unit uses none of the
+   * device's bays, links or routes.
+   */
+  bool bays_online;
+  /**
+   * Whether a frame from the device arrived by multicast within the last
+   * two minutes, the frame that registered it excepted: one sent to a
+   * multicast group, as a unit judges it, which on Linux is read from each
+   * datagram and elsewhere from the endpoint that took it. Unknown unless
+   * the client binds both endpoints (`both_endpoints` in its config).
+   */
+  mxr_tribool_t multicast;
+  /**
+   * Whether the source hardware address of the device's hellos is known:
+   * only a client that sets `capture_hello_mac` in its config captures it.
+   */
+  bool has_mac;
+  /**
+   * The source hardware address of the device's hellos, as a unit stores
+   * it with each one it takes; meaningful only when `has_mac` is set.
+   */
+  uint8_t mac[6];
+  /**
+   * The IGMP querier the device's last uplink report names, as a unit
+   * stores it; empty while it names none.
+   */
+  char igmp_querier[MXR_IP_STRING_LEN];
 } mxr_device_info_t;
 
 /**
@@ -3440,6 +3492,17 @@ typedef struct {
    * How many devices `mxr_bay_filtered()` would return.
    */
   size_t filtered_count;
+  /**
+   * Whether the device has sent the bay's status word.
+   */
+  bool has_status;
+  /**
+   * The bay's whole status word as the device last sent it, as
+   * `MXR_BAY_STATUS_*` bits with the remote-control type in bits 16-19 and
+   * the source's HDCP mode in bits 22-23; meaningful only when `has_status`
+   * is set.
+   */
+  uint32_t status;
 } mxr_bay_info_t;
 
 /**
@@ -3627,6 +3690,14 @@ typedef struct {
    * that its multicast fails. Takes precedence over `broadcast`.
    */
   bool both_endpoints;
+  /**
+   * Read the source hardware address of every hello into the `mac` of
+   * `mxr_device_info_t`, as a unit stores it. A UDP socket never sees that
+   * address, so this opens a packet socket taking a copy of every IPv4
+   * frame on every interface, which `mxr_remote_start()` fails without.
+   * Linux only, and it needs `CAP_NET_RAW`.
+   */
+  bool capture_hello_mac;
 } mxr_config_t;
 
 /**
@@ -4543,7 +4614,28 @@ typedef struct {
    * `on_mesh_controller_report_changed` covers.
    */
   mxr_mesh_operation_cb on_mesh_operation_received;
+  /**
+   * The device was forgotten, as a unit forgets one: nothing was heard
+   * from it for three times the silence that takes it offline. It is no
+   * longer listed, and a hello from it later registers it as a new device.
+   */
+  mxr_device_cb on_device_unregistered;
 } mxr_callbacks_t;
+
+/**
+ * One device's place in the tree a unit lists its registry as.
+ */
+typedef struct {
+  /**
+   * The device, or this client itself.
+   */
+  mxr_uid_t uid;
+  /**
+   * How deep it sits: zero at the root, one under a device whose topology
+   * report listed it, and so on.
+   */
+  uint32_t depth;
+} mxr_device_tree_entry_t;
 
 /**
  * Transmitter stream statistics.
@@ -6324,6 +6416,16 @@ mxr_result_t mxr_send_mesh_operation(const mxr_remote_t *remote,
                                      const mxr_mesh_operation_t *operation);
 
 /**
+ * Asks every unit to detect its bays, as a mesh controller's detect does.
+ * Current firmware takes the frame and does nothing with it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_send_v2ip_detect_bays(const mxr_remote_t *remote);
+
+/**
  * Tells every unit to check its update server for new firmware now.
  *
  * # Safety
@@ -7577,7 +7679,9 @@ mxr_result_t mxr_remote_name(const mxr_remote_t *remote, char *out, size_t cap);
  * for none, and its own uid while it is the controller.
  *
  * The hello then announces mesh membership while there is one, and the mesh
- * controller role while it is this client. Only the announcement changes:
+ * controller role while it is this client and
+ * `mxr_remote_set_mesh_bays_mapped()` says it has bays. Only the announcement
+ * changes:
  * membership reports, and the units that follow this client, are the
  * caller's to keep in step. A change is announced at once.
  *
@@ -7586,6 +7690,32 @@ mxr_result_t mxr_remote_name(const mxr_remote_t *remote, char *out, size_t cap);
  * `remote` is null or a live handle.
  */
 mxr_result_t mxr_remote_set_mesh_controller(const mxr_remote_t *remote, mxr_uid_t controller);
+
+/**
+ * Sets whether the caller has mesh bays mapped: the inputs and outputs of the
+ * units in its mesh, which a controller keeps.
+ *
+ * A unit announces the mesh controller role only while it is its own
+ * controller and has bays mapped, so a freshly promoted controller with none
+ * does not, and neither does this client until this is set. A change is
+ * announced at once.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle.
+ */
+mxr_result_t mxr_remote_set_mesh_bays_mapped(const mxr_remote_t *remote, bool mapped);
+
+/**
+ * Writes the features this client announces in its hello as of now, as
+ * `MXR_FEATURE_*` bits: what a peer lists it with.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `uint32_t`.
+ */
+mxr_result_t mxr_remote_features(const mxr_remote_t *remote, uint32_t *out);
 
 /**
  * Writes the mesh controller this client announces it follows, zero for
@@ -7630,7 +7760,12 @@ mxr_result_t mxr_remote_target(const mxr_remote_t *remote, char *ip, size_t cap,
 mxr_result_t mxr_frames_received(const mxr_remote_t *remote, uint64_t *out);
 
 /**
- * Writes every device heard from, and returns how many there are.
+ * Writes every device heard from, in the order a unit lists them - the
+ * `mxr_device_tree()` walk without this client - and returns how many there
+ * are.
+ *
+ * A device silent for three times the window that takes it offline is
+ * forgotten, as a unit forgets one, and one heard after that is listed last.
  *
  * Returns the full count even when it exceeds `cap`, so calling with `cap`
  * zero sizes the buffer. Returns zero on a null handle.
@@ -7641,6 +7776,30 @@ mxr_result_t mxr_frames_received(const mxr_remote_t *remote, uint64_t *out);
  * writable [`mxr_uid_t`].
  */
 size_t mxr_devices(const mxr_remote_t *remote, mxr_uid_t *out, size_t cap);
+
+/**
+ * Writes every device heard from and this client, as a unit keeps its
+ * registry: a tree walked depth first, a parent before its children, each
+ * with its depth. Returns how many there are.
+ *
+ * This client heads the root, and each device joins the end of it when first
+ * heard. A device another one's topology report lists moves to the end of
+ * that one's children, unless it is below it already, and back to the end of
+ * the root once a later report leaves it out. Only a report differing byte
+ * for byte from that device's last reshapes the tree, and only for devices
+ * registered by then; a device not registered is skipped. A device the sender
+ * sits below, the sender itself included, stays where it is. A forgotten
+ * device's children move to the end of its parent's.
+ *
+ * Returns the full count even when it exceeds `cap`, so calling with `cap`
+ * zero sizes the buffer. Returns zero on a null handle.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable [`mxr_device_tree_entry_t`].
+ */
+size_t mxr_device_tree(const mxr_remote_t *remote, mxr_device_tree_entry_t *out, size_t cap);
 
 /**
  * Finds a device by its serial number.

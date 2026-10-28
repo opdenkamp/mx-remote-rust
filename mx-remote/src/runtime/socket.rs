@@ -65,6 +65,11 @@ const LOOPBACK_PROOF: Scratch = Scratch {
     port: 18817,
 };
 
+const PATHS: Scratch = Scratch {
+    group: Ipv4Addr::new(239, 255, 77, 93),
+    port: 18818,
+};
+
 /// How long a test waits for a datagram it expects to arrive.
 const DELIVERY: Duration = Duration::from_secs(2);
 
@@ -396,7 +401,7 @@ fn a_send_does_not_wait_for_the_receive_thread() {
     .expect("a client given its own uid reads nothing from disk");
     lock(&remote.shared.tx).set_conn(Some(conn));
     remote
-        .spawn_workers()
+        .spawn_workers(None)
         .expect("the worker threads could not start");
     // Long enough for the receive thread to reach the read it parks in.
     std::thread::sleep(Duration::from_millis(50));
@@ -412,4 +417,41 @@ fn a_send_does_not_wait_for_the_receive_thread() {
         elapsed < BUDGET,
         "{SENDS} sends took {elapsed:?}, so each one waited on the receive thread"
     );
+}
+
+/// A datagram's path is where it was sent: one to the group came by
+/// multicast, and one to this host on the same port by broadcast, as a unit
+/// judges it by the frame's destination hardware address.
+#[test]
+fn a_datagram_s_path_is_where_it_was_sent() {
+    let Some(probe) = Probe::open(PATHS) else {
+        return skipped("no interface to probe multicast on");
+    };
+    if !probe.host_loops_back() {
+        return skipped("this host does not loop multicast back");
+    }
+    let Some(c) = conn(PATHS) else {
+        return skipped("the scratch port could not be bound");
+    };
+    let path_of = |payload: &[u8]| {
+        let mut buf = vec![0u8; 2048];
+        let deadline = Instant::now() + DELIVERY;
+        while Instant::now() < deadline {
+            if let Ok(Some((data, _, path))) = c.recv(&mut buf) {
+                if data == payload {
+                    return Some(path);
+                }
+            }
+        }
+        None
+    };
+
+    let unicast = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback socket binds");
+    unicast
+        .send_to(b"unicast", (Ipv4Addr::LOCALHOST, PATHS.port))
+        .expect("a loopback send goes");
+    assert_eq!(path_of(b"unicast"), Some(Path::Broadcast));
+
+    assert!(probe.send(b"multicast"));
+    assert_eq!(path_of(b"multicast"), Some(Path::Multicast));
 }

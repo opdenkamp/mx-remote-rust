@@ -15,6 +15,7 @@
 mod bay;
 mod device;
 mod links;
+mod tree;
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
@@ -24,12 +25,13 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::event::Event;
-use crate::types::OsdSyncRequest;
+use crate::types::{MacAddress, OsdSyncRequest};
 use crate::wire::{BayFeatures, BayUid, DeviceFeature, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
 pub(crate) use device::{Device, HelloInfo, MeshBayChange, SdpPages, CONFIG_GRACE};
 pub(crate) use links::{BayLink, BayLinks};
+use tree::Tree;
 
 /// Every device this client has heard from, and the links between their bays.
 #[derive(Debug)]
@@ -48,6 +50,11 @@ pub(crate) struct State {
     /// Overlay sync requests this client may be the one to answer: those
     /// asking for a new sync, and those naming this client as the source.
     pub(crate) osd_requests: Vec<OsdSyncRequest>,
+    /// Where each registered device, this client included, sits.
+    tree: Tree,
+    /// The source address of the last hello captured from each sender below
+    /// the IP stack, and when.
+    hello_sources: HashMap<DeviceUid, (MacAddress, Instant)>,
     /// A digest and arrival time of each datagram received in the last
     /// [`DUPLICATE_WINDOW`], at most [`DUPLICATE_RING`] of them.
     recent: VecDeque<(u64, Instant)>,
@@ -57,6 +64,10 @@ pub(crate) struct State {
 /// second copy. Short, because a key press carries nothing that tells two
 /// presses apart.
 const DUPLICATE_WINDOW: Duration = Duration::from_millis(100);
+
+/// How long the captured source address of a hello waits for the hello's UDP
+/// copy to register its sender.
+const HELLO_SOURCE_PENDING: Duration = Duration::from_secs(10);
 
 /// How many recent datagrams the duplicate check compares against.
 const DUPLICATE_RING: usize = 64;
@@ -71,6 +82,8 @@ impl State {
             hello_requested: false,
             state_requests: Vec::new(),
             osd_requests: Vec::new(),
+            tree: Tree::new(uid),
+            hello_sources: HashMap::new(),
             recent: VecDeque::with_capacity(DUPLICATE_RING),
         }
     }
@@ -257,10 +270,76 @@ impl State {
         now: Instant,
         ev: &mut Vec<Event>,
     ) {
+        let tree = &mut self.tree;
         self.devices
             .entry(uid)
-            .or_insert_with(|| Device::new(uid, hello.clone(), now))
+            .or_insert_with(|| {
+                tree.add(uid);
+                Device::new(uid, hello.clone(), now)
+            })
             .apply_hello(hello, now, ev);
+    }
+
+    /// Every device and this client, in the order a unit lists them: depth
+    /// first, a parent before its children, with how deep each sits.
+    pub(crate) fn device_tree(&self) -> Vec<(DeviceUid, usize)> {
+        self.tree.walk()
+    }
+
+    /// Reshapes the tree by a topology list `sender` reported, as a unit does
+    /// with one differing from the last.
+    pub(crate) fn apply_topology(&mut self, sender: DeviceUid, listed: &[DeviceUid]) {
+        self.tree.apply_topology(sender, listed);
+    }
+
+    /// Every device, in the order a unit lists them, this client left out.
+    pub(crate) fn devices_in_order(&self) -> Vec<DeviceUid> {
+        let own = self.uid;
+        self.tree
+            .walk()
+            .into_iter()
+            .map(|(uid, _)| uid)
+            .filter(|&uid| uid != own)
+            .collect()
+    }
+
+    /// Forgets every device silent long enough for a unit to forget it, with
+    /// the links it reported and the source address of its hellos, as of
+    /// `now`.
+    pub(crate) fn forget_silent(&mut self, now: Instant, ev: &mut Vec<Event>) {
+        let silent: Vec<DeviceUid> = self
+            .devices
+            .values()
+            .filter(|d| d.is_forgotten(now))
+            .map(|d| d.uid)
+            .collect();
+        for device in silent {
+            self.devices.remove(&device);
+            self.tree.remove(device);
+            self.links.forget_device(device);
+            ev.push(Event::DeviceUnregistered { device });
+        }
+        // A capture of a hello no device was registered by within the window
+        // came from a sender this client does not take hellos from, or from
+        // one just forgotten, whose last hello is older than that.
+        let devices = &self.devices;
+        self.hello_sources.retain(|uid, (_, at)| {
+            devices.contains_key(uid) || now.saturating_duration_since(*at) < HELLO_SOURCE_PENDING
+        });
+    }
+
+    /// Records the source address a hello from `uid` was captured with.
+    ///
+    /// The capture and the UDP copy of the hello arrive by different paths in
+    /// either order, so one for a sender not registered yet is kept for
+    /// [`HELLO_SOURCE_PENDING`].
+    pub(crate) fn note_hello_source(&mut self, uid: DeviceUid, mac: MacAddress, now: Instant) {
+        self.hello_sources.insert(uid, (mac, now));
+    }
+
+    /// The source address of the last hello captured from `uid`.
+    pub(crate) fn hello_source(&self, uid: DeviceUid) -> Option<MacAddress> {
+        self.hello_sources.get(&uid).map(|(mac, _)| *mac)
     }
 
     /// Records the link one bay reports, announcing it to both ends.

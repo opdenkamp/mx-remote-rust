@@ -9,7 +9,9 @@
 //! has one endpoint, or both, as a unit does.
 
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+#[cfg(not(target_os = "linux"))]
+use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 
 use socket2::{Domain, InterfaceIndexOrAddress, Protocol, SockAddr, Socket, Type};
@@ -24,7 +26,7 @@ use super::netif;
 /// Closing the socket underneath it would wake it sooner, but the descriptor
 /// can be reissued to something else in the moment between the close and the
 /// thread returning, and the read would then land on whatever took it.
-const READ_TIMEOUT: Duration = Duration::from_millis(500);
+pub(super) const READ_TIMEOUT: Duration = Duration::from_millis(500);
 
 /// Multicast hop limit, the one units use, so this client reaches every unit
 /// that can reach it.
@@ -103,6 +105,11 @@ impl Endpoint {
             port,
         )))?;
         socket.set_read_timeout(Some(READ_TIMEOUT))?;
+        // The address each datagram was sent to, which is what tells a frame
+        // to the group from one to this host on the same port.
+        #[cfg(target_os = "linux")]
+        nix::sys::socket::setsockopt(&socket, nix::sys::socket::sockopt::Ipv4PacketInfo, &true)
+            .map_err(io::Error::from)?;
 
         if multicast {
             socket.set_multicast_ttl_v4(MULTICAST_TTL)?;
@@ -134,13 +141,76 @@ impl Endpoint {
         })
     }
 
-    fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<(&'a [u8], Ipv4Addr)>> {
+    /// Waits for a datagram, and reports the path it came by: judged by the
+    /// address it was sent to where the platform says, and by this
+    /// endpoint's own path where it does not.
+    #[cfg(not(target_os = "linux"))]
+    fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<Received<'a>>> {
         match self.socket.recv_from(buf) {
-            Ok((n, SocketAddr::V4(from))) => Ok(buf.get(..n).map(|data| (data, *from.ip()))),
+            Ok((n, SocketAddr::V4(from))) => Ok(buf
+                .get(..n)
+                .map(|data| (data, *from.ip(), path_to(None, self.path)))),
             Ok((_, SocketAddr::V6(_))) => Ok(None),
             Err(e) if is_timeout(&e) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Waits for a datagram, and reports the path it came by, judged by the
+    /// address it was sent to as `IP_PKTINFO` gives it.
+    #[cfg(target_os = "linux")]
+    fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<Received<'a>>> {
+        use nix::sys::socket::{recvmsg, ControlMessageOwned, MsgFlags, SockaddrIn};
+        use std::os::fd::AsRawFd;
+
+        let mut control = nix::cmsg_space!(nix::libc::in_pktinfo);
+        let mut iov = [io::IoSliceMut::new(buf)];
+        let (n, from, destination) = match recvmsg::<SockaddrIn>(
+            self.socket.as_raw_fd(),
+            &mut iov,
+            Some(&mut control),
+            MsgFlags::empty(),
+        ) {
+            Ok(msg) => {
+                let destination = msg.cmsgs().ok().and_then(|mut c| {
+                    c.find_map(|m| match m {
+                        ControlMessageOwned::Ipv4PacketInfo(info) => {
+                            Some(Ipv4Addr::from(u32::from_be(info.ipi_addr.s_addr)))
+                        }
+                        _ => None,
+                    })
+                });
+                (msg.bytes, msg.address.map(|a| a.ip()), destination)
+            }
+            Err(e) => {
+                let e = io::Error::from(e);
+                return if is_timeout(&e) { Ok(None) } else { Err(e) };
+            }
+        };
+        let Some(from) = from else {
+            return Ok(None);
+        };
+        Ok(buf
+            .get(..n)
+            .map(|data| (data, from, path_to(destination, self.path))))
+    }
+}
+
+/// A datagram, the address it came from, and the path it came by.
+pub(crate) type Received<'a> = (&'a [u8], Ipv4Addr, Path);
+
+/// The path a datagram sent to `destination` came by, as a unit judges it.
+///
+/// A unit counts a frame as multicast by its multicast destination hardware
+/// address, which an IPv4 frame carries exactly when it is sent to a
+/// multicast group: a frame to a unicast address is not multicast, even on
+/// the discovery port. Without a destination, the endpoint's own path stands
+/// in for it.
+pub(crate) fn path_to(destination: Option<Ipv4Addr>, endpoint: Path) -> Path {
+    match destination {
+        Some(ip) if ip.is_multicast() => Path::Multicast,
+        Some(_) => Path::Broadcast,
+        None => endpoint,
     }
 }
 
@@ -209,17 +279,14 @@ impl Conn {
     /// `Ok(None)` is that timeout expiring, which is how the caller gets a
     /// chance to notice it is shutting down. A sender that is not IPv4 has no
     /// address to report, which no MX Remote device does.
-    pub(crate) fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<(&'a [u8], Ipv4Addr)>> {
+    pub(crate) fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<Received<'a>>> {
         self.primary.recv(buf)
     }
 
     /// Waits for a datagram on the second endpoint, as [`Conn::recv`] does
     /// on the first, and reports the path each arrived by. `Ok(None)` at once
     /// when there is no second endpoint.
-    pub(crate) fn recv_secondary<'a>(
-        &self,
-        buf: &'a mut [u8],
-    ) -> io::Result<Option<(&'a [u8], Ipv4Addr)>> {
+    pub(crate) fn recv_secondary<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<Received<'a>>> {
         match &self.secondary {
             Some(second) => second.recv(buf),
             None => Ok(None),
@@ -269,7 +336,7 @@ impl Conn {
             .recv(&mut buf)
             .ok()
             .flatten()
-            .map(|(data, _)| data.to_vec());
+            .map(|(data, _, _)| data.to_vec());
         let _ = self.primary.socket.set_read_timeout(Some(READ_TIMEOUT));
         got
     }
@@ -307,4 +374,25 @@ fn is_timeout(e: &io::Error) -> bool {
         e.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A frame sent to a group came by multicast, one sent to a unicast or
+    /// broadcast address by broadcast, whichever endpoint took it; without a
+    /// destination the endpoint decides.
+    #[test]
+    fn the_path_is_the_destination_s() {
+        for endpoint in [Path::Multicast, Path::Broadcast] {
+            let to = |ip: [u8; 4]| path_to(Some(Ipv4Addr::from(ip)), endpoint);
+            assert_eq!(to([224, 8, 8, 8]), Path::Multicast);
+            assert_eq!(to([239, 255, 255, 250]), Path::Multicast);
+            assert_eq!(to([10, 8, 8, 1]), Path::Broadcast, "unicast");
+            assert_eq!(to([10, 8, 8, 255]), Path::Broadcast);
+            assert_eq!(to([255, 255, 255, 255]), Path::Broadcast);
+            assert_eq!(path_to(None, endpoint), endpoint);
+        }
+    }
 }
