@@ -721,6 +721,13 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.audio.clone())
     }
 
+    /// When the device's audio features report was last taken, `None` before
+    /// one; a report ignored in the 500 ms after an audio command to the
+    /// device doesn't count.
+    pub fn audio_reported(&self, uid: DeviceUid) -> Option<Instant> {
+        self.shared.read(|state| state.device(uid)?.audio_reported)
+    }
+
     /// The multiviewer layout a device is showing.
     pub fn multiviewer_status(&self, uid: DeviceUid) -> Option<MultiviewerStatus> {
         self.shared

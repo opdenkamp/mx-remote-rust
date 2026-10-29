@@ -241,7 +241,7 @@ fn reboot_frame() {
 /// the assertion here as the offsets are.
 #[test]
 fn audio_select_input_frame() {
-    let payload = build_audio_select_input(SINK_UID, 0x0203, SOURCE_UID, 0x0405);
+    let payload = build_audio_select_input(SINK_UID, SINK_UID, 0x0203, SOURCE_UID, 0x0405);
     let got = build_frame(
         TEST_UID,
         op::V2IP_AUDIO,

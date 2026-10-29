@@ -989,7 +989,9 @@ pub unsafe extern "C" fn mxr_set_amp_zone_settings(
 /// A loadable module serves this, not the device firmware, and a model may
 /// not have it. Nothing answers either way, so `MXR_OK` means the frame was
 /// sent and not that anything acted on it. Refused with
-/// `MXR_ERR_UNSUPPORTED` unless the endpoint reports the MUTE feature.
+/// `MXR_ERR_UNSUPPORTED` unless the endpoint reports the MUTE feature. Once
+/// the frame is away, `mxr_audio_endpoint_status()` reads the new state until
+/// the device reports its endpoints again.
 ///
 /// # Safety
 ///
@@ -1016,8 +1018,9 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_muted(
 ///
 /// `MXR_ERR_NOT_REPORTED` before the device has reported its audio endpoints,
 /// and `MXR_ERR_UNSUPPORTED` for an endpoint without `MXR_AUDIO_AUDIO_LOCK`,
-/// sending nothing in either case. The device reports its endpoints again
-/// once the lock has changed; `mxr_audio_endpoint_status()` reads it.
+/// sending nothing in either case. Once the frame is away,
+/// `mxr_audio_endpoint_status()` reads the new state until the device reports
+/// its endpoints again.
 ///
 /// # Safety
 ///
@@ -1044,7 +1047,9 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_locked(
 /// A loadable module serves this, not the device firmware, and a model may
 /// not have it. Nothing answers either way, so `MXR_OK` means the frame was
 /// sent and not that anything acted on it. Refused with
-/// `MXR_ERR_UNSUPPORTED` unless the endpoint reports the TRIGGER feature.
+/// `MXR_ERR_UNSUPPORTED` unless the endpoint reports the TRIGGER feature. Once
+/// the frame is away, `mxr_audio_endpoint_status()` reads the new state until
+/// the device reports its endpoints again.
 ///
 /// # Safety
 ///
@@ -1098,11 +1103,16 @@ pub unsafe extern "C" fn mxr_set_audio_endpoint_volume(
 /// listened to.
 ///
 /// A loadable module serves this, not the device firmware, and a model may
-/// not have it. Nothing answers either way, so `MXR_OK` means the frame was
-/// sent and not that anything acted on it.
+/// not have it. Nothing answers either way, so `MXR_OK` means the frames were
+/// sent and not that anything acted on them.
 ///
-/// A unit on released firmware up to 4.4.2 routes only between its own
-/// endpoints: `MXR_ERR_UNSUPPORTED` for a route from another unit to one.
+/// The route is the one every unit finds from the two devices' reported
+/// endpoint tables, a OneIP stream joining one device to the other. Each device owning an
+/// endpoint fed on the way is sent the whole request, from the sink's end;
+/// `MXR_ERR_UNSUPPORTED`, sending nothing, when no route leads from the source
+/// to the sink. A unit on released firmware up to 4.4.2 routes only between
+/// its own endpoints: `MXR_ERR_UNSUPPORTED` for a route reaching it from
+/// another unit.
 ///
 /// # Safety
 ///

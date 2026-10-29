@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::event::Event;
 use crate::types::{
-    AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioLink, DeviceStatus,
+    AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioFeatures, AudioLink, DeviceStatus,
     DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MeshControllerReport, MultiviewerStatus,
     NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry,
     UnitStatus, V2ipDeviceSettings, V2ipDeviceStats, V2ipDownmix, V2ipDscpConfig, V2ipPrivacy,
@@ -210,6 +210,10 @@ pub(crate) struct Device {
     /// Whether the device's audio module uses the layout of released firmware
     /// up to 4.4.2, as its own features report showed; `None` before one.
     pub(crate) audio_legacy: Option<bool>,
+    /// When this client last sent the device an audio command.
+    pub(crate) audio_commanded: Option<Instant>,
+    /// When the device's audio features report was last taken.
+    pub(crate) audio_reported: Option<Instant>,
     pub(crate) multiviewer: Option<MultiviewerStatus>,
     pub(crate) dolby_settings: Option<AmpDolbySettings>,
     /// The EDID the device presents on its input, as it last reported it.
@@ -264,6 +268,8 @@ impl Device {
             tiling: None,
             rc_settings: None,
             audio_legacy: None,
+            audio_commanded: None,
+            audio_reported: None,
             audio_select: None,
             firmware: BTreeMap::new(),
             mesh_master: DeviceUid::ZERO,
@@ -1476,6 +1482,40 @@ impl Device {
             if let Some(bay) = self.bays.get_mut(&port) {
                 bay.set_audio_endpoint(endpoint, ev);
             }
+        }
+    }
+
+    /// Holds a sent mute, trigger or lock as endpoint `id`'s state until the
+    /// device reports its endpoints again.
+    pub(crate) fn hold_audio_switch(
+        &mut self,
+        id: u8,
+        feature: AudioFeatures,
+        on: bool,
+        ev: &mut Vec<Event>,
+    ) {
+        let Some(audio) = self.audio.as_mut() else {
+            return;
+        };
+        if audio.switch_status(id, feature, on) {
+            ev.push(Event::AudioEndpointsChanged {
+                device: self.uid,
+                endpoints: audio.clone(),
+            });
+        }
+    }
+
+    /// Holds a sent route of endpoint `source` to endpoint `sink` as the
+    /// device's routing until it reports its endpoints again.
+    pub(crate) fn hold_audio_route(&mut self, sink: u8, source: u8, ev: &mut Vec<Event>) {
+        let Some(audio) = self.audio.as_mut() else {
+            return;
+        };
+        if audio.route(sink, source) {
+            ev.push(Event::AudioEndpointsChanged {
+                device: self.uid,
+                endpoints: audio.clone(),
+            });
         }
     }
 

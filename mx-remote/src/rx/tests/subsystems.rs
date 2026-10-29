@@ -173,6 +173,42 @@ fn audio_features_parse() {
     assert!(ep1.features.has(AudioFeatures::OUTPUT));
 }
 
+/// The entry with the device's own id carries the unit's address and HTTP
+/// port, which no endpoint takes.
+#[test]
+fn an_audio_report_carries_the_device_s_own_address() {
+    let mut h = Harness::new(5);
+    h.hello(0x27, "ONEIP", "AU0001", DeviceFeature::V2IP_SINK);
+
+    let mut p = poisoned(68);
+    p[0..2].copy_from_slice(&0u16.to_le_bytes()); // the FEATURES sub-opcode
+    p[28..30].copy_from_slice(&2u16.to_le_bytes()); // entry count
+    p[36] = 0xFF;
+    p[37] = 2;
+    p[44..48].copy_from_slice(&[10, 1, 2, 3]);
+    p[48..52].copy_from_slice(&80u32.to_le_bytes());
+    p[52] = 3;
+    p[53] = 1;
+    p[60..64].copy_from_slice(&AudioFeatures::OUTPUT.bits().to_le_bytes());
+    h.feed_audio_report(&p);
+
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert_eq!(
+        eps.address(),
+        Some(std::net::SocketAddrV4::new(
+            std::net::Ipv4Addr::new(10, 1, 2, 3),
+            80
+        ))
+    );
+    assert_eq!(eps.list().map(|e| e.id).collect::<Vec<_>>(), [3]);
+
+    let mut without = p.clone();
+    without[37] = 5;
+    h.feed_audio_report(&without);
+    let eps = h.device().audio.clone().expect("no audio endpoints");
+    assert_eq!(eps.address(), None, "only an address entry names one");
+}
+
 /// A unit reports only its own audio: a report naming another unit, or too
 /// short for what it counts, changes nothing.
 #[test]

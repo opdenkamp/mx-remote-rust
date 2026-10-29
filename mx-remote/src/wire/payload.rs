@@ -533,10 +533,10 @@ pub(crate) fn build_bay_hide(target: DeviceUid, port: u16, hidden: bool) -> Vec<
 /// Builds the `V2IP_AUDIO` (0x43) `SELECT_INPUT` body.
 ///
 /// The body names the route end to end - its first uid is the sink and its
-/// second is the source - while the header names the device being addressed for
-/// this hop. A controller sending a single-hop command puts the sink in both,
-/// as this does, but they are separate fields and a receiver resolves the body
-/// on its own: do not read one from the other.
+/// second is the source - while the header names `addressee`, the device that
+/// must act on this frame. A route through several units goes to each of them
+/// with the same body, so the two are separate fields and a receiver resolves
+/// the body on its own: do not read one from the other.
 ///
 /// The receiving struct calls its first field `source` and its second `target`,
 /// which is the reverse of what they carry. Nothing on the wire distinguishes a
@@ -544,12 +544,13 @@ pub(crate) fn build_bay_hide(target: DeviceUid, port: u16, hidden: bool) -> Vec<
 /// swap, so the orientation here rests on how the module reads the fields
 /// rather than on what they are called.
 pub(crate) fn build_audio_select_input(
+    addressee: DeviceUid,
     sink: DeviceUid,
     sink_endpoint: u16,
     source: DeviceUid,
     source_endpoint: u16,
 ) -> Vec<u8> {
-    let mut p = audio_cmd_header(audio_sub::SELECT_INPUT, sink);
+    let mut p = audio_cmd_header(audio_sub::SELECT_INPUT, addressee);
     p.extend_from_slice(sink.as_bytes());
     p.extend_from_slice(source.as_bytes());
     p.extend_from_slice(&sink_endpoint.to_le_bytes());

@@ -4,6 +4,9 @@
 //! The OneIP audio sub-protocol: the endpoint tree, its links, and the
 //! per-endpoint notifications.
 
+use std::net::SocketAddrV4;
+use std::time::Duration;
+
 use crate::event::Event;
 use crate::state::State;
 use crate::types::{
@@ -22,10 +25,17 @@ mod entry {
     pub(super) const ADDRESS: u8 = 2;
     pub(super) const ROUTE_IN: u8 = 3;
     pub(super) const PARENT: u8 = 5;
+    /// The id an entry about the device itself carries instead of an endpoint's.
+    pub(super) const DEVICE: u8 = 0xFF;
 }
 
 /// Where a links report's block starts, behind the command header.
 const LINKS_AT: usize = 20;
+
+/// How long after a command to a unit its features and links reports are
+/// ignored, so one it sent before taking the command can't undo the state
+/// held for it.
+const WRITE_GUARD: Duration = Duration::from_millis(500);
 
 /// Where the entry list starts, and how wide each entry is: 16 bytes, or 24
 /// from an audio module on released firmware up to 4.4.2, which sends no
@@ -126,16 +136,23 @@ fn endpoints(rx: &Rx<'_>, stride: usize) -> AudioEndpoints {
         let Some(id) = f.u8(base) else {
             break;
         };
+        let address = (f.u8(base + 1) == Some(entry::ADDRESS))
+            .then(|| f.bytes_from(base + 8).filter(|b| b.len() >= 6))
+            .flatten()
+            .map(|bytes| stream_source(StreamKind::Audio, bytes, 0));
+        if id == entry::DEVICE {
+            if let Some(a) = address {
+                eps.set_address(SocketAddrV4::new(a.ip, a.port));
+            }
+            continue;
+        }
         if eps.get(id).is_none() {
             continue;
         }
         match f.u8(base + 1) {
             Some(entry::ADDRESS) => {
-                if let Some(bytes) = f.bytes_from(base + 8).filter(|b| b.len() >= 6) {
-                    let address = stream_source(StreamKind::Audio, bytes, 0);
-                    if let Some(ep) = eps.get_mut(id) {
-                        ep.address = Some(address);
-                    }
+                if let Some(ep) = eps.get_mut(id) {
+                    ep.address = address;
                 }
             }
             Some(entry::PARENT) => {
@@ -206,6 +223,13 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     if reports && target != sender || !reports && !takes_command(state, sender, target) {
         return;
     }
+    let guarded = state
+        .device(sender)
+        .and_then(|d| d.audio_commanded)
+        .is_some_and(|at| rx.timestamp.saturating_duration_since(at) < WRITE_GUARD);
+    if reports && guarded {
+        return;
+    }
     match op {
         sub::FEATURES => {
             let count = usize::from(rx.frame.u16(28).unwrap_or(0));
@@ -218,6 +242,7 @@ pub(super) fn audio(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
                 if count > 0 {
                     device.audio_legacy = Some(stride == ENTRY_SIZE_LEGACY);
                 }
+                device.audio_reported = Some(rx.timestamp);
                 device.set_audio_endpoints(eps, ev);
                 if let Some(links) = links {
                     device.apply_audio_links(&links);

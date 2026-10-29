@@ -4,6 +4,7 @@
 //! The audio endpoint tree a OneIP device or amplifier reports.
 
 use std::collections::BTreeMap;
+use std::net::SocketAddrV4;
 
 use crate::wire::DeviceUid;
 
@@ -116,9 +117,19 @@ pub struct AudioEndpoints {
     order: Vec<u8>,
     endpoints: BTreeMap<u8, AudioEndpoint>,
     status: BTreeMap<u8, AudioFeatures>,
+    address: Option<SocketAddrV4>,
 }
 
 impl AudioEndpoints {
+    /// The device's own address and HTTP port, as its report gives them.
+    pub fn address(&self) -> Option<SocketAddrV4> {
+        self.address
+    }
+
+    pub(crate) fn set_address(&mut self, address: SocketAddrV4) {
+        self.address = Some(address);
+    }
+
     /// Adds an endpoint, replacing one with the same id and keeping its place
     /// in the reported order.
     pub(crate) fn add(&mut self, endpoint: AudioEndpoint) {
@@ -138,6 +149,36 @@ impl AudioEndpoints {
 
     pub(crate) fn set_status(&mut self, id: u8, status: AudioFeatures) {
         self.status.insert(id, status);
+    }
+
+    /// Routes endpoint `source` alone to endpoint `sink`, when `sink` can be
+    /// routed to, reporting whether that changed it.
+    pub(crate) fn route(&mut self, sink: u8, source: u8) -> bool {
+        let Some(ep) = self.endpoints.get_mut(&sink) else {
+            return false;
+        };
+        let routed = 1u32.checked_shl(u32::from(source));
+        if ep.inputs_available.is_none() || routed.is_none() || ep.inputs_routed == routed {
+            return false;
+        }
+        ep.inputs_routed = routed;
+        true
+    }
+
+    /// Sets or clears `feature` in endpoint `id`'s state, reporting whether
+    /// that changed it.
+    pub(crate) fn switch_status(&mut self, id: u8, feature: AudioFeatures, on: bool) -> bool {
+        let Some(status) = self.status.get_mut(&id) else {
+            return false;
+        };
+        let bits = if on {
+            status.0 | feature.0
+        } else {
+            status.0 & !feature.0
+        };
+        let changed = bits != status.0;
+        status.0 = bits;
+        changed
     }
 
     /// The endpoint with the given id.
@@ -198,6 +239,20 @@ impl AudioEndpoints {
             ep.linked_endpoint = Some(link.linked_endpoint);
         }
     }
+}
+
+/// One hop of an audio route: `source` on `source_device` feeds `sink` on
+/// `sink_device`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AudioHop {
+    /// The device holding the endpoint fed.
+    pub sink_device: DeviceUid,
+    /// The endpoint fed.
+    pub sink: u8,
+    /// The device holding the endpoint feeding it.
+    pub source_device: DeviceUid,
+    /// The endpoint feeding it.
+    pub source: u8,
 }
 
 /// A link from an audio endpoint on this device to one on another.

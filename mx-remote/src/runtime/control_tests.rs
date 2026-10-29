@@ -354,6 +354,19 @@ const GUARDED_SENDS: &[Guarded] = &[
         r.subscribe_v2ip_stats(d, true)
     }),
     ("select_audio_endpoint_input", |r, d| {
+        let routable = audio_report(
+            d,
+            &[
+                (1, AUDIO_ENDPOINT, AudioFeatures::OUTPUT.bits(), 0),
+                (1, AUDIO_ROUTE_IN, 1 << 2, 0),
+                (2, AUDIO_ENDPOINT, AudioFeatures::INPUT.bits(), 0),
+            ],
+            AUDIO_ENTRY,
+        );
+        r.shared.process_datagram(
+            &datagram(d, op::V2IP_AUDIO, PROTOCOL_VERSION, &routable),
+            FROM,
+        );
         r.select_audio_endpoint_input(d, 1, d, 2)
     }),
     ("set_multiviewer_view_mode", |r, d| {
@@ -705,17 +718,302 @@ impl Walls {
     }
 }
 
+/// The entry kinds of an audio features report.
+const AUDIO_ENDPOINT: u8 = 1;
+const AUDIO_ROUTE_IN: u8 = 3;
+const AUDIO_PARENT: u8 = 5;
+/// The entry widths of a features report: current, and released firmware up
+/// to 4.4.2.
+const AUDIO_ENTRY: usize = 16;
+const AUDIO_ENTRY_LEGACY: usize = 24;
+
+/// A features report from `uid` listing `entries`, each the endpoint id, the
+/// entry kind and the two words at entry offsets 8 and 12.
+fn audio_report(uid: DeviceUid, entries: &[(u8, u8, u32, u32)], stride: usize) -> Vec<u8> {
+    let mut p = vec![0u8; 36 + stride * entries.len()];
+    p[4..20].copy_from_slice(uid.as_bytes());
+    let count = u16::try_from(entries.len()).expect("a short list");
+    p[28..30].copy_from_slice(&count.to_le_bytes());
+    for (index, &(id, kind, first, second)) in entries.iter().enumerate() {
+        let at = 36 + index * stride;
+        p[at] = id;
+        p[at + 1] = kind;
+        p[at + 8..at + 12].copy_from_slice(&first.to_le_bytes());
+        p[at + 12..at + 16].copy_from_slice(&second.to_le_bytes());
+    }
+    p
+}
+
+/// An encoder's tree: its HDMI input (2) feeding the stream it sends (0).
+fn encoder_tree(uid: DeviceUid) -> Vec<u8> {
+    let tx = AudioFeatures::OUTPUT.bits() | AudioFeatures::V2IP_TX.bits();
+    let hdmi = AudioFeatures::INPUT.bits() | AudioFeatures::HDMI.bits();
+    audio_report(
+        uid,
+        &[
+            (0, AUDIO_ENDPOINT, tx, 0),
+            (0, AUDIO_ROUTE_IN, 1 << 2, 1 << 2),
+            (2, AUDIO_ENDPOINT, hdmi, 0),
+            (2, AUDIO_PARENT, 0, 0),
+        ],
+        AUDIO_ENTRY,
+    )
+}
+
+/// A decoder's tree: the stream it receives (1) feeding its HDMI output (3)
+/// and its S/PDIF output (4), each routed from nothing.
+fn decoder_tree(uid: DeviceUid) -> Vec<u8> {
+    let rx = AudioFeatures::INPUT.bits() | AudioFeatures::V2IP_RX.bits();
+    let hdmi = AudioFeatures::OUTPUT.bits() | AudioFeatures::HDMI.bits();
+    let spdif = AudioFeatures::OUTPUT.bits() | AudioFeatures::SPDIF.bits();
+    audio_report(
+        uid,
+        &[
+            (1, AUDIO_ENDPOINT, rx, 0),
+            (3, AUDIO_ENDPOINT, hdmi, 0),
+            (3, AUDIO_ROUTE_IN, 1 << 1, 0),
+            (3, AUDIO_PARENT, 1, 0),
+            (4, AUDIO_ENDPOINT, spdif, 0),
+            (4, AUDIO_ROUTE_IN, 1 << 1, 0),
+            (4, AUDIO_PARENT, 1, 0),
+        ],
+        AUDIO_ENTRY,
+    )
+}
+
+/// The addressee, sink and source of a `SELECT_INPUT` frame.
+fn selection(frame: &[u8]) -> (DeviceUid, DeviceUid, u16, DeviceUid, u16) {
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 56, "not the current SELECT_INPUT");
+    assert_eq!(&p[..2], &[3, 0], "not SELECT_INPUT");
+    let uid = |at: usize| DeviceUid::from_array(p[at..at + 16].try_into().expect("a uid"));
+    let id = |at: usize| u16::from_le_bytes([p[at], p[at + 1]]);
+    (uid(4), uid(20), id(52), uid(36), id(54))
+}
+
+/// A route across units sends one `SELECT_INPUT` to each unit owning a hop's
+/// sink endpoint, from the sink's end, every one carrying the whole request.
+#[test]
+fn a_route_across_units_is_sent_to_each_unit_on_its_path_from_the_sink() {
+    let f = Fixture::new();
+    let (encoder, decoder) = (uid_n(64), uid_n(65));
+    f.everything(encoder, 0x2F, "AR0001");
+    f.everything(decoder, 0x2F, "AR0002");
+    f.feed(encoder, op::V2IP_AUDIO, &encoder_tree(encoder));
+    f.feed(decoder, op::V2IP_AUDIO, &decoder_tree(decoder));
+    f.connect();
+
+    f.tap.clear();
+    f.remote
+        .select_audio_endpoint_input(decoder, 3, encoder, 2)
+        .expect("a route through the stream");
+    let sent: Vec<_> = f.tap.frames().iter().map(|f| selection(f)).collect();
+    assert_eq!(
+        sent,
+        vec![
+            (decoder, decoder, 3, encoder, 2),
+            (encoder, decoder, 3, encoder, 2),
+        ]
+    );
+
+    f.tap.clear();
+    f.remote
+        .select_audio_endpoint_input(decoder, 4, decoder, 1)
+        .expect("a route within the decoder");
+    let sent: Vec<_> = f.tap.frames().iter().map(|f| selection(f)).collect();
+    assert_eq!(sent, vec![(decoder, decoder, 4, decoder, 1)]);
+}
+
+/// The route is the shortest one, hop by hop from the source, a stream
+/// joining an encoder's sent stream to another unit's received one.
+#[test]
+fn an_audio_route_is_the_shortest_path_through_the_reported_routes() {
+    let f = Fixture::new();
+    let (encoder, decoder) = (uid_n(66), uid_n(67));
+    f.everything(encoder, 0x2F, "AR0003");
+    f.everything(decoder, 0x2F, "AR0004");
+    f.feed(encoder, op::V2IP_AUDIO, &encoder_tree(encoder));
+    f.feed(decoder, op::V2IP_AUDIO, &decoder_tree(decoder));
+
+    let hop = |sink_device, sink, source_device, source| AudioHop {
+        sink_device,
+        sink,
+        source_device,
+        source,
+    };
+    assert_eq!(
+        f.remote.audio_route(decoder, 3, encoder, 2),
+        Some(vec![
+            hop(encoder, 0, encoder, 2),
+            hop(decoder, 1, encoder, 0),
+            hop(decoder, 3, decoder, 1),
+        ])
+    );
+    assert_eq!(
+        f.remote.audio_route(decoder, 3, encoder, 0),
+        Some(vec![
+            hop(decoder, 1, encoder, 0),
+            hop(decoder, 3, decoder, 1)
+        ])
+    );
+    assert_eq!(
+        f.remote.audio_route(encoder, 2, decoder, 3),
+        None,
+        "backwards"
+    );
+    assert_eq!(
+        f.remote.audio_route(decoder, 4, decoder, 3),
+        None,
+        "unroutable"
+    );
+    assert_eq!(f.remote.audio_route(decoder, 3, decoder, 3), None, "itself");
+}
+
+/// A report of output endpoints, each routable from the endpoints its mask
+/// names (none for a mask of 0), and an input endpoint 1 to start from.
+fn routes_tree(uid: DeviceUid, nodes: &[(u8, u32)]) -> Vec<u8> {
+    let mut entries = vec![(1, AUDIO_ENDPOINT, AudioFeatures::INPUT.bits(), 0)];
+    for &(id, mask) in nodes {
+        entries.push((id, AUDIO_ENDPOINT, AudioFeatures::OUTPUT.bits(), 0));
+        if mask != 0 {
+            entries.push((id, AUDIO_ROUTE_IN, mask, 0));
+        }
+    }
+    audio_report(uid, &entries, AUDIO_ENTRY)
+}
+
+/// The path is searched back from the sink within its device, depth first:
+/// a node takes the source when the source's id is among its routes, its
+/// inputs are tried in ascending id, a candidate is replaced only by a
+/// strictly shorter one, and each endpoint is searched once. A path of more
+/// than one hop inside the sink's device leaves out the sink's own hop.
+#[test]
+fn an_audio_route_is_searched_back_from_the_sink_as_a_unit_searches_it() {
+    let f = Fixture::new();
+    let (ties, shorter, searched, collision) = (uid_n(74), uid_n(75), uid_n(76), uid_n(77));
+    for (uid, serial) in [
+        (ties, "AP0001"),
+        (shorter, "AP0002"),
+        (searched, "AP0003"),
+        (collision, "AP0004"),
+    ] {
+        f.everything(uid, 0x2F, serial);
+    }
+    let routes = |ids: &[u8]| ids.iter().fold(0u32, |mask, id| mask | 1 << id);
+    let tree = |uid, nodes: &[(u8, &[u8])]| {
+        let nodes: Vec<(u8, u32)> = nodes.iter().map(|&(id, from)| (id, routes(from))).collect();
+        f.feed(uid, op::V2IP_AUDIO, &routes_tree(uid, &nodes));
+    };
+    tree(ties, &[(7, &[3, 5]), (3, &[1]), (5, &[1])]);
+    tree(shorter, &[(7, &[2, 4]), (2, &[6]), (6, &[1]), (4, &[1])]);
+    tree(searched, &[(7, &[2, 4]), (2, &[4]), (4, &[1])]);
+    tree(collision, &[(7, &[1])]);
+    let hop = |device, sink, source| AudioHop {
+        sink_device: device,
+        sink,
+        source_device: device,
+        source,
+    };
+
+    assert_eq!(
+        f.remote.audio_route(ties, 7, ties, 1),
+        Some(vec![hop(ties, 3, 1)]),
+        "the lower id of two as short, the sink's own hop left out"
+    );
+    assert_eq!(
+        f.remote.audio_route(shorter, 7, shorter, 1),
+        Some(vec![hop(shorter, 4, 1)]),
+        "a later, strictly shorter candidate"
+    );
+    assert_eq!(
+        f.remote.audio_route(searched, 7, searched, 1),
+        Some(vec![hop(searched, 4, 1), hop(searched, 2, 4)]),
+        "4 was searched through 2, so not again from 7"
+    );
+    assert_eq!(
+        f.remote.audio_route(collision, 7, ties, 1),
+        Some(vec![AudioHop {
+            sink_device: collision,
+            sink: 7,
+            source_device: ties,
+            source: 1,
+        }]),
+        "a source on another device whose id the routes name"
+    );
+}
+
+/// A route nothing reported leads along sends nothing.
+#[test]
+fn an_audio_route_without_a_path_is_refused_unsent() {
+    let f = Fixture::new();
+    let (encoder, decoder) = (uid_n(68), uid_n(69));
+    f.everything(encoder, 0x2F, "AR0005");
+    f.everything(decoder, 0x2F, "AR0006");
+    f.feed(encoder, op::V2IP_AUDIO, &encoder_tree(encoder));
+    f.feed(decoder, op::V2IP_AUDIO, &decoder_tree(decoder));
+    f.connect();
+
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.select_audio_endpoint_input(encoder, 2, decoder, 3),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty(), "a route without a path was sent");
+}
+
+/// Once a route is sent, each hop within a unit reads as routed in this
+/// client's copy, and the units sent it are guarded as for any command.
+#[test]
+fn a_sent_route_is_held_as_each_units_routing() {
+    let f = Fixture::new();
+    let (encoder, decoder) = (uid_n(70), uid_n(71));
+    f.everything(encoder, 0x2F, "AR0007");
+    f.everything(decoder, 0x2F, "AR0008");
+    f.feed(encoder, op::V2IP_AUDIO, &encoder_tree(encoder));
+    f.feed(decoder, op::V2IP_AUDIO, &decoder_tree(decoder));
+    f.connect();
+
+    f.remote
+        .select_audio_endpoint_input(decoder, 3, encoder, 2)
+        .expect("a route through the stream");
+    let input = |device, id| {
+        f.remote
+            .audio_endpoints(device)
+            .and_then(|eps| eps.get(id).and_then(AudioEndpoint::input))
+    };
+    assert_eq!(input(decoder, 3), Some(1));
+    assert_eq!(input(encoder, 0), Some(2));
+    f.feed(decoder, op::V2IP_AUDIO, &decoder_tree(decoder));
+    assert_eq!(input(decoder, 3), Some(1), "an older report undid it");
+}
+
 /// A unit on released firmware up to 4.4.2 is sent the 8-byte form naming
-/// two of its own endpoints, and anything newer the form naming both units;
-/// its own features report says which it runs, and its protocol until then.
+/// two of its own endpoints, and anything newer the form naming both units,
+/// as its own features report says.
 #[test]
 fn an_endpoint_selection_is_sent_in_the_units_own_layout() {
     let f = Fixture::new();
     f.connect();
-    let (old, new, other) = (uid_n(205), uid_n(206), uid_n(207));
+    let (old, new) = (uid_n(205), uid_n(206));
     f.everything(old, 0x1E, "AS0001");
     f.everything(new, 0x2F, "AS0002");
-    f.everything(other, 0x2F, "AS0003");
+    let output = AudioFeatures::OUTPUT.bits();
+    let input = AudioFeatures::INPUT.bits();
+    let entries = [
+        (4, AUDIO_ENDPOINT, output, 0),
+        (4, AUDIO_ROUTE_IN, 1 << 9, 0),
+        (9, AUDIO_ENDPOINT, input, 0),
+    ];
+    f.feed(
+        old,
+        op::V2IP_AUDIO,
+        &audio_report(old, &entries, AUDIO_ENTRY_LEGACY),
+    );
+    f.feed(
+        new,
+        op::V2IP_AUDIO,
+        &audio_report(new, &entries, AUDIO_ENTRY),
+    );
 
     f.tap.clear();
     f.remote
@@ -725,30 +1023,61 @@ fn an_endpoint_selection_is_sent_in_the_units_own_layout() {
     let p = &frame[HEADER_LEN..];
     assert_eq!(p.len(), 28);
     assert_eq!(&p[20..28], &[4, 0, 0, 0, 9, 0, 0, 0]);
+
+    f.tap.clear();
+    f.remote
+        .select_audio_endpoint_input(new, 4, new, 9)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(frame.len() - HEADER_LEN, 56);
+
+    // A report in the current layout from the older-numbered unit decides it,
+    // once the guard after the command above has passed.
+    lock(&f.remote.shared.state)
+        .device_mut(old)
+        .expect("registered above")
+        .audio_commanded = None;
+    f.feed(
+        old,
+        op::V2IP_AUDIO,
+        &audio_report(old, &entries, AUDIO_ENTRY),
+    );
+    f.tap.clear();
+    f.remote
+        .select_audio_endpoint_input(old, 4, old, 9)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(frame.len() - HEADER_LEN, 56);
+}
+
+/// A route that crosses a unit on released firmware up to 4.4.2 is refused,
+/// as such a unit routes only between its own endpoints.
+#[test]
+fn a_route_across_a_unit_on_released_firmware_is_refused() {
+    let f = Fixture::new();
+    f.connect();
+    let (encoder, decoder) = (uid_n(72), uid_n(73));
+    f.everything(encoder, 0x2F, "AS0003");
+    f.everything(decoder, 0x1E, "AS0004");
+    let rx = AudioFeatures::INPUT.bits() | AudioFeatures::V2IP_RX.bits();
+    let tx = AudioFeatures::OUTPUT.bits() | AudioFeatures::V2IP_TX.bits();
+    f.feed(
+        encoder,
+        op::V2IP_AUDIO,
+        &audio_report(encoder, &[(0, AUDIO_ENDPOINT, tx, 0)], AUDIO_ENTRY),
+    );
+    f.feed(
+        decoder,
+        op::V2IP_AUDIO,
+        &audio_report(decoder, &[(1, AUDIO_ENDPOINT, rx, 0)], AUDIO_ENTRY_LEGACY),
+    );
+
+    f.tap.clear();
     assert!(matches!(
-        f.remote.select_audio_endpoint_input(old, 4, other, 9),
+        f.remote.select_audio_endpoint_input(decoder, 1, encoder, 0),
         Err(ControlError::Unsupported(_))
     ));
-
-    f.tap.clear();
-    f.remote
-        .select_audio_endpoint_input(new, 4, other, 9)
-        .expect("sent");
-    let frame = f.tap.frames().pop().expect("nothing reached the gate");
-    assert_eq!(frame.len() - HEADER_LEN, 56);
-
-    // A report in the current layout from the older-numbered unit decides it.
-    let mut tree = vec![0u8; 36 + 16];
-    tree[4..20].copy_from_slice(old.as_bytes());
-    tree[28..30].copy_from_slice(&1u16.to_le_bytes());
-    tree[37] = 1;
-    f.feed(old, op::V2IP_AUDIO, &tree);
-    f.tap.clear();
-    f.remote
-        .select_audio_endpoint_input(old, 4, other, 9)
-        .expect("sent");
-    let frame = f.tap.frames().pop().expect("nothing reached the gate");
-    assert_eq!(frame.len() - HEADER_LEN, 56);
+    assert!(f.tap.frames().is_empty(), "a refused route was sent");
 }
 
 /// No unit acts on an endpoint volume, and a released one reads its
@@ -1723,6 +2052,18 @@ fn an_endpoint_selection_tells_its_source_from_its_sink() {
         peer,
         op::SYS_HELLO,
         &hello_payload(0x28, "Ctrl", "EP0003", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let tx = AudioFeatures::OUTPUT.bits() | AudioFeatures::V2IP_TX.bits();
+    let rx = AudioFeatures::INPUT.bits() | AudioFeatures::V2IP_RX.bits();
+    f.feed(
+        source,
+        op::V2IP_AUDIO,
+        &audio_report(source, &[(9, AUDIO_ENDPOINT, tx, 0)], AUDIO_ENTRY),
+    );
+    f.feed(
+        sink,
+        op::V2IP_AUDIO,
+        &audio_report(sink, &[(5, AUDIO_ENDPOINT, rx, 0)], AUDIO_ENTRY),
     );
 
     f.tap.clear();
@@ -4259,6 +4600,164 @@ fn an_audio_lock_goes_only_to_an_endpoint_that_can_lock() {
         .expect("endpoint 0 can be muted");
     let frame = f.tap.frames().pop().expect("nothing reached the gate");
     assert_eq!(&frame[HEADER_LEN..HEADER_LEN + 2], &[1, 0], "MUTE");
+}
+
+/// Has `uid` report a tree whose endpoint 0 can be muted and whose endpoint 1
+/// can lock its source and drive a trigger, every switch off.
+fn report_switchable_tree(f: &Fixture, uid: DeviceUid) {
+    let mut p = vec![0u8; 68];
+    p[4..20].copy_from_slice(uid.as_bytes());
+    p[28..30].copy_from_slice(&2u16.to_le_bytes());
+    p[37] = 1;
+    let output = AudioFeatures::OUTPUT.bits() | AudioFeatures::MUTE.bits();
+    p[44..48].copy_from_slice(&output.to_le_bytes());
+    p[52] = 1;
+    p[53] = 1;
+    let input = AudioFeatures::INPUT.bits()
+        | AudioFeatures::AUDIO_LOCK.bits()
+        | AudioFeatures::TRIGGER.bits();
+    p[60..64].copy_from_slice(&input.to_le_bytes());
+    f.feed(uid, op::V2IP_AUDIO, &p);
+}
+
+/// A sent mute, trigger or lock is the unit's state in this client's copy
+/// once the frame is away, each on its own bit, until the unit reports.
+#[test]
+fn a_sent_endpoint_switch_is_held_as_the_units_state() {
+    let f = Fixture::new();
+    let uid = uid_n(61);
+    f.everything(uid, 0x2B, "AH0001");
+    report_switchable_tree(&f, uid);
+    f.connect();
+    let status = |id| {
+        f.remote
+            .audio_endpoints(uid)
+            .and_then(|eps| eps.status(id))
+            .expect("a reported endpoint")
+    };
+
+    f.remote
+        .set_audio_endpoint_muted(uid, 0, true)
+        .expect("endpoint 0 can be muted");
+    assert_eq!(status(0), AudioFeatures::MUTE);
+    f.remote
+        .set_audio_endpoint_locked(uid, 1, true)
+        .expect("endpoint 1 can lock");
+    assert_eq!(status(1), AudioFeatures::AUDIO_LOCK);
+    f.remote
+        .set_audio_endpoint_trigger(uid, 1, true)
+        .expect("endpoint 1 has a trigger");
+    assert_eq!(
+        status(1),
+        AudioFeatures::from_bits(AudioFeatures::AUDIO_LOCK.bits() | AudioFeatures::TRIGGER.bits())
+    );
+    f.remote
+        .set_audio_endpoint_locked(uid, 1, false)
+        .expect("endpoint 1 can unlock");
+    assert_eq!(status(1), AudioFeatures::TRIGGER);
+    assert_eq!(
+        status(0),
+        AudioFeatures::MUTE,
+        "another endpoint is left alone"
+    );
+}
+
+/// For 500 ms after a command to a unit, its features reports are ignored,
+/// so one sent before it took the command can't undo the held state; a
+/// report after that is taken, and other units' reports always are.
+#[test]
+fn a_units_audio_reports_are_ignored_for_500_ms_after_a_command() {
+    let f = Fixture::new();
+    let (uid, other) = (uid_n(62), uid_n(63));
+    f.everything(uid, 0x2B, "AG0001");
+    f.everything(other, 0x2B, "AG0002");
+    report_switchable_tree(&f, uid);
+    report_switchable_tree(&f, other);
+    f.connect();
+    let status = |device, id| {
+        f.remote
+            .audio_endpoints(device)
+            .and_then(|eps| eps.status(id))
+            .expect("a reported endpoint")
+    };
+
+    f.remote
+        .set_audio_endpoint_muted(uid, 0, true)
+        .expect("endpoint 0 can be muted");
+    report_switchable_tree(&f, uid);
+    assert_eq!(
+        status(uid, 0),
+        AudioFeatures::MUTE,
+        "an older report undid it"
+    );
+    let mut links = vec![0u8; 44];
+    links[..2].copy_from_slice(&5u16.to_le_bytes());
+    links[4..20].copy_from_slice(uid.as_bytes());
+    links[20..22].copy_from_slice(&1u16.to_le_bytes());
+    links[25] = 4;
+    links[28..44].copy_from_slice(other.as_bytes());
+    f.feed(uid, op::V2IP_AUDIO, &links);
+    let linked = |device| {
+        f.remote
+            .audio_endpoints(device)
+            .and_then(|eps| eps.get(0).map(|ep| ep.linked_device))
+            .expect("a reported endpoint")
+    };
+    assert!(linked(uid).is_zero(), "a links report was taken");
+
+    {
+        let mut state = lock(&f.remote.shared.state);
+        let device = state.device_mut(uid).expect("registered above");
+        let sent = device
+            .audio_commanded
+            .expect("the command was not recorded");
+        device.audio_commanded = Some(sent - Duration::from_millis(500));
+    }
+    report_switchable_tree(&f, uid);
+    assert_eq!(
+        status(uid, 0),
+        AudioFeatures::default(),
+        "the guard outlived 500 ms"
+    );
+
+    f.remote
+        .set_audio_endpoint_muted(other, 0, true)
+        .expect("endpoint 0 can be muted");
+    {
+        let mut state = lock(&f.remote.shared.state);
+        let device = state.device_mut(other).expect("registered above");
+        device.audio_commanded = None;
+    }
+    report_switchable_tree(&f, other);
+    assert_eq!(
+        status(other, 0),
+        AudioFeatures::default(),
+        "a unit with no command was guarded"
+    );
+}
+
+/// When a device's features report was last taken: not before one, and not
+/// for one ignored in the 500 ms after a command.
+#[test]
+fn the_time_an_audio_report_was_taken_is_kept() {
+    let f = Fixture::new();
+    let uid = uid_n(78);
+    f.everything(uid, 0x2B, "AT0001");
+    assert_eq!(f.remote.audio_reported(uid), None);
+    let before = Instant::now();
+    report_switchable_tree(&f, uid);
+    let taken = f.remote.audio_reported(uid).expect("a report was taken");
+    assert!(taken >= before);
+    f.connect();
+    f.remote
+        .set_audio_endpoint_muted(uid, 0, true)
+        .expect("endpoint 0 can be muted");
+    report_switchable_tree(&f, uid);
+    assert_eq!(
+        f.remote.audio_reported(uid),
+        Some(taken),
+        "an ignored report counted"
+    );
 }
 
 /// Handing a source's addresses back goes out as mesh operation 6 naming the

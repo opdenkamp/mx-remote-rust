@@ -31,16 +31,17 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::event::Event;
 use crate::state::{Bay, Device, State};
 use crate::types::{
-    AmpZoneSettings, AudioFeatures, BayMirrorStatus, HiddenStatus, MeshOperation,
-    MultiviewerStatus, PowerStatus, RcSettings, ThirdPartyVendor, UnitNetConfig, V2ipAudioFormat,
-    V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig, V2ipOutputMode, V2ipPowerSaveSchedule,
-    V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipScalingSettings, V2ipStreamSources,
-    V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VideoWallOp,
-    VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, RC_STATUS_MAX,
-    RC_STATUS_NAME_MAX, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE,
-    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,
-    SCALING_FLAG_SKIP_420, THIRD_PARTY_PAYLOAD_MAX, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX,
-    V2IP_SINK_ROTATION_MAX, V2IP_SOURCE_FILTER_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    AmpZoneSettings, AudioEndpoint, AudioEndpoints, AudioFeatures, AudioHop, BayMirrorStatus,
+    HiddenStatus, MeshOperation, MultiviewerStatus, PowerStatus, RcSettings, ThirdPartyVendor,
+    UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig,
+    V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget,
+    V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
+    V2ipTilingConfig, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
+    OSD_MESSAGE_TEXT_MAX, RC_STATUS_MAX, RC_STATUS_NAME_MAX, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
+    SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420, THIRD_PARTY_PAYLOAD_MAX,
+    V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX, V2IP_SOURCE_FILTER_MAX,
+    V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -162,13 +163,138 @@ impl Shared {
         &self,
         prepare: impl FnOnce(&State) -> Result<Command, ControlError>,
     ) -> Result<(), ControlError> {
-        let command = self.read(prepare)?;
-        self.send(&command.to, command.opcode, &command.payload)?;
-        if let Some(write_back) = command.write_back {
-            self.mutate(|state, ev| write_back(state, ev));
+        self.commands(|state| prepare(state).map(|command| vec![command]))
+    }
+
+    /// Runs several commands prepared together, in order, each written back
+    /// once its own frame is away; the first that can't be sent ends the run.
+    fn commands(
+        &self,
+        prepare: impl FnOnce(&State) -> Result<Vec<Command>, ControlError>,
+    ) -> Result<(), ControlError> {
+        for command in self.read(prepare)? {
+            self.send(&command.to, command.opcode, &command.payload)?;
+            if let Some(write_back) = command.write_back {
+                self.mutate(|state, ev| write_back(state, ev));
+            }
         }
         Ok(())
     }
+}
+
+/// The audio route from `source` to `sink`, each a device and an endpoint,
+/// hop by hop from the source, found as every unit finds it, from the two
+/// devices' endpoint tables alone.
+///
+/// The search walks back from the sink, depth first, within the sink's
+/// device. A node takes the source directly when the source's endpoint id is
+/// among the node's routes, whichever device the source is on, or when the
+/// node receives a OneIP stream and the source sends one. Otherwise its
+/// routes are tried in ascending endpoint id, a later candidate replacing an
+/// earlier one only when strictly shorter, each endpoint searched once per
+/// request. When that finds nothing, the route is the source device's first
+/// sending endpoint feeding the sink device's first receiving one, which
+/// feeds the sink. A route of more than one hop inside the sink's device
+/// leaves out the hop into the sink itself.
+pub(super) fn audio_path(
+    state: &State,
+    sink: (DeviceUid, u8),
+    source: (DeviceUid, u8),
+) -> Option<Vec<AudioHop>> {
+    let endpoints = |uid: DeviceUid| state.device(uid)?.audio.as_ref();
+    let sink_eps = endpoints(sink.0)?;
+    let source_eps = endpoints(source.0)?;
+    let source_ep = source_eps.get(source.1)?;
+    sink_eps.get(sink.1)?;
+    if sink == source {
+        return None;
+    }
+    let hop = |to: u8, from: (DeviceUid, u8)| AudioHop {
+        sink_device: sink.0,
+        sink: to,
+        source_device: from.0,
+        source: from.1,
+    };
+    let mut visited = std::collections::HashSet::from([sink.1]);
+    let mut hops = match back_from(
+        (sink.0, sink_eps),
+        sink.1,
+        (source, source_ep),
+        &mut visited,
+    ) {
+        Some(hops) => hops,
+        None => {
+            let first = |eps: &AudioEndpoints, feature| {
+                eps.list()
+                    .find(|ep| ep.features.has(feature))
+                    .map(|ep| ep.id)
+            };
+            let tx = first(source_eps, AudioFeatures::V2IP_TX)?;
+            let rx = first(sink_eps, AudioFeatures::V2IP_RX)?;
+            let mut hops = Vec::new();
+            if tx != source.1 {
+                hops.push(AudioHop {
+                    sink_device: source.0,
+                    sink: tx,
+                    source_device: source.0,
+                    source: source.1,
+                });
+            }
+            hops.push(hop(rx, (source.0, tx)));
+            if rx != sink.1 {
+                hops.push(hop(sink.1, (sink.0, rx)));
+            }
+            hops
+        }
+    };
+    let inside = hops
+        .iter()
+        .filter(|h| h.sink_device == sink.0 && h.source_device == sink.0)
+        .count();
+    if inside > 1 {
+        hops.retain(|h| !(h.sink_device == sink.0 && h.sink == sink.1));
+    }
+    Some(hops)
+}
+
+/// The route into endpoint `node` of the sink's device from the source, as
+/// [`audio_path`] searches it.
+fn back_from(
+    (device, eps): (DeviceUid, &AudioEndpoints),
+    node: u8,
+    source: ((DeviceUid, u8), &AudioEndpoint),
+    visited: &mut std::collections::HashSet<u8>,
+) -> Option<Vec<AudioHop>> {
+    let hop = |from: (DeviceUid, u8)| AudioHop {
+        sink_device: device,
+        sink: node,
+        source_device: from.0,
+        source: from.1,
+    };
+    let ep = eps.get(node)?;
+    let routes = ep.inputs_available.unwrap_or(0);
+    let named = |id: u8| {
+        1u32.checked_shl(u32::from(id))
+            .is_some_and(|bit| routes & bit != 0)
+    };
+    let stream =
+        ep.features.has(AudioFeatures::V2IP_RX) && source.1.features.has(AudioFeatures::V2IP_TX);
+    if named(source.0 .1) || stream {
+        return Some(vec![hop(source.0)]);
+    }
+    let mut best: Option<Vec<AudioHop>> = None;
+    for input in (0..=u8::MAX).filter(|&id| named(id)) {
+        if !visited.insert(input) {
+            continue;
+        }
+        if let Some(mut path) = back_from((device, eps), input, source, visited) {
+            path.push(hop((device, input)));
+            if best.as_ref().map_or(true, |b| path.len() < b.len()) {
+                best = Some(path);
+            }
+        }
+    }
+    best
 }
 
 /// The first protocol version whose devices can act on the automatic address
@@ -874,7 +1000,9 @@ impl Remote {
     /// Mutes or unmutes an audio endpoint.
     ///
     /// Refused unless the endpoint reports [`AudioFeatures::MUTE`]: a unit
-    /// changes nothing for one that does not.
+    /// changes nothing for one that does not. Once the frame is away,
+    /// [`AudioEndpoints::status`](crate::AudioEndpoints::status) reads the new
+    /// state until the device reports its endpoints again.
     pub fn set_audio_endpoint_muted(
         &self,
         device: DeviceUid,
@@ -893,7 +1021,9 @@ impl Remote {
     /// Sets an audio endpoint's trigger output.
     ///
     /// Refused unless the endpoint reports [`AudioFeatures::TRIGGER`]: a unit
-    /// changes nothing for one that does not.
+    /// changes nothing for one that does not. Once the frame is away,
+    /// [`AudioEndpoints::status`](crate::AudioEndpoints::status) reads the new
+    /// state until the device reports its endpoints again.
     pub fn set_audio_endpoint_trigger(
         &self,
         device: DeviceUid,
@@ -914,9 +1044,9 @@ impl Remote {
     ///
     /// Refused unless the endpoint reports
     /// [`AudioFeatures::AUDIO_LOCK`], which
-    /// is the only one the device acts on. The device reports its endpoints
-    /// again once the lock has changed;
-    /// [`AudioEndpoints::status`](crate::AudioEndpoints::status) reads it.
+    /// is the only one the device acts on. Once the frame is away,
+    /// [`AudioEndpoints::status`](crate::AudioEndpoints::status) reads the new
+    /// state until the device reports its endpoints again.
     pub fn set_audio_endpoint_locked(
         &self,
         device: DeviceUid,
@@ -947,18 +1077,26 @@ impl Remote {
             let Some(endpoints) = d.audio.as_ref() else {
                 return Err(ControlError::NotReported("the device's audio endpoints"));
             };
-            let id = u8::try_from(endpoint).ok();
-            if !id
-                .and_then(|id| endpoints.get(id))
-                .is_some_and(|ep| ep.features.has(feature))
-            {
+            let Some(id) = u8::try_from(endpoint)
+                .ok()
+                .filter(|&id| endpoints.get(id).is_some_and(|ep| ep.features.has(feature)))
+            else {
                 return Err(ControlError::Unsupported(
                     "the endpoint does not have that feature",
                 ));
-            }
+            };
             let mut payload = audio_cmd_header(sub, d.uid);
             payload.extend_from_slice(&audio_param(endpoint, u32::from(on)));
-            Ok(Command::new(Addressee::device(d), op::V2IP_AUDIO, payload))
+            Ok(
+                Command::new(Addressee::device(d), op::V2IP_AUDIO, payload).then(
+                    move |state, ev| {
+                        if let Some(d) = state.device_mut(device) {
+                            d.audio_commanded = Some(Instant::now());
+                            d.hold_audio_switch(id, feature, on, ev);
+                        }
+                    },
+                ),
+            )
         })
     }
 
@@ -978,10 +1116,44 @@ impl Remote {
         ))
     }
 
-    /// Routes a source endpoint on one device to a sink endpoint on another.
+    /// The audio route from a source endpoint to a sink endpoint, hop by hop
+    /// from the source, or `None` when there is none.
+    ///
+    /// It is the route every unit finds for the request, from the two
+    /// devices' endpoint tables alone, so the units a route is sent to all
+    /// switch the same hops. Searched back from the sink, depth first, within
+    /// the sink's device: a node takes the source directly when the source's
+    /// endpoint id is among the node's routes, or when the node receives a
+    /// OneIP stream and the source sends one; otherwise its routes are tried
+    /// in ascending endpoint id, a later candidate kept only when strictly
+    /// shorter, each endpoint searched once. Failing that, the source device's
+    /// first sending endpoint feeds the sink device's first receiving one,
+    /// which feeds the sink. A route never passes through a third device, and
+    /// one of more than one hop inside the sink's device leaves out the hop
+    /// into the sink itself.
+    pub fn audio_route(
+        &self,
+        sink: DeviceUid,
+        sink_endpoint: u8,
+        source: DeviceUid,
+        source_endpoint: u8,
+    ) -> Option<Vec<AudioHop>> {
+        self.shared
+            .read(|state| audio_path(state, (sink, sink_endpoint), (source, source_endpoint)))
+    }
+
+    /// Routes a source endpoint to a sink endpoint, on the same device or
+    /// through several.
+    ///
+    /// The route is the one [`Remote::audio_route`] finds. Each device owning
+    /// the endpoint fed by one of its hops is sent the whole request, from the
+    /// sink's end of the route, and switches its own hops; refused, sending
+    /// nothing, when there is no route. Once a device's frame is away, this
+    /// client's copy reads its hops routed, and that device's reports are
+    /// ignored for 500 ms, as for every audio command.
     ///
     /// A unit on released firmware up to 4.4.2 routes only between its own
-    /// endpoints, so a route from another unit to one is refused.
+    /// endpoints, so a route reaching it from another unit is refused.
     pub fn select_audio_endpoint_input(
         &self,
         sink: DeviceUid,
@@ -989,32 +1161,66 @@ impl Remote {
         source: DeviceUid,
         source_endpoint: u16,
     ) -> Result<(), ControlError> {
-        self.shared.command(move |state| {
-            let device = device_of(state, sink)?;
-            // An audio module on released firmware up to 4.4.2 reads an
-            // 8-byte body naming two of its own endpoints, and the current
-            // one reads 36 bytes naming both units; neither checks the
-            // length, so each is sent only its own.
-            let payload = if device
-                .audio_legacy
-                .unwrap_or(device.hello.supported_protocol < AUDIO_LAYOUT_SINCE)
-            {
-                if source != sink {
-                    return Err(ControlError::Unsupported(
-                        "the unit routes only its own audio endpoints",
-                    ));
-                }
-                let mut payload = audio_cmd_header(audio_sub::SELECT_INPUT, sink);
-                payload.extend_from_slice(&audio_param(sink_endpoint, u32::from(source_endpoint)));
-                payload
-            } else {
-                build_audio_select_input(sink, sink_endpoint, source, source_endpoint)
+        const NO_ROUTE: ControlError =
+            ControlError::Unsupported("no audio route leads from the source to the sink");
+        self.shared.commands(move |state| {
+            let (Ok(sink_id), Ok(source_id)) =
+                (u8::try_from(sink_endpoint), u8::try_from(source_endpoint))
+            else {
+                return Err(NO_ROUTE);
             };
-            Ok(Command::new(
-                Addressee::device(device),
-                op::V2IP_AUDIO,
-                payload,
-            ))
+            let hops = audio_path(state, (sink, sink_id), (source, source_id)).ok_or(NO_ROUTE)?;
+            let mut units: Vec<DeviceUid> = Vec::new();
+            for hop in hops.iter().rev() {
+                if hop.sink_device != state.uid && !units.contains(&hop.sink_device) {
+                    units.push(hop.sink_device);
+                }
+            }
+            units
+                .into_iter()
+                .map(|unit| {
+                    let device = device_of(state, unit)?;
+                    // An audio module on released firmware up to 4.4.2 reads an
+                    // 8-byte body naming two of its own endpoints, and the
+                    // current one reads 36 bytes naming both units; neither
+                    // checks the length, so each is sent only its own.
+                    let payload = if device
+                        .audio_legacy
+                        .unwrap_or(device.hello.supported_protocol < AUDIO_LAYOUT_SINCE)
+                    {
+                        if source != unit || sink != unit {
+                            return Err(ControlError::Unsupported(
+                                "the unit routes only its own audio endpoints",
+                            ));
+                        }
+                        let mut payload = audio_cmd_header(audio_sub::SELECT_INPUT, unit);
+                        payload.extend_from_slice(&audio_param(
+                            sink_endpoint,
+                            u32::from(source_endpoint),
+                        ));
+                        payload
+                    } else {
+                        build_audio_select_input(unit, sink, sink_endpoint, source, source_endpoint)
+                    };
+                    let own: Vec<(u8, u8)> = hops
+                        .iter()
+                        .filter(|h| h.sink_device == unit && h.source_device == unit)
+                        .map(|h| (h.sink, h.source))
+                        .collect();
+                    Ok(
+                        Command::new(Addressee::device(device), op::V2IP_AUDIO, payload).then(
+                            move |state, ev| {
+                                if let Some(d) = state.device_mut(unit) {
+                                    d.audio_commanded = Some(Instant::now());
+                                    for (sink, source) in own {
+                                        d.hold_audio_route(sink, source, ev);
+                                    }
+                                }
+                            },
+                        ),
+                    )
+                })
+                .collect()
         })
     }
 

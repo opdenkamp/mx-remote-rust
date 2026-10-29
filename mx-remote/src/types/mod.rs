@@ -18,7 +18,7 @@ pub use amp::{
     AmpDolbySettings, AmpZoneSettings, AMP_EQ_BANDS, AMP_TONE_FLAT, AMP_TONE_HTTP_MAX,
     AMP_TONE_HTTP_MIN,
 };
-pub use audio::{AudioEndpoint, AudioEndpoints, AudioFeatures, AudioLink};
+pub use audio::{AudioEndpoint, AudioEndpoints, AudioFeatures, AudioHop, AudioLink};
 pub use commands::{
     ActionTransmitRequest, AudioChangeSource, AudioClip, BayNameChange, EdidProfileChange,
     EdidRecord, EdidRequest, FactoryResetRequest, IrCapture, IrMeta, IrTransmitRequest,
