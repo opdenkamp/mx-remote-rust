@@ -250,6 +250,59 @@ pub struct BaySignalDetails {
     /// The audio alongside the video, absent when the report carried no audio
     /// block.
     pub audio: Option<BayAudioDetails>,
+    /// The video the report describes, absent unless it marks a valid stream.
+    pub video: Option<BayVideoDetails>,
+}
+
+/// The video a bay signal report describes: what
+/// [`BayInfo::signal_type`](crate::BayInfo::signal_type) is written from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BayVideoDetails {
+    /// The stream's video mode id, 0 when it names none.
+    pub svd: u8,
+    /// The active width: the mode's, or the measured one for a stream
+    /// without a known mode.
+    pub width: u16,
+    /// The active height, as [`width`](Self::width).
+    pub height: u16,
+    /// The colour space: 0 RGB, 1 4:4:4, 2 4:2:2, 3 4:2:0.
+    pub colour: u8,
+    /// Bits per component.
+    pub bpp: u8,
+    /// Whether the stream is interlaced.
+    pub interlaced: bool,
+    /// Whether the stream carries HDR.
+    pub hdr: bool,
+}
+
+/// A Pulse-Eight device a unit reports connected to one of its bays, from
+/// the long form of its connect frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct P8ModelInfo {
+    /// The device's vendor name.
+    pub vendor: String,
+    /// The device's model name.
+    pub model: String,
+    /// The device's board revision.
+    pub board_rev: u8,
+    /// The device's serial.
+    pub serial: String,
+    /// The device's firmware version.
+    pub version: String,
+    /// The mode of the bay on the device: -1 unknown, 0 input, 1 output.
+    pub remote_mode: i32,
+    /// The bay's number on the device.
+    pub remote_bay: i32,
+    /// Whether the bay connects back to the reporting unit itself.
+    pub loopback: bool,
+    /// Whether the device is connected over HDMI rather than through mx_remote.
+    pub hdmi: bool,
+    /// The device's address, unspecified while unknown.
+    pub ip: std::net::Ipv4Addr,
+    /// The device's netmask.
+    pub mask: std::net::Ipv4Addr,
+    /// The device's gateway.
+    pub gateway: std::net::Ipv4Addr,
 }
 
 /// The audio a bay signal report describes.

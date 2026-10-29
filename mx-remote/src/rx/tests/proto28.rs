@@ -8,8 +8,8 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::types::{
-    StreamKind, V2ipStreamSource, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS_VALID,
+    BayVideoDetails, StreamKind, V2ipStreamSource, SCALING_FLAG_AUTO_SCALING,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS_VALID,
 };
 use crate::wire::{
     cstr, op, BayFeatures, BayStatus, DeviceFeature, MxrSignalType, BAY_CONFIG_SIZE, V2IP_DSCP_SET,
@@ -681,6 +681,73 @@ fn signal_status_decodes_the_video_and_bay_blocks() {
     // The depth is an index, not a bit count: 2 stands for 10.
     assert_eq!(d.scaling.bpp(), Some(10));
     assert!(d.scaling.is_set());
+}
+
+/// A caller names the signal from its parts, so they are read where the description is built from.
+#[test]
+fn signal_status_hands_over_the_signal_s_mode_size_and_flags() {
+    let mut h = Harness::new(26);
+    h.hello(0x28, "ONEIP-TX", "SS0002", DeviceFeature::VIDEO_ROUTING);
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &bay_config_rec(
+            0,
+            0,
+            0,
+            "Input 1",
+            "Player",
+            BayStatus::NONE,
+            BayFeatures::HDMI_IN,
+        ),
+    );
+    let report = |support: u8, flags: u8, svd: u8| {
+        let mut p = poisoned(112);
+        p[2] = support;
+        p[3] = flags;
+        p[40] = svd;
+        p[41] = 3;
+        p[42] = 10;
+        p[48..50].copy_from_slice(&50u16.to_le_bytes());
+        p[58..60].copy_from_slice(&1680u16.to_le_bytes());
+        p[68..70].copy_from_slice(&1050u16.to_le_bytes());
+        p[100..102].copy_from_slice(&0u16.to_le_bytes());
+        p
+    };
+    let detected_valid = 0b11;
+    let interlaced_hdr = (1 << 1) | (1 << 4);
+
+    h.feed(
+        op::BAY_SIGNAL_STATUS,
+        &report(detected_valid, interlaced_hdr, 20),
+    );
+    let video = h.bay(0).signal_details.and_then(|d| d.video);
+    assert_eq!(
+        video,
+        Some(BayVideoDetails {
+            svd: 20,
+            width: 1920,
+            height: 1080,
+            colour: 3,
+            bpp: 10,
+            interlaced: true,
+            hdr: true,
+        })
+    );
+
+    h.feed(op::BAY_SIGNAL_STATUS, &report(detected_valid, 1 << 4, 0));
+    let video = h.bay(0).signal_details.and_then(|d| d.video);
+    assert_eq!(
+        video.map(|v| (v.svd, v.width, v.height, v.interlaced, v.hdr)),
+        Some((0, 1680, 1050, false, true)),
+        "no mode: the measured size"
+    );
+
+    h.feed(op::BAY_SIGNAL_STATUS, &report(1, 0, 16));
+    assert_eq!(
+        h.bay(0).signal_details.and_then(|d| d.video),
+        None,
+        "detected but not valid"
+    );
 }
 
 /// The two payloads below came off a live mesh, from the input and the output

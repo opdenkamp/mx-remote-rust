@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, ArcStatus, BayContentField, BayMirrorStatus, BaySignalDetails, DeviceStatus,
-    MacAddress, MeshControllerReport, PowerStatus, VolumeMuteStatus,
+    MacAddress, MeshControllerReport, P8ModelInfo, PowerStatus, VolumeMuteStatus,
 };
 use crate::wire::{
     BayFeatures, BayStatus, BayUid, DeviceFeature, DeviceUid, EdidProfile, MxrSignalType, RcType,
@@ -253,6 +253,10 @@ pub struct BayInfo {
     pub signal_type: Option<String>,
     /// The signal as the device measures it.
     pub signal_details: Option<BaySignalDetails>,
+    /// The Pulse-Eight device the device last reported connected to the bay,
+    /// from the long form of its connect frame; `None` after a short or
+    /// disconnecting one.
+    pub p8_device: Option<P8ModelInfo>,
     /// The signal format the device reports for the bay.
     pub signal_mode: MxrSignalType,
     /// Whether audio return is active, and over which connector.
@@ -320,6 +324,7 @@ impl BayInfo {
             decoder_disabled: d.decoder_disabled,
             signal_type: d.signal_type.clone(),
             signal_details: d.signal_details,
+            p8_device: bay.p8_device.clone(),
             signal_mode: d.signal_mode,
             arc: d.arc,
             volume: state

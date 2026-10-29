@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 use crate::event::Event;
 use crate::state::State;
-use crate::types::{BayAudioDetails, BaySignalDetails};
+use crate::types::{BayAudioDetails, BaySignalDetails, BayVideoDetails};
 use crate::wire::{BayStatus, BayUid, MxrSignalType};
 
 use super::handlers::{u16_at, u32_at};
@@ -230,6 +230,15 @@ pub(super) fn signal_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>)
         scaling: MxrSignalType::from_wire(u16_at(bay_block, 6)),
         clock_rate: u32_at(bay_block, 8),
         audio: audio_details(&p[24..40], support_flags),
+        video: (stream_detected && stream_valid).then(|| BayVideoDetails {
+            svd: video[0],
+            width: h,
+            height: v,
+            colour: video[1],
+            bpp: video[2],
+            interlaced: stream_flags & STREAM_INTERLACED != 0,
+            hdr: stream_flags & STREAM_HDR != 0,
+        }),
     };
 
     // The bay's status word is applied as a bay configuration's is, which is

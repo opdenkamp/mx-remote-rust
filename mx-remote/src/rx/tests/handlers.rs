@@ -9,12 +9,14 @@
 
 use crate::event::Event;
 use crate::types::{
-    ArcStatus, PowerStatus, TimeZone, AMP_TONE_HTTP_MAX, AMP_TONE_HTTP_MIN, VOLUME_UNCHANGED,
+    ArcStatus, P8ModelInfo, PowerStatus, TimeZone, AMP_TONE_HTTP_MAX, AMP_TONE_HTTP_MIN,
+    VOLUME_UNCHANGED,
 };
 use crate::wire::{
     op, parse_bay_config, BayFeatures, BayStatus, DeviceFeature, EdidProfile, MxrSignalType,
     Opcode, RcAction, RcKey, RcType, PROTOCOL_VERSION, V2IP_PORT_VIDEO,
 };
+use std::net::Ipv4Addr;
 
 use crate::testing::{bay_config_rec, field, hello_payload, poisoned, stream_rec, uid_n};
 
@@ -310,6 +312,62 @@ fn the_unchanged_value_is_not_read_as_a_setting() {
     let v = h.bay(2).audio_volume.expect("no volume");
     assert_eq!((v.volume_left, v.volume_right), (Some(70), Some(70)));
     assert_eq!(v.muted(), Some(false), "this frame did name a mute state");
+}
+
+/// The long form of a connect frame, composed from the documented layout: a field at a neighbour's offset or width reads a different value.
+fn p8_connect(port: u8, connected: u8) -> Vec<u8> {
+    let mut p = poisoned(96);
+    p[0] = port;
+    p[1] = connected;
+    for (at, s) in [
+        (4, "Pulse-Eight"),
+        (20, "PROAMP8"),
+        (37, "P8SN00001234"),
+        (53, "1.4.2"),
+    ] {
+        p[at..at + 16].fill(0);
+        p[at..at + s.len()].copy_from_slice(s.as_bytes());
+    }
+    p[36] = 7;
+    p[72..76].copy_from_slice(&1i32.to_le_bytes());
+    p[76..80].copy_from_slice(&3i32.to_le_bytes());
+    p[80] = 1;
+    p[81] = 0;
+    p[84..88].copy_from_slice(&[10, 66, 0, 150]);
+    p[88..92].copy_from_slice(&[255, 255, 254, 0]);
+    p[92..96].copy_from_slice(&[10, 66, 0, 1]);
+    p
+}
+
+#[test]
+fn a_long_connect_frame_names_the_pulse_eight_device_on_the_bay_until_a_short_or_disconnect_one() {
+    let mut h = bay_state(111);
+    h.feed(op::DEV_CONNECT, &p8_connect(2, 1));
+    assert_eq!(
+        h.bay(2).p8_device,
+        Some(P8ModelInfo {
+            vendor: "Pulse-Eight".into(),
+            model: "PROAMP8".into(),
+            board_rev: 7,
+            serial: "P8SN00001234".into(),
+            version: "1.4.2".into(),
+            remote_mode: 1,
+            remote_bay: 3,
+            loopback: true,
+            hdmi: false,
+            ip: Ipv4Addr::new(10, 66, 0, 150),
+            mask: Ipv4Addr::new(255, 255, 254, 0),
+            gateway: Ipv4Addr::new(10, 66, 0, 1),
+        })
+    );
+    assert_eq!(h.bay(1).p8_device, None, "port 2 only");
+    let mut short = p8_connect(2, 1);
+    short.truncate(95);
+    h.feed(op::DEV_CONNECT, &short);
+    assert_eq!(h.bay(2).p8_device, None, "a frame too short to hold it");
+    h.feed(op::DEV_CONNECT, &p8_connect(2, 1));
+    h.feed(op::DEV_CONNECT, &p8_connect(2, 0));
+    assert_eq!(h.bay(2).p8_device, None, "disconnected");
 }
 
 #[test]

@@ -9,8 +9,8 @@ use crate::event::Event;
 use crate::state::{Device, HelloInfo, MeshBayChange, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
-    HiddenStatus, MeshControllerReport, MeshOperation, MuteStatus, PowerStatus, StreamKind,
-    TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig,
+    HiddenStatus, MeshControllerReport, MeshOperation, MuteStatus, P8ModelInfo, PowerStatus,
+    StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig,
     V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState, V2ipScalingSettings, V2ipStreamSource,
     V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
     VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_OPTIONS_VALID, VOLUME_UNCHANGED,
@@ -119,8 +119,39 @@ pub(super) fn connect_status(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
     } else {
         ConnectStatus::Disconnected
     };
+    let p = rx.frame.payload();
+    let device = p
+        .get(P8_MODEL_INFO_AT..P8_MODEL_INFO_AT + P8_MODEL_INFO_SIZE)
+        .filter(|_| status == ConnectStatus::Connected)
+        .map(p8_model_info);
     if let Some(bay) = state.bay_mut(BayUid::new(rx.sender(), u16::from(port))) {
         bay.apply_connect_status(status, ev);
+        bay.p8_device = device;
+    }
+}
+
+/// The long form's `model_info`, behind the port, the flag and two bytes of padding.
+const P8_MODEL_INFO_AT: usize = 4;
+const P8_MODEL_INFO_SIZE: usize = 92;
+const P8_TEXT_LEN: usize = 16;
+
+/// Reads `model_info`: vendor, model, board revision, serial and version, then the bay's mode and number on the device (4 bytes each), the loopback and HDMI flags, and the device's address, mask and gateway.
+fn p8_model_info(m: &[u8]) -> P8ModelInfo {
+    let text = |at: usize| cstr(m.get(at..at + P8_TEXT_LEN).unwrap_or_default());
+    let i32_at = |at: usize| i32::from_le_bytes(u32_at(m, at).to_le_bytes());
+    P8ModelInfo {
+        vendor: text(0),
+        model: text(16),
+        board_rev: byte(m, 32),
+        serial: text(33),
+        version: text(49),
+        remote_mode: i32_at(68),
+        remote_bay: i32_at(72),
+        loopback: byte(m, 76) != 0,
+        hdmi: byte(m, 77) != 0,
+        ip: ipv4_at(m, 80),
+        mask: ipv4_at(m, 84),
+        gateway: ipv4_at(m, 88),
     }
 }
 

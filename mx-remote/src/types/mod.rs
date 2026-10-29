@@ -39,9 +39,10 @@ pub use osd::{
     OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
 };
 pub use status::{
-    ArcStatus, BayAudioDetails, BayContentField, BayMirrorStatus, BaySignalDetails, ConnectStatus,
-    DeviceStatus, FirmwareVersion, HiddenStatus, MuteStatus, PowerStatus, TimeZone, TopologyEntry,
-    VolumeMuteStatus, BAY_CONTENT_KEY_MAX, BAY_CONTENT_VALUE_MAX, VOLUME_UNCHANGED,
+    ArcStatus, BayAudioDetails, BayContentField, BayMirrorStatus, BaySignalDetails,
+    BayVideoDetails, ConnectStatus, DeviceStatus, FirmwareVersion, HiddenStatus, MuteStatus,
+    P8ModelInfo, PowerStatus, TimeZone, TopologyEntry, VolumeMuteStatus, BAY_CONTENT_KEY_MAX,
+    BAY_CONTENT_VALUE_MAX, VOLUME_UNCHANGED,
 };
 pub use third_party::{ThirdPartyMessage, ThirdPartyVendor, THIRD_PARTY_PAYLOAD_MAX};
 pub use unit::{

@@ -6,7 +6,7 @@
 use crate::event::Event;
 use crate::types::{
     AmpZoneSettings, ArcStatus, BayContentField, BayMirrorStatus, BaySignalDetails, ConnectStatus,
-    HiddenStatus, PowerStatus, VolumeMuteStatus,
+    HiddenStatus, P8ModelInfo, PowerStatus, VolumeMuteStatus,
 };
 use crate::wire::{
     BayConfig, BayFeatures, BayStatus, BayUid, DeviceUid, EdidProfile, MxrSignalType, RcType,
@@ -48,6 +48,8 @@ pub(crate) struct Bay {
     pub(crate) encoder_disabled: Option<bool>,
     pub(crate) signal_type: Option<String>,
     pub(crate) signal_details: Option<BaySignalDetails>,
+    /// The Pulse-Eight device the unit last reported connected to the bay.
+    pub(crate) p8_device: Option<P8ModelInfo>,
     pub(crate) signal_mode: MxrSignalType,
     pub(crate) filtered: Vec<DeviceUid>,
     pub(crate) arc: ArcStatus,
@@ -138,6 +140,7 @@ impl Bay {
             encoder_disabled: None,
             signal_type: None,
             signal_details: None,
+            p8_device: None,
             signal_mode: MxrSignalType::NONE,
             filtered: Vec::new(),
             arc: ArcStatus::Inactive,
