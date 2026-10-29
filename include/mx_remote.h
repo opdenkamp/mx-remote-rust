@@ -1314,6 +1314,12 @@
 #define MXR_V2IP_LOCALE_UNKNOWN 255
 
 /**
+ * The UDP port a OneIP unit sends its live preview to, on the group
+ * `mxr_v2ip_preview()` names.
+ */
+#define MXR_V2IP_PREVIEW_PORT 5880
+
+/**
  * The output plays a stream from a description.
  */
 #define MXR_V2IP_SDP_FLAG_ACTIVE (1 << 0)
@@ -8257,6 +8263,22 @@ mxr_result_t mxr_v2ip_downmix(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2i
  * `remote` is null or a live handle, and `out` points at a writable byte.
  */
 mxr_result_t mxr_v2ip_locale(const mxr_remote_t *remote, mxr_uid_t uid, uint8_t *out);
+
+/**
+ * Writes the multicast group a OneIP device sends its live preview to, on
+ * `MXR_V2IP_PREVIEW_PORT`, as RFC 2435 RTP/JPEG. `ip` needs
+ * `MXR_IP_STRING_LEN` bytes.
+ *
+ * Reports `MXR_ERR_NOT_REPORTED` while the device reports no group, and
+ * always for one whose firmware has no preview. Only the device's own report
+ * names it. A change is announced through `on_device_update`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `ip` is null or points at `cap`
+ * writable bytes.
+ */
+mxr_result_t mxr_v2ip_preview(const mxr_remote_t *remote, mxr_uid_t uid, char *ip, size_t cap);
 
 /**
  * Fills `out` with what a OneIP output last reported playing from a session

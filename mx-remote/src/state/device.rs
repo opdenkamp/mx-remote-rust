@@ -185,6 +185,9 @@ pub(crate) struct Device {
     /// The locale the device runs, by its number, `None` while it reports
     /// none.
     pub(crate) v2ip_locale: Option<u8>,
+    /// The group the device sends its live preview to, `None` while it
+    /// reports none.
+    pub(crate) v2ip_preview: Option<Ipv4Addr>,
     /// The test card the sink last reported.
     pub(crate) v2ip_testcard: Option<V2ipTestcard>,
     pub(crate) v2ip_stats: Option<V2ipDeviceStats>,
@@ -253,6 +256,7 @@ impl Device {
             v2ip_ptp: None,
             v2ip_downmix: None,
             v2ip_locale: None,
+            v2ip_preview: None,
             unit_status: None,
             v2ip_sink_sdp: None,
             v2ip_sink_description: None,
@@ -1383,6 +1387,17 @@ impl Device {
         ev.push(Event::V2ipLocaleChanged {
             device: self.uid,
             locale,
+        });
+    }
+
+    pub(crate) fn set_v2ip_preview(&mut self, preview: Option<Ipv4Addr>, ev: &mut Vec<Event>) {
+        if self.v2ip_preview == preview {
+            return;
+        }
+        self.v2ip_preview = preview;
+        ev.push(Event::V2ipPreviewChanged {
+            device: self.uid,
+            preview,
         });
     }
 

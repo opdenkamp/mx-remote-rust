@@ -613,6 +613,10 @@ const V2IP_DOWNMIX_AT: usize = V2IP_VALID_EXT_AT + 4;
 const V2IP_DOWNMIX_SIZE: usize = 5;
 /// The locale's number, behind the downmix.
 const V2IP_LOCALE_AT: usize = V2IP_DOWNMIX_AT + V2IP_DOWNMIX_SIZE;
+/// The live preview's group, an address in network order at the end of the
+/// settings block, behind the locale and two reserved bytes.
+const V2IP_PREVIEW_AT: usize = V2IP_LOCALE_AT + 3;
+const V2IP_PREVIEW_SIZE: usize = 4;
 
 /// Reads a settings block, the last block of its frame, and clears the bits
 /// of `valid` whose values it is too short to hold: the three PTP intervals as
@@ -865,6 +869,18 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             } else if carried && device.v2ip_locale.is_some() {
                 device.set_v2ip_locale(Some(locale), ev);
             }
+        }
+    }
+
+    // Only the device reports where it sends its preview: a block without the
+    // group, or with 0, is firmware that sends none.
+    if subject == rx.sender() {
+        let preview = p
+            .get(V2IP_PREVIEW_AT..V2IP_PREVIEW_AT + V2IP_PREVIEW_SIZE)
+            .map(|g| ipv4_at(g, 0))
+            .filter(|g| !g.is_unspecified());
+        if let Some(device) = state.device_mut(subject) {
+            device.set_v2ip_preview(preview, ev);
         }
     }
 

@@ -1391,6 +1391,27 @@ fn the_downmix_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// The preview read refuses a caller's mistake as an argument error before it looks for the device.
+#[test]
+fn the_preview_read_checks_its_arguments_first() {
+    let remote = client(c"abi-preview", c"00000027.00000000.00000000.000000af");
+    let mut ip: [c_char; MXR_IP_STRING_LEN] = [0; MXR_IP_STRING_LEN];
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_v2ip_preview(remote, uid_n(9), ptr::null_mut(), MXR_IP_STRING_LEN) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle and a buffer longer than the length passed.
+    let rc = unsafe { mxr_v2ip_preview(remote, uid_n(9), ip.as_mut_ptr(), MXR_IP_STRING_LEN - 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle and MXR_IP_STRING_LEN writable bytes.
+    let rc = unsafe { mxr_v2ip_preview(remote, uid_n(9), ip.as_mut_ptr(), MXR_IP_STRING_LEN) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    assert_eq!(MXR_V2IP_PREVIEW_PORT, 5880);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// A 4:2:0 write needs a known sink, so one never heard from is not found.
 #[test]
 fn a_skip_420_write_to_an_unknown_sink_is_not_found() {

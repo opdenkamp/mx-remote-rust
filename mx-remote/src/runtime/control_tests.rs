@@ -6079,6 +6079,60 @@ fn another_senders_locale_reaches_a_device_that_has_one() {
     assert_eq!(f.remote.v2ip_locale(uid), Some(1));
 }
 
+/// [`locale_report`] ending in `preview`, the group the device sends its live preview to.
+fn preview_report(cfg: &Cfg, preview: Ipv4Addr) -> Vec<u8> {
+    let mut p = locale_report(cfg, EXT_LOCALE, 0);
+    p[244..248].copy_from_slice(&preview.octets());
+    p
+}
+
+/// A device's own report names its preview group; 0, or a block too short for it, names none.
+#[test]
+fn a_preview_group_is_read_from_the_devices_own_report() {
+    let f = Fixture::new();
+    let (uid, controller) = (uid_n(253), uid_n(255));
+    f.everything(uid, 0x30, "PV0001");
+    f.feed(
+        controller,
+        op::SYS_HELLO,
+        &hello_payload(0x30, "Ctrl", "PV0002", "4.8.0", DeviceFeature::MANAGER),
+    );
+    let cfg = Cfg::addresses(uid, "239.1.2.3");
+    let group = Ipv4Addr::new(239, 7, 8, 9);
+    assert_eq!(f.remote.v2ip_preview(uid), None);
+
+    f.feed(uid, op::V2IP_DEVICE_CFG, &preview_report(&cfg, group));
+    assert_eq!(f.remote.v2ip_preview(uid), Some(group));
+    f.feed(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &preview_report(&cfg, Ipv4Addr::new(239, 1, 1, 1)),
+    );
+    f.feed(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &preview_report(&cfg, Ipv4Addr::UNSPECIFIED),
+    );
+    assert_eq!(
+        f.remote.v2ip_preview(uid),
+        Some(group),
+        "another sender's frame"
+    );
+
+    let mut short = preview_report(&cfg, group);
+    short.truncate(247);
+    f.feed(uid, op::V2IP_DEVICE_CFG, &short);
+    assert_eq!(f.remote.v2ip_preview(uid), None, "a block too short");
+    f.feed(uid, op::V2IP_DEVICE_CFG, &preview_report(&cfg, group));
+    assert_eq!(f.remote.v2ip_preview(uid), Some(group));
+    f.feed(
+        uid,
+        op::V2IP_DEVICE_CFG,
+        &preview_report(&cfg, Ipv4Addr::UNSPECIFIED),
+    );
+    assert_eq!(f.remote.v2ip_preview(uid), None);
+}
+
 /// A third-party message goes to every device at the lowest stamp, with the
 /// flag byte, the three identifying bytes and the payload as given.
 #[test]

@@ -35,6 +35,10 @@ pub const V2IP_PORT_ANC: u16 = 50021;
 /// Default destination UDP port of a OneIP audio stream.
 pub const V2IP_PORT_AUDIO: u16 = 50022;
 
+/// Destination UDP port of a OneIP unit's live preview, RFC 2435 RTP/JPEG
+/// sent to the group the unit reports.
+pub const V2IP_PREVIEW_PORT: u16 = 5880;
+
 /// Sample rate a OneIP audio stream uses when none is given.
 pub const V2IP_AUDIO_DEFAULT_SAMPLE_RATE: u32 = 48000;
 

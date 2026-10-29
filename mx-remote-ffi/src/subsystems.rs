@@ -1585,6 +1585,49 @@ pub unsafe extern "C" fn mxr_v2ip_locale(
     })
 }
 
+/// Writes the multicast group a OneIP device sends its live preview to, on
+/// `MXR_V2IP_PREVIEW_PORT`, as RFC 2435 RTP/JPEG. `ip` needs
+/// `MXR_IP_STRING_LEN` bytes.
+///
+/// Reports `MXR_ERR_NOT_REPORTED` while the device reports no group, and
+/// always for one whose firmware has no preview. Only the device's own report
+/// names it. A change is announced through `on_device_update`.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `ip` is null or points at `cap`
+/// writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_v2ip_preview(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    ip: *mut c_char,
+    cap: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if ip.is_null() {
+            return null_out("preview");
+        }
+        if cap < MXR_IP_STRING_LEN {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "address buffer is shorter than MXR_IP_STRING_LEN",
+            );
+        }
+        match r.remote.v2ip_preview(uid.into()) {
+            Some(group) => {
+                // SAFETY: the caller guarantees cap writable bytes at ip.
+                let dst = unsafe { std::slice::from_raw_parts_mut(ip, cap) };
+                put_str(dst, &group.to_string());
+                mxr_result_t::MXR_OK
+            }
+            None => not_reported(r, uid, "preview"),
+        }
+    })
+}
+
 /// The longest session description a OneIP output takes, in bytes.
 pub const MXR_V2IP_SDP_MAX: usize = 2048;
 /// Bytes in `mxr_v2ip_sink_sdp_t.name`, its NUL included.

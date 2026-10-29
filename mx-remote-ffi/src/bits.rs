@@ -844,6 +844,13 @@ pub const MXR_V2IP_LOCALE_UNKNOWN: u8 = 255;
 // The header carries it as a literal, so it is held to the core's here.
 const _: () = assert!(MXR_V2IP_LOCALE_UNKNOWN == mx_remote::V2IP_LOCALE_UNKNOWN);
 
+/// The UDP port a OneIP unit sends its live preview to, on the group
+/// `mxr_v2ip_preview()` names.
+pub const MXR_V2IP_PREVIEW_PORT: u16 = 5880;
+
+// The header carries it as a literal, so it is held to the core's here.
+const _: () = assert!(MXR_V2IP_PREVIEW_PORT == mx_remote::V2IP_PREVIEW_PORT);
+
 // ---- what a OneIP output plays from a description, in `mxr_v2ip_sink_sdp_t` ----
 
 /// The output plays a stream from a description.

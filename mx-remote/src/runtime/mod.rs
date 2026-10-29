@@ -617,6 +617,14 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_locale)
     }
 
+    /// The multicast group a OneIP device sends its live preview to, on
+    /// [`V2IP_PREVIEW_PORT`](crate::V2IP_PREVIEW_PORT), as the device last
+    /// reported it about itself; `None` while it reports none, and always for
+    /// one whose firmware has no preview.
+    pub fn v2ip_preview(&self, uid: DeviceUid) -> Option<Ipv4Addr> {
+        self.shared.read(|state| state.device(uid)?.v2ip_preview)
+    }
+
     /// The VLAN configuration a OneIP device last reported about itself,
     /// `None` until it has reported one.
     pub fn v2ip_vlan(&self, uid: DeviceUid) -> Option<V2ipVlan> {
