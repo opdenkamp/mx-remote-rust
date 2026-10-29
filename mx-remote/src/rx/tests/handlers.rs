@@ -1252,6 +1252,28 @@ fn network_status_layouts() {
     );
 }
 
+/// The feature word marks the uplink at bit 6, and the status word's third
+/// byte marks a link carrying video at bit 4, next to the speed and duplex.
+#[test]
+fn network_status_reads_the_uplink_and_video_link_bits() {
+    use crate::rx::network::parse_modern;
+
+    let mut p = poisoned(144);
+    p[0..2].copy_from_slice(&3u16.to_le_bytes());
+    p[2..4].copy_from_slice(&(1u16 << 6).to_le_bytes());
+    p[38] = 4 | (1 << 3) | (1 << 4);
+    let s = parse_modern(&p).expect("did not parse");
+    assert!(s.uplink, "the uplink bit");
+    assert!(s.video_link, "the video link bit");
+    assert_eq!(s.link_speed, crate::wire::UtpLinkSpeed::SPEED_1G);
+
+    p[2..4].copy_from_slice(&(1u16 << 4).to_le_bytes());
+    p[38] = 4 | (1 << 3) | (1 << 5);
+    let s = parse_modern(&p).expect("did not parse");
+    assert!(!s.uplink, "an internal port");
+    assert!(!s.video_link, "a neighbouring bit");
+}
+
 /// The legacy struct grew by appending, so a field only exists from the version
 /// that added it, and each form is measured at its own size.
 ///

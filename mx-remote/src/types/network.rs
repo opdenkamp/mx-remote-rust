@@ -91,6 +91,12 @@ pub struct NetworkPortStatus {
     pub link_speed: UtpLinkSpeed,
     /// Whether the link negotiated full duplex.
     pub link_full_duplex: bool,
+    /// Whether the device reports this port as its uplink. A report from
+    /// before protocol 0x22 is read as not marking it.
+    pub uplink: bool,
+    /// Whether the link carries video. A report from before protocol 0x22 is
+    /// read as not marking it.
+    pub video_link: bool,
     /// The port's own address.
     pub ip: Option<Ipv4Addr>,
     /// The IGMP querier the port sees.
