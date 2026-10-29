@@ -2523,9 +2523,8 @@ impl Remote {
     /// [`Remote::v2ip_testcard`] reads it.
     ///
     /// Refused unless the sink's video processor has reported
-    /// [`SINK_TEST_PATTERN`](V2ipFpgaFeature::SINK_TEST_PATTERN). A sink with
-    /// that feature but without the module that draws the test card does not
-    /// answer.
+    /// [`RTOS`](V2ipFpgaFeature::RTOS). A sink with it but without the module
+    /// that draws the test card does not answer.
     pub fn request_v2ip_testcard(&self, device: DeviceUid) -> Result<(), ControlError> {
         self.send_v2ip_testcard(device, testcard_type::REQUEST, 0, V2ipTestcard::default())
     }
@@ -2629,7 +2628,7 @@ impl Remote {
                     "the sink's video processor features",
                 ));
             };
-            if !features.has(V2ipFpgaFeature::SINK_TEST_PATTERN) {
+            if !features.has(V2ipFpgaFeature::RTOS) {
                 return Err(ControlError::Unsupported(
                     "the sink cannot draw a test card",
                 ));

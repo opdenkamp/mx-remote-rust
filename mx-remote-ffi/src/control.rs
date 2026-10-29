@@ -2459,11 +2459,10 @@ pub unsafe extern "C" fn mxr_set_v2ip_vlan(
 /// `mxr_v2ip_testcard()` reads it.
 ///
 /// `MXR_ERR_NOT_REPORTED` before the sink has reported its video processor
-/// features, `MXR_ERR_UNSUPPORTED` when they lack bit 8 of
-/// `mxr_v2ip_features()` (the test pattern), and `MXR_ERR_PROTOCOL_TOO_OLD`
-/// for a sink below protocol 0x2B, sending nothing in each case. A sink with
-/// the feature but without the module that draws the test card does not
-/// answer.
+/// features, `MXR_ERR_UNSUPPORTED` when they lack bit 0 of
+/// `mxr_v2ip_features()` (the RTOS image), and `MXR_ERR_PROTOCOL_TOO_OLD` for
+/// a sink below protocol 0x2B, sending nothing in each case. A sink with it
+/// but without the module that draws the test card does not answer.
 ///
 /// # Safety
 ///

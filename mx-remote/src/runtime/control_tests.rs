@@ -3744,13 +3744,7 @@ fn testcard_sink(f: &Fixture, uid: DeviceUid, protocol: u16, serial: &str, featu
 fn a_testcard_write_carries_its_part_behind_its_bit() {
     let f = Fixture::new();
     let uid = uid_n(233);
-    testcard_sink(
-        &f,
-        uid,
-        0x2B,
-        "TC0003",
-        V2ipFpgaFeature::SINK_TEST_PATTERN.bits(),
-    );
+    testcard_sink(&f, uid, 0x2B, "TC0003", V2ipFpgaFeature::RTOS.bits());
     f.connect();
 
     let sent = |f: &Fixture| {
@@ -3822,37 +3816,42 @@ fn a_testcard_write_carries_its_part_behind_its_bit() {
     assert_eq!(f.remote.v2ip_testcard(uid), None, "a write was cached");
 }
 
+/// Any processor feature bit but the RTOS image's.
+const NOT_RTOS: u64 = !V2ipFpgaFeature::RTOS.bits();
+
+#[test]
+fn only_the_rtos_image_draws_a_test_card() {
+    let f = Fixture::new();
+    let (rtos, other) = (uid_n(238), uid_n(239));
+    testcard_sink(&f, rtos, 0x2B, "TC0008", V2ipFpgaFeature::RTOS.bits());
+    testcard_sink(&f, other, 0x2B, "TC0009", NOT_RTOS);
+    f.connect();
+    f.tap.clear();
+    f.remote
+        .request_v2ip_testcard(rtos)
+        .expect("a sink whose image has the test card");
+    assert_eq!(f.tap.frames().len(), 1);
+    f.tap.clear();
+    assert!(matches!(
+        f.remote.request_v2ip_testcard(other),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(f.tap.frames().is_empty());
+}
+
 /// A write the sink could not take, and a sink that cannot draw a test card,
 /// are refused before anything is sent.
 #[test]
 fn a_testcard_write_the_sink_would_not_take_is_refused() {
     let f = Fixture::new();
     let sink = uid_n(234);
-    testcard_sink(
-        &f,
-        sink,
-        0x2B,
-        "TC0004",
-        V2ipFpgaFeature::SINK_TEST_PATTERN.bits(),
-    );
+    testcard_sink(&f, sink, 0x2B, "TC0004", V2ipFpgaFeature::RTOS.bits());
     let without = uid_n(235);
-    testcard_sink(
-        &f,
-        without,
-        0x2B,
-        "TC0005",
-        V2ipFpgaFeature::SINK_STATE.bits(),
-    );
+    testcard_sink(&f, without, 0x2B, "TC0005", NOT_RTOS);
     let unreported = uid_n(236);
     testcard_sink(&f, unreported, 0x2B, "TC0006", 0);
     let old = uid_n(237);
-    testcard_sink(
-        &f,
-        old,
-        0x2A,
-        "TC0007",
-        V2ipFpgaFeature::SINK_TEST_PATTERN.bits(),
-    );
+    testcard_sink(&f, old, 0x2A, "TC0007", V2ipFpgaFeature::RTOS.bits());
     f.connect();
     f.tap.clear();
 

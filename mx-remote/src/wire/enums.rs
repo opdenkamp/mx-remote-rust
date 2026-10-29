@@ -207,27 +207,16 @@ bitmask! {
     /// describing itself, and leaves it zero on one it sends to configure
     /// another device. There is no write path.
     ///
-    /// Bits are assigned by the video processor and only ever appended, so a
-    /// bit this library has no name for is a later capability rather than an
-    /// error. A device reports no features at all until its processor answers,
-    /// and an older processor answers with none of the optional commands, so an
-    /// empty mask is never reported as a capability set - see
+    /// Bit 0 marks the RTOS image on the p8 bitstream, which has every
+    /// command; later bits are appended from bit 1. An image a device doesn't
+    /// drive reports none, and a capability is tested as its bit alone.
+    ///
+    /// A device reports no features at all until its processor answers, so
+    /// an empty mask is never reported as a capability set - see
     /// [`crate::Remote::v2ip_features`], which reports it as unknown instead.
     V2ipFpgaFeature: u64 {
-        /// Applies a DSCP marking to the streams it sources.
-        SOURCE_DSCP = 1 << 0;
-        /// Reports the audio format arriving at its sink.
-        SINK_AUDIO_FORMAT = 1 << 1;
-        /// Places a tiling window on its sink.
-        SINK_TILING_WINDOW = 1 << 2;
-        /// Reports the state of its sink's overlay.
-        SINK_OVERLAY_STATE = 1 << 3;
-        /// Reports its sink's state.
-        SINK_STATE = 1 << 4;
-        /// Reports information about the stream its sink receives.
-        SINK_STREAM_INFO = 1 << 5;
-        /// Draws a test pattern, tone and lip-sync flash on its sink's output.
-        SINK_TEST_PATTERN = 1 << 8;
+        /// The RTOS image on the p8 bitstream, which has every command.
+        RTOS = 1 << 0;
     }
 }
 

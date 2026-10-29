@@ -2178,7 +2178,7 @@ fn a_captured_processor_word_is_read_behind_the_sink_block() {
 
     let features = h.device().v2ip_features.expect("no processor features");
     assert_eq!(features.bits(), 0x3F);
-    assert!(features.has(V2ipFpgaFeature::SINK_STREAM_INFO));
+    assert!(features.has(V2ipFpgaFeature::RTOS));
 
     let sink = h.device().v2ip_sink.expect("no sink block");
     assert_eq!(sink.addresses.video.ip, Ipv4Addr::new(234, 65, 108, 198));
@@ -2361,7 +2361,7 @@ fn a_write_from_a_controller_leaves_processor_features_alone() {
         &hello_payload(0x28, "Ctrl", "CTRL0002", "4.8.0", DeviceFeature::MANAGER),
     );
     let mut cfg = Cfg::addresses(subject, "239.9.9.9");
-    cfg.codec = V2ipFpgaFeature::SINK_OVERLAY_STATE.bits();
+    cfg.codec = V2ipFpgaFeature::RTOS.bits();
     h.feed_as(controller, op::V2IP_DEVICE_CFG, &cfg.bytes_with_options());
 
     let features = h
@@ -2881,10 +2881,10 @@ fn an_empty_processor_mask_is_not_a_capability_set() {
     );
 
     // Once the processor answers, the mask lands.
-    cfg.codec = V2ipFpgaFeature::SINK_STATE.bits();
+    cfg.codec = V2ipFpgaFeature::RTOS.bits();
     h.feed(op::V2IP_DEVICE_CFG, &cfg.bytes_with_options());
     let features = h.device().v2ip_features.expect("a real mask was dropped");
-    assert!(features.has(V2ipFpgaFeature::SINK_STATE));
+    assert!(features.has(V2ipFpgaFeature::RTOS));
 }
 
 /// A configuration from before the tiling window is decoded, not refused.
