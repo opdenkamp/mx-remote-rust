@@ -2883,13 +2883,18 @@ typedef struct {
    */
   uint8_t lfe;
   /**
-   * Why the stream is or is not mixed down, as the device's own code. Only
-   * the device reports it; a write ignores it.
+   * Whether the device has reported how it mixes since this client's own
+   * last write. Only the device reports it; a write ignores it.
+   */
+  bool has_status;
+  /**
+   * Why the stream is or is not mixed down, as the device's own code;
+   * meaningful only when `has_status` is set.
    */
   uint8_t state;
   /**
-   * The stream's channels while it is mixed down, else 0. Only the device
-   * reports it; a write ignores it.
+   * The stream's channels while it is mixed down, else 0; meaningful only
+   * when `has_status` is set.
    */
   uint8_t channels;
 } mxr_v2ip_downmix_t;

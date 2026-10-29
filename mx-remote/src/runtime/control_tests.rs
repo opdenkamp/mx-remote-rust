@@ -19,11 +19,11 @@ use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n,
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
     EdidProfileChange, EdidRequest, KeyTransmitRequest, MeshOperation, StreamKind, UnitNetConfig,
-    V2ipAudioFormat, V2ipDownmix, V2ipDscpConfig, V2ipOutputMode, V2ipPtpMessages, V2ipRoute,
-    V2ipRouteTarget, V2ipStreamSource, V2ipStreamSources, V2ipVlan, SCALING_FLAG_AUTO_SCALING,
-    SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
-    SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX,
-    V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
+    V2ipAudioFormat, V2ipDownmix, V2ipDownmixStatus, V2ipDscpConfig, V2ipOutputMode,
+    V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipStreamSource, V2ipStreamSources, V2ipVlan,
+    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID,
+    SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
+    V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -5785,8 +5785,10 @@ const REPORTED_DOWNMIX: V2ipDownmix = V2ipDownmix {
     mode: V2ipDownmixMode::AUTO,
     level: V2ipDownmixLevel::UNSCALED,
     lfe: 70,
-    state: 3,
-    channels: 6,
+    status: Some(V2ipDownmixStatus {
+        state: 3,
+        channels: 6,
+    }),
 };
 
 /// A device's own report is read from a block that holds the downmix's last
@@ -5818,7 +5820,7 @@ fn a_downmix_is_read_from_a_block_that_holds_it() {
 }
 
 /// A write carries the second valid word and the three settings, and no bit
-/// of the first, and leaves the state and channels to the device.
+/// of the first; until the device reports, nothing says how it mixes.
 #[test]
 fn a_downmix_write_carries_its_three_settings() {
     let f = Fixture::new();
@@ -5831,8 +5833,10 @@ fn a_downmix_write_carries_its_three_settings() {
         mode: V2ipDownmixMode::ALWAYS,
         level: V2ipDownmixLevel::UNSCALED,
         lfe: 100,
-        state: 9,
-        channels: 9,
+        status: Some(V2ipDownmixStatus {
+            state: 9,
+            channels: 9,
+        }),
     };
 
     f.tap.clear();
@@ -5848,12 +5852,13 @@ fn a_downmix_write_carries_its_three_settings() {
     assert_eq!(
         f.remote.v2ip_downmix(uid),
         Some(V2ipDownmix {
-            state: 3,
-            channels: 6,
+            status: None,
             ..mixed
         }),
-        "the state and channels are the device's"
+        "the device hasn't said how it mixes yet"
     );
+    f.feed(uid, op::V2IP_DEVICE_CFG, &downmix_report(&cfg, 1));
+    assert_eq!(f.remote.v2ip_downmix(uid), Some(REPORTED_DOWNMIX));
 }
 
 /// A downmix out of range, or for a device that reports none, is refused

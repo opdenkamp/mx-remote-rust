@@ -21,11 +21,11 @@ use mx_remote::{
     AmpDolbySettings, AudioEndpoint, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     MultiviewerStatus, NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport, RcSettings,
     StreamKind, TopologyEntry, UnitStatus, UtpCableStatus, V2ipDecoderDetail, V2ipDeviceSettings,
-    V2ipDeviceStats, V2ipDownmix, V2ipDownmixLevel, V2ipDownmixMode, V2ipFpgaFeature, V2ipPrivacy,
-    V2ipPrivacyStream, V2ipPtpMessages, V2ipPtpState, V2ipRxStats, V2ipSinkSdp, V2ipStreamSource,
-    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipToneMode,
-    V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS, OSD_MESSAGE_TEXT_MAX, OSD_SYNC_SLOTS,
-    V2IP_DOWNMIX_LFE_MAX,
+    V2ipDeviceStats, V2ipDownmix, V2ipDownmixLevel, V2ipDownmixMode, V2ipDownmixStatus,
+    V2ipFpgaFeature, V2ipPrivacy, V2ipPrivacyStream, V2ipPtpMessages, V2ipPtpState, V2ipRxStats,
+    V2ipSinkSdp, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
+    V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
+    OSD_MESSAGE_TEXT_MAX, OSD_SYNC_SLOTS, V2IP_DOWNMIX_LFE_MAX,
 };
 
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -1498,11 +1498,14 @@ pub struct mxr_v2ip_downmix_t {
     /// The percent the LFE channel is mixed in at, at most
     /// `MXR_V2IP_DOWNMIX_LFE_MAX`; 0 leaves it out.
     pub lfe: u8,
-    /// Why the stream is or is not mixed down, as the device's own code. Only
-    /// the device reports it; a write ignores it.
+    /// Whether the device has reported how it mixes since this client's own
+    /// last write. Only the device reports it; a write ignores it.
+    pub has_status: bool,
+    /// Why the stream is or is not mixed down, as the device's own code;
+    /// meaningful only when `has_status` is set.
     pub state: u8,
-    /// The stream's channels while it is mixed down, else 0. Only the device
-    /// reports it; a write ignores it.
+    /// The stream's channels while it is mixed down, else 0; meaningful only
+    /// when `has_status` is set.
     pub channels: u8,
 }
 
@@ -1513,12 +1516,14 @@ const _: () = assert!(MXR_V2IP_DOWNMIX_LFE_MAX == V2IP_DOWNMIX_LFE_MAX);
 
 impl From<V2ipDownmix> for mxr_v2ip_downmix_t {
     fn from(d: V2ipDownmix) -> Self {
+        let status = d.status.unwrap_or_default();
         Self {
             mode: d.mode.to_wire(),
             level: d.level.to_wire(),
             lfe: d.lfe,
-            state: d.state,
-            channels: d.channels,
+            has_status: d.status.is_some(),
+            state: status.state,
+            channels: status.channels,
         }
     }
 }
@@ -1529,8 +1534,10 @@ impl From<mxr_v2ip_downmix_t> for V2ipDownmix {
             mode: V2ipDownmixMode::from_wire(d.mode),
             level: V2ipDownmixLevel::from_wire(d.level),
             lfe: d.lfe,
-            state: d.state,
-            channels: d.channels,
+            status: d.has_status.then_some(V2ipDownmixStatus {
+                state: d.state,
+                channels: d.channels,
+            }),
         }
     }
 }
@@ -2771,7 +2778,9 @@ mod tests {
     use std::ffi::CStr;
     use std::net::Ipv4Addr;
 
-    use mx_remote::{V2ipDownmix, V2ipDownmixLevel, V2ipDownmixMode, V2ipPrivacyStream};
+    use mx_remote::{
+        V2ipDownmix, V2ipDownmixLevel, V2ipDownmixMode, V2ipDownmixStatus, V2ipPrivacyStream,
+    };
 
     use super::{mxr_v2ip_downmix_t, privacy_stream};
 
@@ -2783,14 +2792,32 @@ mod tests {
             mode: V2ipDownmixMode::ALWAYS,
             level: V2ipDownmixLevel::UNSCALED,
             lfe: 70,
-            state: 3,
-            channels: 6,
+            status: Some(V2ipDownmixStatus {
+                state: 3,
+                channels: 6,
+            }),
         };
         let c = mxr_v2ip_downmix_t::from(d);
         assert_eq!(
-            (c.mode, c.level, c.lfe, c.state, c.channels),
-            (2, 1, 70, 3, 6)
+            (c.mode, c.level, c.lfe, c.has_status, c.state, c.channels),
+            (2, 1, 70, true, 3, 6)
         );
+        assert_eq!(V2ipDownmix::from(c), d);
+    }
+
+    /// A downmix the device hasn't reported on since a write has no status,
+    /// and a C struct without `has_status` reads as none.
+    #[test]
+    fn a_downmix_without_a_status_says_so() {
+        let d = V2ipDownmix {
+            mode: V2ipDownmixMode::ALWAYS,
+            level: V2ipDownmixLevel::UNSCALED,
+            lfe: 70,
+            status: None,
+        };
+        let mut c = mxr_v2ip_downmix_t::from(d);
+        assert_eq!((c.has_status, c.state, c.channels), (false, 0, 0));
+        (c.state, c.channels) = (3, 6);
         assert_eq!(V2ipDownmix::from(c), d);
     }
 

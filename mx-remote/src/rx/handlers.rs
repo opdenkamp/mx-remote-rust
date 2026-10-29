@@ -10,10 +10,11 @@ use crate::state::{Device, HelloInfo, MeshBayChange, State};
 use crate::types::{
     BayMirrorStatus, ConnectStatus, DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion,
     HiddenStatus, MeshControllerReport, MeshOperation, MuteStatus, P8ModelInfo, PowerStatus,
-    StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig,
-    V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState, V2ipScalingSettings, V2ipStreamSource,
-    V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard, V2ipTilingConfig, V2ipVlan,
-    VolumeMuteStatus, SCALING_FLAGS_DEFINED, SCALING_FLAG_OPTIONS_VALID, VOLUME_UNCHANGED,
+    StreamKind, TimeZone, TopologyEntry, V2ipDeviceSettings, V2ipDownmix, V2ipDownmixStatus,
+    V2ipDscpConfig, V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipPtpState, V2ipScalingSettings,
+    V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
+    V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAGS_DEFINED,
+    SCALING_FLAG_OPTIONS_VALID, VOLUME_UNCHANGED,
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
@@ -848,8 +849,10 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
             mode: V2ipDownmixMode::from_wire(d[0]),
             level: V2ipDownmixLevel::from_wire(d[1]),
             lfe: d[2],
-            state: d[3],
-            channels: d[4],
+            status: Some(V2ipDownmixStatus {
+                state: d[3],
+                channels: d[4],
+            }),
         };
         if let Some(device) = state.device_mut(subject) {
             if subject == rx.sender() {

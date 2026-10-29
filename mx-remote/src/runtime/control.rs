@@ -2587,7 +2587,8 @@ impl Remote {
     /// Refused before anything is sent for a mode, level or LFE percent out of
     /// range, and unless the device reports a downmix, which one whose output
     /// cannot mix down never does. The new downmix is cached once the frame
-    /// is sent, and the device's next report replaces it.
+    /// is sent, with no [`status`](V2ipDownmix::status) until the device's next
+    /// report says how it mixes.
     pub fn set_v2ip_downmix(
         &self,
         device: DeviceUid,
@@ -2615,7 +2616,11 @@ impl Remote {
             )
             .then(move |state, ev| {
                 if let Some(d) = state.device_mut(device) {
-                    d.set_v2ip_downmix(Some(reported.written(downmix)), ev);
+                    let unreported = V2ipDownmix {
+                        status: None,
+                        ..reported.written(downmix)
+                    };
+                    d.set_v2ip_downmix(Some(unreported), ev);
                 }
             }))
         })

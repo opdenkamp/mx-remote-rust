@@ -1363,6 +1363,7 @@ fn the_downmix_calls_check_their_arguments_first() {
         mode: MXR_V2IP_DOWNMIX_ALWAYS,
         level: MXR_V2IP_DOWNMIX_LEVEL_UNSCALED,
         lfe: MXR_V2IP_DOWNMIX_LFE_MAX,
+        has_status: true,
         state: 0xff,
         channels: 0xff,
     };

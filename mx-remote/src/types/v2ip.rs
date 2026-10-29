@@ -689,11 +689,18 @@ pub struct V2ipDownmix {
     /// The percent the LFE channel is mixed in at, at most
     /// [`V2IP_DOWNMIX_LFE_MAX`]; 0 leaves it out.
     pub lfe: u8,
-    /// Why the stream is or is not mixed down, as the device's own code. Only
-    /// the device reports it.
+    /// Whether the stream is mixed down now. Only the device reports it: it
+    /// is `None` from this client's own write until the device's next report,
+    /// and a write ignores it.
+    pub status: Option<V2ipDownmixStatus>,
+}
+
+/// Whether a OneIP output mixes its stream down now, as the device reports it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct V2ipDownmixStatus {
+    /// Why the stream is or is not mixed down, as the device's own code.
     pub state: u8,
-    /// The stream's channels while it is mixed down, else 0. Only the device
-    /// reports it.
+    /// The stream's channels while it is mixed down, else 0.
     pub channels: u8,
 }
 
