@@ -99,6 +99,19 @@ fn hello_frame() {
     );
 }
 
+/// A unit reads the serial and version up to their first zero byte, so each
+/// keeps one at its last byte however long it is given; the name may fill its
+/// field.
+#[test]
+fn hello_fields_keep_a_terminator() {
+    let long = "0123456789ABCDEFGH";
+    let p = build_hello(0x28, long, long, long, 0);
+    assert_eq!(p.len(), 54);
+    assert_eq!(&p[2..18], &long.as_bytes()[..16], "the name");
+    assert_eq!(&p[18..34], b"0123456789ABCDE\0", "the serial");
+    assert_eq!(&p[34..50], b"0123456789ABCDE\0", "the version");
+}
+
 #[test]
 fn discover_frame() {
     let got = build_frame(

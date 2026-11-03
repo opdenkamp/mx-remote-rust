@@ -3683,7 +3683,9 @@ typedef struct {
    */
   uint16_t logo_port;
   /**
-   * The serial number this client advertises. Null means a default.
+   * The serial number this client advertises, at most 15 bytes. Null means
+   * `P9SN00000000`. A unit takes every other serial starting `P9SN0000` as
+   * a default serial, which a `mesh_device` must not announce.
    */
   const char *serial;
   /**
@@ -3695,7 +3697,9 @@ typedef struct {
    * Announce this client as a mesh device rather than a management
    * application: mesh support instead of management, which is what a mesh
    * takes as a member and can hand its controller role to. Units then take
-   * writes from it only while they follow it as their controller.
+   * writes from it only while they follow it as their controller. Units
+   * count a mesh device without bays as a member only when `serial` is not
+   * a default one: `P9SN00000000`, or one that does not start `P9SN0000`.
    */
   bool mesh_device;
   /**

@@ -145,7 +145,11 @@ pub struct Config {
     pub interface: Option<String>,
     /// The name this client advertises. Unset means `MXR Rust`.
     pub name: Option<String>,
-    /// The serial number this client advertises. Unset means `P9SN00000000`.
+    /// The serial number this client advertises, at most 15 bytes. Unset
+    /// means `P9SN00000000`.
+    ///
+    /// A unit takes every other serial starting `P9SN0000` as a default
+    /// serial, which [`Config::mesh_device`] must not announce.
     pub serial: Option<String>,
     /// The firmware version this client advertises. Unset means this
     /// library's version.
@@ -166,6 +170,10 @@ pub struct Config {
     /// what a mesh takes as a member and can hand its controller role to.
     /// Units then take writes from it only while they follow it as their
     /// controller.
+    ///
+    /// Units count a mesh device without bays as a member only when its
+    /// [`Config::serial`] is not a default one: `P9SN00000000`, or one that
+    /// does not start `P9SN0000`.
     pub mesh_device: bool,
     /// Read the source hardware address of every hello, as a unit stores it,
     /// into [`DeviceInfo::mac`].

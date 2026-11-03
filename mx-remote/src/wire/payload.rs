@@ -190,9 +190,13 @@ pub(crate) fn build_hello(
 ) -> Vec<u8> {
     let mut p = Vec::with_capacity(54);
     p.extend_from_slice(&protocol.to_le_bytes());
+    // A unit reads the serial and version up to their first zero byte, so
+    // one filling its 16 bytes would run on into the field after it.
     append_fixed_str(&mut p, app_name, 16);
-    append_fixed_str(&mut p, serial, 16);
-    append_fixed_str(&mut p, version, 16);
+    append_fixed_str(&mut p, serial, 15);
+    p.push(0);
+    append_fixed_str(&mut p, version, 15);
+    p.push(0);
     p.extend_from_slice(&features.to_le_bytes());
     p
 }
