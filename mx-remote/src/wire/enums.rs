@@ -191,8 +191,11 @@ bitmask! {
         /// Copies the overlay settings and logos of another unit when asked.
         OSD_SYNC = 1 << 29;
         /// Is downloading or installing a firmware or video processor
-        /// upgrade. [`STATUS_REBOOT`](Self::STATUS_REBOOT) follows when it
-        /// reboots to complete it.
+        /// upgrade, across every partition of a video processor upgrade,
+        /// until the unit restarts and [`STATUS_REBOOT`](Self::STATUS_REBOOT)
+        /// follows, or its video processor does. A OneIP unit's status tells
+        /// the install itself by
+        /// [`UnitFlag::UPGRADE_INSTALLING`](crate::UnitFlag::UPGRADE_INSTALLING).
         STATUS_UPGRADING = 1 << 30;
         /// Flips on every reboot, so a peer that sees it change knows the device restarted.
         BOOT_BIT = 1 << 31;
@@ -557,6 +560,12 @@ bitmask! {
         /// The unit is being located: its board-ID LED flashes, and an output
         /// shows "Locate Device".
         LOCATE = 1 << 17;
+        /// The update service offered the unit a firmware upgrade, which
+        /// waits to be installed or is downloading or installing.
+        FIRMWARE_UPGRADE = 1 << 18;
+        /// The unit is writing an upgrade to its firmware or video processor
+        /// flash, until it restarts. Its picture is gone meanwhile.
+        UPGRADE_INSTALLING = 1 << 19;
     }
 }
 
@@ -1618,6 +1627,11 @@ bitmask! {
         WRAP = 1 << 7;
         /// The text.
         TEXT = 1 << 8;
+        /// The layout's default text, in place of [`TEXT`](Self::TEXT) and
+        /// with no text given: the unit goes back to its default caption,
+        /// drawn in its own locale, before the other fields apply. A unit
+        /// whose firmware predates it keeps the text it has.
+        DEFAULT_TEXT = 1 << 15;
     }
 }
 

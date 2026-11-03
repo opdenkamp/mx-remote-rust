@@ -1583,6 +1583,18 @@
 #define MXR_UNIT_LOCATE (1 << 17)
 
 /**
+ * The update service offered the unit a firmware upgrade, which waits to be
+ * installed or is downloading or installing.
+ */
+#define MXR_UNIT_FIRMWARE_UPGRADE (1 << 18)
+
+/**
+ * The unit is writing an upgrade to its firmware or video processor flash,
+ * until it restarts. Its picture is gone meanwhile.
+ */
+#define MXR_UNIT_UPGRADE_INSTALLING (1 << 19)
+
+/**
  * The device runs PTP and the block holds its state.
  */
 #define MXR_V2IP_PTP_VALID (1 << 0)
@@ -1912,6 +1924,14 @@
  * The text.
  */
 #define MXR_OSD_CAPTION_FIELD_TEXT (1 << 8)
+
+/**
+ * The layout's default text, in place of `MXR_OSD_CAPTION_FIELD_TEXT` and
+ * with no text given: the unit goes back to its default caption, drawn in its
+ * own locale, before the other fields apply. A unit whose firmware predates it
+ * keeps the text it has.
+ */
+#define MXR_OSD_CAPTION_FIELD_DEFAULT_TEXT (1 << 15)
 
 /**
  * The logo fields a setting gives. A field left out keeps what the unit

@@ -3912,6 +3912,27 @@ fn a_unit_reports_whether_it_is_located() {
     assert!(f.has(UnitFlag::LOCATE) && !f.has(UnitFlag::LOCATE_SUPPORTED));
 }
 
+/// A unit says it was offered a firmware upgrade in bit 18 of its status
+/// flags, and that it is writing one in bit 19.
+#[test]
+fn a_unit_reports_its_upgrade() {
+    let mut h = command_device(146);
+    let report = |h: &mut Harness, flags: u32| {
+        let mut p = flags.to_le_bytes().to_vec();
+        p.resize(104, 0);
+        h.feed_proto(op::SYS_UNIT_STATUS, 0x2C, &p);
+        h.device()
+            .unit_status
+            .clone()
+            .expect("no unit status")
+            .flags
+    };
+    let f = report(&mut h, 1 << 18);
+    assert!(f.has(UnitFlag::FIRMWARE_UPGRADE) && !f.has(UnitFlag::UPGRADE_INSTALLING));
+    let f = report(&mut h, 1 << 19);
+    assert!(f.has(UnitFlag::UPGRADE_INSTALLING) && !f.has(UnitFlag::FIRMWARE_UPGRADE));
+}
+
 /// A rename is taken only from management, as a unit takes it. An empty
 /// name asks the owner to reset the bay, so only a rename for this client
 /// itself reports one; every other receiver ignores it.

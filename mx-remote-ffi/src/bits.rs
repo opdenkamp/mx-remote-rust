@@ -977,6 +977,12 @@ pub const MXR_UNIT_LOCATE_SUPPORTED: u32 = 1 << 16;
 /// The unit is being located: its board-ID LED flashes, and an output shows
 /// "Locate Device".
 pub const MXR_UNIT_LOCATE: u32 = 1 << 17;
+/// The update service offered the unit a firmware upgrade, which waits to be
+/// installed or is downloading or installing.
+pub const MXR_UNIT_FIRMWARE_UPGRADE: u32 = 1 << 18;
+/// The unit is writing an upgrade to its firmware or video processor flash,
+/// until it restarts. Its picture is gone meanwhile.
+pub const MXR_UNIT_UPGRADE_INSTALLING: u32 = 1 << 19;
 
 // ---- OneIP PTP state, in `mxr_v2ip_ptp_t` ----
 
@@ -1145,6 +1151,11 @@ pub const MXR_OSD_CAPTION_FIELD_COLOUR: u16 = 1 << 6;
 pub const MXR_OSD_CAPTION_FIELD_WRAP: u16 = 1 << 7;
 /// The text.
 pub const MXR_OSD_CAPTION_FIELD_TEXT: u16 = 1 << 8;
+/// The layout's default text, in place of `MXR_OSD_CAPTION_FIELD_TEXT` and
+/// with no text given: the unit goes back to its default caption, drawn in its
+/// own locale, before the other fields apply. A unit whose firmware predates it
+/// keeps the text it has.
+pub const MXR_OSD_CAPTION_FIELD_DEFAULT_TEXT: u16 = 1 << 15;
 
 /// The logo fields a setting gives. A field left out keeps what the unit
 /// has.
