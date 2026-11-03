@@ -1308,16 +1308,15 @@
 #define MXR_V2IP_DOWNMIX_LFE_MAX 100
 
 /**
- * The locale a OneIP device reports for a stored locale its firmware doesn't
- * know.
+ * Bytes in a OneIP device's locale name, its NUL included.
  */
-#define MXR_V2IP_LOCALE_UNKNOWN 255
+#define MXR_V2IP_LOCALE_LEN 9
 
 /**
  * The UDP port a OneIP unit sends its live preview to, on the group
  * `mxr_v2ip_preview()` names.
  */
-#define MXR_V2IP_PREVIEW_PORT 5880
+#define MXR_V2IP_PREVIEW_PORT 50024
 
 /**
  * The output plays a stream from a description.
@@ -6849,18 +6848,20 @@ mxr_result_t mxr_set_v2ip_downmix(const mxr_remote_t *remote,
                                   const mxr_v2ip_downmix_t *downmix);
 
 /**
- * Sets the locale a OneIP device runs, by its number: its position in the
- * list of locales the device's `/system/locale` names. Sent also to a device
- * that hasn't reported its settings yet, as one takes a locale it knows.
- * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for `MXR_V2IP_LOCALE_UNKNOWN`,
+ * Sets the locale a OneIP device runs, by its name as the device's
+ * `/system/locale` names it, such as `NL_NL`. Sent also to a device that
+ * hasn't reported its settings yet, as one takes a locale it knows.
+ * `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a name that is null,
+ * empty, longer than `MXR_V2IP_LOCALE_LEN - 1` bytes or not printable ASCII,
  * and `MXR_ERR_UNSUPPORTED` for a device whose settings arrived without a
  * locale. Otherwise as `mxr_set_v2ip_device_setting()`.
  *
  * # Safety
  *
- * `remote` is null or a live handle from `mxr_remote_new()`.
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `locale` is
+ * null or a NUL-terminated string.
  */
-mxr_result_t mxr_set_v2ip_locale(const mxr_remote_t *remote, mxr_uid_t device, uint8_t locale);
+mxr_result_t mxr_set_v2ip_locale(const mxr_remote_t *remote, mxr_uid_t device, const char *locale);
 
 /**
  * Changes how every OneIP device of the mesh paces its PTP messages, with one
@@ -8280,8 +8281,9 @@ mxr_result_t mxr_v2ip_ptp_messages(const mxr_remote_t *remote,
 mxr_result_t mxr_v2ip_downmix(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_downmix_t *out);
 
 /**
- * Fills `out` with the locale a OneIP device runs, by its number:
- * `MXR_V2IP_LOCALE_UNKNOWN` for a stored locale its firmware doesn't know.
+ * Writes the locale a OneIP device runs, by its name, such as `NL_NL`,
+ * NUL-terminated and cut to `cap` bytes. `MXR_V2IP_LOCALE_LEN` bytes hold
+ * every name.
  *
  * Reports `MXR_ERR_NOT_REPORTED` while the device reports no locale, and
  * always for one whose firmware has none. A change is announced through
@@ -8289,9 +8291,10 @@ mxr_result_t mxr_v2ip_downmix(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2i
  *
  * # Safety
  *
- * `remote` is null or a live handle, and `out` points at a writable byte.
+ * `remote` is null or a live handle, and `out` points at `cap` writable
+ * bytes.
  */
-mxr_result_t mxr_v2ip_locale(const mxr_remote_t *remote, mxr_uid_t uid, uint8_t *out);
+mxr_result_t mxr_v2ip_locale(const mxr_remote_t *remote, mxr_uid_t uid, char *out, size_t cap);
 
 /**
  * Writes the multicast group a OneIP device sends its live preview to, on

@@ -1958,26 +1958,32 @@ pub unsafe extern "C" fn mxr_set_v2ip_downmix(
     })
 }
 
-/// Sets the locale a OneIP device runs, by its number: its position in the
-/// list of locales the device's `/system/locale` names. Sent also to a device
-/// that hasn't reported its settings yet, as one takes a locale it knows.
-/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for `MXR_V2IP_LOCALE_UNKNOWN`,
+/// Sets the locale a OneIP device runs, by its name as the device's
+/// `/system/locale` names it, such as `NL_NL`. Sent also to a device that
+/// hasn't reported its settings yet, as one takes a locale it knows.
+/// `MXR_ERR_INVALID_ARGUMENT`, sending nothing, for a name that is null,
+/// empty, longer than `MXR_V2IP_LOCALE_LEN - 1` bytes or not printable ASCII,
 /// and `MXR_ERR_UNSUPPORTED` for a device whose settings arrived without a
 /// locale. Otherwise as `mxr_set_v2ip_device_setting()`.
 ///
 /// # Safety
 ///
-/// `remote` is null or a live handle from `mxr_remote_new()`.
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `locale` is
+/// null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn mxr_set_v2ip_locale(
     remote: *const mxr_remote_t,
     device: mxr_uid_t,
-    locale: u8,
+    locale: *const c_char,
 ) -> mxr_result_t {
     // SAFETY: the caller guarantees a live handle or null.
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
-        from_control(r.remote.set_v2ip_locale(device.into(), locale))
+        // SAFETY: the caller guarantees a NUL-terminated string or null.
+        match unsafe { req_str(locale) } {
+            Ok(locale) => from_control(r.remote.set_v2ip_locale(device.into(), locale)),
+            Err(code) => code,
+        }
     })
 }
 

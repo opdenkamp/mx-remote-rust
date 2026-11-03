@@ -35,8 +35,7 @@ use crate::wire::{
     V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
     V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
     V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
-    V2IP_LOCALE_UNKNOWN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX,
-    V2IP_SOURCE_RATE_MIN,
+    V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO, V2IP_SOURCE_RATE_MAX, V2IP_SOURCE_RATE_MIN,
 };
 
 use super::control::ControlError;
@@ -5954,43 +5953,49 @@ fn another_senders_downmix_keeps_the_devices_state() {
 /// The second valid word's bit for the locale.
 const EXT_LOCALE: u32 = 1 << 1;
 
-/// [`downmix_report`] with `locale` behind the downmix.
-fn locale_report(cfg: &Cfg, valid_ext: u32, locale: u8) -> Vec<u8> {
+/// [`downmix_report`] grown to the whole settings block, with `locale`'s
+/// name at its end.
+fn locale_report(cfg: &Cfg, valid_ext: u32, locale: &str) -> Vec<u8> {
     let mut p = downmix_report(cfg, valid_ext);
-    p[241] = locale;
+    p.resize(256, 0);
+    p[248..248 + locale.len()].copy_from_slice(locale.as_bytes());
     p
 }
 
-/// A block too short for the locale says nothing; one without its bit says the device has none.
+/// A block too short for the whole name says nothing; one without its bit says the device has none.
 #[test]
 fn a_locale_is_read_from_a_block_that_holds_it() {
     let f = Fixture::new();
     let uid = uid_n(253);
     f.everything(uid, 0x30, "LC0001");
     let cfg = Cfg::addresses(uid, "239.1.2.3");
-    let report = |valid_ext: u32, locale: u8, len: usize| {
+    let report = |valid_ext: u32, locale: &str, len: usize| {
         let mut p = locale_report(&cfg, valid_ext, locale);
         p.truncate(len);
         p
     };
 
-    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, 1, 241));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, "NL_NL", 255));
     assert_eq!(f.remote.v2ip_locale(uid), None);
-    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, 1, 242));
-    assert_eq!(f.remote.v2ip_locale(uid), Some(1));
-    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, 0, 241));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, "NL_NL", 256));
+    assert_eq!(f.remote.v2ip_locale(uid).as_deref(), Some("NL_NL"));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(EXT_LOCALE, "EN_US", 255));
     assert_eq!(
-        f.remote.v2ip_locale(uid),
-        Some(1),
+        f.remote.v2ip_locale(uid).as_deref(),
+        Some("NL_NL"),
         "a block too short to say"
     );
     f.feed(
         uid,
         op::V2IP_DEVICE_CFG,
-        &report(EXT_LOCALE, V2IP_LOCALE_UNKNOWN, 242),
+        &report(EXT_LOCALE, "ABCDEFGH", 256),
     );
-    assert_eq!(f.remote.v2ip_locale(uid), Some(V2IP_LOCALE_UNKNOWN));
-    f.feed(uid, op::V2IP_DEVICE_CFG, &report(1, 1, 242));
+    assert_eq!(
+        f.remote.v2ip_locale(uid).as_deref(),
+        Some("ABCDEFGH"),
+        "a name filling its field"
+    );
+    f.feed(uid, op::V2IP_DEVICE_CFG, &report(1, "NL_NL", 256));
     assert_eq!(f.remote.v2ip_locale(uid), None);
 }
 
@@ -6004,24 +6009,32 @@ fn a_locale_write_carries_the_locale_alone() {
     f.feed(
         reported,
         op::V2IP_DEVICE_CFG,
-        &locale_report(&Cfg::addresses(reported, "239.1.2.3"), EXT_LOCALE | 1, 0),
+        &locale_report(
+            &Cfg::addresses(reported, "239.1.2.3"),
+            EXT_LOCALE | 1,
+            "EN_UK",
+        ),
     );
     f.connect();
 
     for uid in [reported, pending] {
         f.tap.clear();
-        f.remote.set_v2ip_locale(uid, 1).expect("a known device");
+        f.remote
+            .set_v2ip_locale(uid, "NL_NL")
+            .expect("a known device");
         let frame = f.tap.frames().pop().expect("nothing reached the gate");
         let p = &frame[HEADER_LEN..];
-        assert_eq!(p.len(), 248);
+        assert_eq!(p.len(), 256);
         assert_eq!(&p[..16], uid.as_bytes());
         assert_eq!(&p[128..132], &[0; 4], "a setting of the first valid word");
-        assert_eq!(&p[232..242], &[2, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
-        assert_eq!(f.remote.v2ip_locale(uid), Some(1));
+        assert_eq!(&p[232..236], &[2, 0, 0, 0]);
+        assert_eq!(&p[236..248], &[0; 12], "the downmix or the preview");
+        assert_eq!(&p[248..], b"NL_NL\0\0\0");
+        assert_eq!(f.remote.v2ip_locale(uid).as_deref(), Some("NL_NL"));
     }
 }
 
-/// A device ignores a locale it doesn't know, and one whose firmware has none ignores every locale.
+/// A name a device could not hold is refused, and one whose firmware has no locales ignores every locale.
 #[test]
 fn a_locale_the_device_would_not_take_is_not_sent() {
     let f = Fixture::new();
@@ -6031,24 +6044,33 @@ fn a_locale_the_device_would_not_take_is_not_sent() {
     f.feed(
         has,
         op::V2IP_DEVICE_CFG,
-        &locale_report(&Cfg::addresses(has, "239.1.2.3"), EXT_LOCALE, 0),
+        &locale_report(&Cfg::addresses(has, "239.1.2.3"), EXT_LOCALE, "EN_UK"),
     );
     f.feed(
         lacks,
         op::V2IP_DEVICE_CFG,
-        &locale_report(&Cfg::addresses(lacks, "239.1.2.4"), 0, 0),
+        &locale_report(&Cfg::addresses(lacks, "239.1.2.4"), 0, ""),
     );
     f.tap.clear();
 
+    for refused in ["", "ABCDEFGHI", "NL NL", "NL_\u{e9}"] {
+        assert!(
+            matches!(
+                f.remote.set_v2ip_locale(has, refused),
+                Err(ControlError::InvalidRequest(_))
+            ),
+            "{refused:?} was taken"
+        );
+    }
     assert!(matches!(
-        f.remote.set_v2ip_locale(has, V2IP_LOCALE_UNKNOWN),
-        Err(ControlError::InvalidRequest(_))
-    ));
-    assert!(matches!(
-        f.remote.set_v2ip_locale(lacks, 0),
+        f.remote.set_v2ip_locale(lacks, "NL_NL"),
         Err(ControlError::Unsupported(_))
     ));
     assert!(f.tap.frames().is_empty());
+    f.connect();
+    f.remote
+        .set_v2ip_locale(has, "ABCDEFGH")
+        .expect("a whole field");
 }
 
 /// A device without locales ignores another sender's write, so only one that reports a locale takes it.
@@ -6063,30 +6085,34 @@ fn another_senders_locale_reaches_a_device_that_has_one() {
         &hello_payload(0x30, "Ctrl", "LC0007", "4.8.0", DeviceFeature::MANAGER),
     );
     let cfg = Cfg::addresses(uid, "239.1.2.3");
-    let write = locale_report(&cfg, EXT_LOCALE, 1);
+    let write = locale_report(&cfg, EXT_LOCALE, "NL_NL");
 
-    f.feed(uid, op::V2IP_DEVICE_CFG, &locale_report(&cfg, 0, 0));
+    f.feed(uid, op::V2IP_DEVICE_CFG, &locale_report(&cfg, 0, ""));
     f.feed(controller, op::V2IP_DEVICE_CFG, &write);
     assert_eq!(f.remote.v2ip_locale(uid), None, "a device that has none");
 
     f.feed(
         uid,
         op::V2IP_DEVICE_CFG,
-        &locale_report(&cfg, EXT_LOCALE, 0),
+        &locale_report(&cfg, EXT_LOCALE, "EN_UK"),
     );
-    f.feed(controller, op::V2IP_DEVICE_CFG, &locale_report(&cfg, 0, 1));
+    f.feed(
+        controller,
+        op::V2IP_DEVICE_CFG,
+        &locale_report(&cfg, 0, "EN_US"),
+    );
     assert_eq!(
-        f.remote.v2ip_locale(uid),
-        Some(0),
+        f.remote.v2ip_locale(uid).as_deref(),
+        Some("EN_UK"),
         "a write without the bit"
     );
     f.feed(controller, op::V2IP_DEVICE_CFG, &write);
-    assert_eq!(f.remote.v2ip_locale(uid), Some(1));
+    assert_eq!(f.remote.v2ip_locale(uid).as_deref(), Some("NL_NL"));
 }
 
 /// [`locale_report`] ending in `preview`, the group the device sends its live preview to.
 fn preview_report(cfg: &Cfg, preview: Ipv4Addr) -> Vec<u8> {
-    let mut p = locale_report(cfg, EXT_LOCALE, 0);
+    let mut p = locale_report(cfg, EXT_LOCALE, "EN_UK");
     p[244..248].copy_from_slice(&preview.octets());
     p
 }

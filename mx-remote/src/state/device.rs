@@ -182,9 +182,9 @@ pub(crate) struct Device {
     /// How the device's output mixes down to stereo, `None` while it reports
     /// no downmix.
     pub(crate) v2ip_downmix: Option<V2ipDownmix>,
-    /// The locale the device runs, by its number, `None` while it reports
+    /// The locale the device runs, by its name, `None` while it reports
     /// none.
-    pub(crate) v2ip_locale: Option<u8>,
+    pub(crate) v2ip_locale: Option<String>,
     /// The group the device sends its live preview to, `None` while it
     /// reports none.
     pub(crate) v2ip_preview: Option<Ipv4Addr>,
@@ -1379,11 +1379,11 @@ impl Device {
         });
     }
 
-    pub(crate) fn set_v2ip_locale(&mut self, locale: Option<u8>, ev: &mut Vec<Event>) {
+    pub(crate) fn set_v2ip_locale(&mut self, locale: Option<String>, ev: &mut Vec<Event>) {
         if self.v2ip_locale == locale {
             return;
         }
-        self.v2ip_locale = locale;
+        self.v2ip_locale.clone_from(&locale);
         ev.push(Event::V2ipLocaleChanged {
             device: self.uid,
             locale,

@@ -258,7 +258,7 @@ events! {
         /// one.
         V2ipDownmixChanged => on_v2ip_downmix_changed(downmix: Option<V2ipDownmix>);
         /// The device reported a different locale, or stopped reporting one.
-        V2ipLocaleChanged => on_v2ip_locale_changed(locale: Option<u8>);
+        V2ipLocaleChanged => on_v2ip_locale_changed(locale: Option<String>);
         /// The device reported a different live preview group, or stopped
         /// reporting one.
         V2ipPreviewChanged => on_v2ip_preview_changed(preview: Option<std::net::Ipv4Addr>);

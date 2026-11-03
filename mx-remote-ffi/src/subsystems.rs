@@ -1567,8 +1567,9 @@ pub unsafe extern "C" fn mxr_v2ip_downmix(
     })
 }
 
-/// Fills `out` with the locale a OneIP device runs, by its number:
-/// `MXR_V2IP_LOCALE_UNKNOWN` for a stored locale its firmware doesn't know.
+/// Writes the locale a OneIP device runs, by its name, such as `NL_NL`,
+/// NUL-terminated and cut to `cap` bytes. `MXR_V2IP_LOCALE_LEN` bytes hold
+/// every name.
 ///
 /// Reports `MXR_ERR_NOT_REPORTED` while the device reports no locale, and
 /// always for one whose firmware has none. A change is announced through
@@ -1576,19 +1577,30 @@ pub unsafe extern "C" fn mxr_v2ip_downmix(
 ///
 /// # Safety
 ///
-/// `remote` is null or a live handle, and `out` points at a writable byte.
+/// `remote` is null or a live handle, and `out` points at `cap` writable
+/// bytes.
 #[no_mangle]
 pub unsafe extern "C" fn mxr_v2ip_locale(
     remote: *const mxr_remote_t,
     uid: mxr_uid_t,
-    out: *mut u8,
+    out: *mut c_char,
+    cap: usize,
 ) -> mxr_result_t {
     // SAFETY: the caller guarantees a live handle or null.
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
-        let value = r.remote.v2ip_locale(uid.into());
-        // SAFETY: the caller guarantees a writable byte or null.
-        unsafe { fill(r, uid, out, "locale", value) }
+        if out.is_null() || cap == 0 {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "locale buffer is null or empty",
+            );
+        }
+        let Some(locale) = r.remote.v2ip_locale(uid.into()) else {
+            return not_reported(r, uid, "locale");
+        };
+        // SAFETY: the caller guarantees cap writable bytes at out.
+        put_str(unsafe { std::slice::from_raw_parts_mut(out, cap) }, &locale);
+        mxr_result_t::MXR_OK
     })
 }
 

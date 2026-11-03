@@ -21,8 +21,8 @@ use crate::wire::{
     MeshOperationKind, MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipDownmixLevel,
     V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode,
     V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
-    MESH_OPERATION_SIZE, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_SETTING_EXT_DOWNMIX,
-    V2IP_SETTING_EXT_LOCALE,
+    MESH_OPERATION_SIZE, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_LOCALE_MAX,
+    V2IP_SETTING_EXT_DOWNMIX, V2IP_SETTING_EXT_LOCALE,
 };
 
 use super::Rx;
@@ -612,12 +612,12 @@ const V2IP_SINK_ROTATION_STEP_AT: usize = 12;
 const V2IP_VALID_EXT_AT: usize = V2IP_PTP_MESSAGES_AT + 16;
 const V2IP_DOWNMIX_AT: usize = V2IP_VALID_EXT_AT + 4;
 const V2IP_DOWNMIX_SIZE: usize = 5;
-/// The locale's number, behind the downmix.
-const V2IP_LOCALE_AT: usize = V2IP_DOWNMIX_AT + V2IP_DOWNMIX_SIZE;
-/// The live preview's group, an address in network order at the end of the
-/// settings block, behind the locale and two reserved bytes.
-const V2IP_PREVIEW_AT: usize = V2IP_LOCALE_AT + 3;
+/// The live preview's group, an address in network order behind the downmix
+/// and three reserved bytes.
+const V2IP_PREVIEW_AT: usize = V2IP_DOWNMIX_AT + V2IP_DOWNMIX_SIZE + 3;
 const V2IP_PREVIEW_SIZE: usize = 4;
+/// The locale's name, NUL padded, at the end of the settings block.
+const V2IP_LOCALE_AT: usize = V2IP_PREVIEW_AT + V2IP_PREVIEW_SIZE;
 
 /// Reads a settings block, the last block of its frame, and clears the bits
 /// of `valid` whose values it is too short to hold: the three PTP intervals as
@@ -864,13 +864,12 @@ pub(super) fn v2ip_device_configuration(state: &mut State, rx: &Rx<'_>, ev: &mut
     }
 
     // A device without locales ignores a write of one, so only one that reports a locale takes it.
-    if let Some(&locale) = p.get(V2IP_LOCALE_AT) {
+    if let Some(name) = p.get(V2IP_LOCALE_AT..V2IP_LOCALE_AT + V2IP_LOCALE_MAX) {
         let carried = u32_at(p, V2IP_VALID_EXT_AT) & V2IP_SETTING_EXT_LOCALE != 0;
+        let locale = carried.then(|| cstr(name));
         if let Some(device) = state.device_mut(subject) {
-            if subject == rx.sender() {
-                device.set_v2ip_locale(carried.then_some(locale), ev);
-            } else if carried && device.v2ip_locale.is_some() {
-                device.set_v2ip_locale(Some(locale), ev);
+            if subject == rx.sender() || (locale.is_some() && device.v2ip_locale.is_some()) {
+                device.set_v2ip_locale(locale, ev);
             }
         }
     }

@@ -616,13 +616,12 @@ impl Remote {
         self.shared.read(|state| state.device(uid)?.v2ip_downmix)
     }
 
-    /// The locale a OneIP device runs, by its number, as it last reported or
-    /// as it was last written; `None` while it reports none, and always for
-    /// one whose firmware has no locales.
-    /// [`V2IP_LOCALE_UNKNOWN`](crate::V2IP_LOCALE_UNKNOWN) is a stored locale
-    /// its firmware doesn't know.
-    pub fn v2ip_locale(&self, uid: DeviceUid) -> Option<u8> {
-        self.shared.read(|state| state.device(uid)?.v2ip_locale)
+    /// The locale a OneIP device runs, by its name, as it last reported or as
+    /// it was last written; `None` while it reports none, and always for one
+    /// whose firmware has no locales.
+    pub fn v2ip_locale(&self, uid: DeviceUid) -> Option<String> {
+        self.shared
+            .read(|state| state.device(uid)?.v2ip_locale.clone())
     }
 
     /// The multicast group a OneIP device sends its live preview to, on

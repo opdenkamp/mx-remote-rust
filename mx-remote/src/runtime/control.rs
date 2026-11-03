@@ -61,7 +61,7 @@ use crate::wire::{
     StreamAddr, UnitCommandFlag, UnitCommandKind, UnitFlag, V2ipDeviceSetting, V2ipFpgaFeature,
     V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
     DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_LOCALE_UNKNOWN, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    V2IP_IR_PROFILE_NOT_SET, V2IP_LOCALE_MAX, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -2626,20 +2626,26 @@ impl Remote {
         })
     }
 
-    /// Sets the locale a OneIP device runs, by its number: its position in
-    /// the list of locales the device's `/system/locale` names.
+    /// Sets the locale a OneIP device runs, by its name as the device's
+    /// `/system/locale` names it, such as `NL_NL`.
     ///
     /// A device stores and loads a locale it knows and ignores one it
     /// doesn't, so a locale is sent also to a device that hasn't reported its
-    /// settings yet. Refused before anything is sent for
-    /// [`V2IP_LOCALE_UNKNOWN`](crate::V2IP_LOCALE_UNKNOWN), and for a device
-    /// whose settings arrived without a locale, as its firmware has none. The
-    /// locale is cached once the frame is sent, and the device's next report
-    /// replaces it.
-    pub fn set_v2ip_locale(&self, device: DeviceUid, locale: u8) -> Result<(), ControlError> {
-        if locale == V2IP_LOCALE_UNKNOWN {
-            return Err(ControlError::InvalidRequest("the unknown locale"));
+    /// settings yet. Refused before anything is sent for a name that is empty,
+    /// longer than [`V2IP_LOCALE_MAX`](crate::V2IP_LOCALE_MAX) bytes or not
+    /// printable ASCII, and for a device whose settings arrived without a
+    /// locale, as its firmware has none. The locale is cached once the frame
+    /// is sent, and the device's next report replaces it.
+    pub fn set_v2ip_locale(&self, device: DeviceUid, locale: &str) -> Result<(), ControlError> {
+        if locale.is_empty()
+            || locale.len() > V2IP_LOCALE_MAX
+            || !locale.bytes().all(|b| b.is_ascii_graphic())
+        {
+            return Err(ControlError::InvalidRequest(
+                "a locale is 1 to 8 printable ASCII characters",
+            ));
         }
+        let locale = locale.to_owned();
         self.shared.command(move |state| {
             let d = device_of(state, device)?;
             if d.v2ip_settings.is_some() && d.v2ip_locale.is_none() {
@@ -2650,7 +2656,7 @@ impl Remote {
             Ok(Command::new(
                 Addressee::device(d),
                 op::V2IP_DEVICE_CFG,
-                build_v2ip_locale(d.uid, locale),
+                build_v2ip_locale(d.uid, &locale),
             )
             .then(move |state, ev| {
                 if let Some(d) = state.device_mut(device) {

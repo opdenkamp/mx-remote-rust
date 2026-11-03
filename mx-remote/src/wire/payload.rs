@@ -17,8 +17,8 @@ use crate::types::{
 };
 
 use super::constants::{
-    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_SET, V2IP_SETTING_EXT_DOWNMIX,
-    V2IP_SETTING_EXT_LOCALE,
+    TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_SET, V2IP_LOCALE_MAX,
+    V2IP_SETTING_EXT_DOWNMIX, V2IP_SETTING_EXT_LOCALE,
 };
 use super::enums::{
     EdidProfile, MxrSignalType, RcAction, RcKey, UnitCommandFlag, UnitCommandKind,
@@ -749,13 +749,15 @@ pub(crate) fn build_v2ip_downmix(target: DeviceUid, downmix: &V2ipDownmix) -> Ve
 /// Builds the `V2IP_DEVICE_CFG` (0x3C) payload that changes a device's
 /// locale, leaving every other setting alone.
 ///
-/// 248 bytes, as [`build_v2ip_downmix`] builds them, with the second valid
-/// word at 232 carrying the locale alone and its number at 241.
-pub(crate) fn build_v2ip_locale(target: DeviceUid, locale: u8) -> Vec<u8> {
+/// 256 bytes, as [`build_v2ip_downmix`] builds them and then the preview
+/// group left 0 and the locale's name at 248, NUL padded, with the second
+/// valid word at 232 carrying the locale alone. A device takes the locale
+/// only from a block that holds the whole name.
+pub(crate) fn build_v2ip_locale(target: DeviceUid, locale: &str) -> Vec<u8> {
     let mut p = build_v2ip_device_settings(target, &V2ipDeviceSettings::default());
     p.resize(248, 0);
     p[232..236].copy_from_slice(&V2IP_SETTING_EXT_LOCALE.to_le_bytes());
-    p[241] = locale;
+    append_fixed_str(&mut p, locale, V2IP_LOCALE_MAX);
     p
 }
 

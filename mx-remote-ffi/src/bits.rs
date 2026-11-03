@@ -837,16 +837,15 @@ pub const MXR_V2IP_DOWNMIX_LEVEL_UNSCALED: u8 = 1;
 /// The largest percent a OneIP output mixes its LFE channel in at.
 pub const MXR_V2IP_DOWNMIX_LFE_MAX: u8 = 100;
 
-/// The locale a OneIP device reports for a stored locale its firmware doesn't
-/// know.
-pub const MXR_V2IP_LOCALE_UNKNOWN: u8 = 255;
+/// Bytes in a OneIP device's locale name, its NUL included.
+pub const MXR_V2IP_LOCALE_LEN: usize = 9;
 
 // The header carries it as a literal, so it is held to the core's here.
-const _: () = assert!(MXR_V2IP_LOCALE_UNKNOWN == mx_remote::V2IP_LOCALE_UNKNOWN);
+const _: () = assert!(MXR_V2IP_LOCALE_LEN == mx_remote::V2IP_LOCALE_MAX + 1);
 
 /// The UDP port a OneIP unit sends its live preview to, on the group
 /// `mxr_v2ip_preview()` names.
-pub const MXR_V2IP_PREVIEW_PORT: u16 = 5880;
+pub const MXR_V2IP_PREVIEW_PORT: u16 = 50024;
 
 // The header carries it as a literal, so it is held to the core's here.
 const _: () = assert!(MXR_V2IP_PREVIEW_PORT == mx_remote::V2IP_PREVIEW_PORT);

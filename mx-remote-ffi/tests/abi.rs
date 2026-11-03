@@ -1407,7 +1407,7 @@ fn the_preview_read_checks_its_arguments_first() {
     // SAFETY: a live handle and MXR_IP_STRING_LEN writable bytes.
     let rc = unsafe { mxr_v2ip_preview(remote, uid_n(9), ip.as_mut_ptr(), MXR_IP_STRING_LEN) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
-    assert_eq!(MXR_V2IP_PREVIEW_PORT, 5880);
+    assert_eq!(MXR_V2IP_PREVIEW_PORT, 50024);
 
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };
@@ -1448,18 +1448,23 @@ fn the_locale_calls_check_their_arguments_first() {
     let remote = client(c"abi-locale", c"00000023.00000000.00000000.000000af");
 
     // SAFETY: a live handle; a null output is what is under test.
-    let rc = unsafe { mxr_v2ip_locale(remote, uid_n(9), ptr::null_mut()) };
+    let rc = unsafe { mxr_v2ip_locale(remote, uid_n(9), ptr::null_mut(), MXR_V2IP_LOCALE_LEN) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
-    let mut out = 0u8;
-    // SAFETY: a live handle and a writable byte.
-    let rc = unsafe { mxr_v2ip_locale(remote, uid_n(9), &mut out) };
+    let mut out = [0 as c_char; MXR_V2IP_LOCALE_LEN];
+    // SAFETY: a live handle; an empty buffer is what is under test.
+    let rc = unsafe { mxr_v2ip_locale(remote, uid_n(9), out.as_mut_ptr(), 0) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle and MXR_V2IP_LOCALE_LEN writable bytes.
+    let rc = unsafe { mxr_v2ip_locale(remote, uid_n(9), out.as_mut_ptr(), out.len()) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
-    // SAFETY: a live handle.
-    let rc = unsafe { mxr_set_v2ip_locale(remote, uid_n(9), MXR_V2IP_LOCALE_UNKNOWN) };
-    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
-    // SAFETY: a live handle.
-    let rc = unsafe { mxr_set_v2ip_locale(remote, uid_n(9), MXR_V2IP_LOCALE_UNKNOWN - 1) };
+    for refused in [ptr::null(), c"".as_ptr(), c"ABCDEFGHI".as_ptr()] {
+        // SAFETY: a live handle, and a null or NUL-terminated name.
+        let rc = unsafe { mxr_set_v2ip_locale(remote, uid_n(9), refused) };
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    }
+    // SAFETY: a live handle and a NUL-terminated name.
+    let rc = unsafe { mxr_set_v2ip_locale(remote, uid_n(9), c"ABCDEFGH".as_ptr()) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
 
     // SAFETY: created above and not yet freed.

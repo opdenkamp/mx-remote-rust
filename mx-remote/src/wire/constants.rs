@@ -37,7 +37,7 @@ pub const V2IP_PORT_AUDIO: u16 = 50022;
 
 /// Destination UDP port of a OneIP unit's live preview, RFC 2435 RTP/JPEG
 /// sent to the group the unit reports.
-pub const V2IP_PREVIEW_PORT: u16 = 5880;
+pub const V2IP_PREVIEW_PORT: u16 = 50024;
 
 /// Sample rate a OneIP audio stream uses when none is given.
 pub const V2IP_AUDIO_DEFAULT_SAMPLE_RATE: u32 = 48000;
@@ -99,7 +99,5 @@ pub(crate) const V2IP_SETTING_EXT_DOWNMIX: u32 = 1 << 0;
 /// locale.
 pub(crate) const V2IP_SETTING_EXT_LOCALE: u32 = 1 << 1;
 
-/// The locale a OneIP device reports for a stored locale its firmware doesn't
-/// know. Every other value numbers a locale, and keeps its meaning across
-/// firmware versions.
-pub const V2IP_LOCALE_UNKNOWN: u8 = 255;
+/// The longest locale name a OneIP device reports or takes, in bytes.
+pub const V2IP_LOCALE_MAX: usize = 8;
