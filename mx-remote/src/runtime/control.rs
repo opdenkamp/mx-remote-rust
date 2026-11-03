@@ -591,11 +591,10 @@ impl Remote {
     /// output ([`DeviceV2ipDetails::arc`](crate::DeviceV2ipDetails::arc)).
     /// `power_on` has the sink power its display on with the switch.
     ///
-    /// No unit maps that group to a bay, as only inputs are looked up, so the
-    /// sink plays it as a manual stream on the default audio port, 50022,
-    /// while the output sends its audio return on 50023: such a route plays
-    /// no audio on current firmware. This sends exactly what a controller
-    /// does all the same.
+    /// Such a route plays no audio: the sink resolves the group to
+    /// `arc_owner`'s audio return, on 50023, but audio return is compiled out
+    /// of OneIP firmware. This sends exactly what a controller does all the
+    /// same.
     ///
     /// Refused unless the sink is a OneIP output, the source has reported the
     /// streams of an input of its own, and `arc_owner` has reported a usable

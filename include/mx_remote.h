@@ -5951,10 +5951,9 @@ mxr_result_t mxr_route_v2ip_unit(const mxr_remote_t *remote,
  * controller sends a route whose audio is an output. `power_on` has the sink
  * power its display on with the switch.
  *
- * No unit maps that group to a bay, so the sink plays it as a manual stream
- * on the default audio port, 50022, while the output sends its audio return
- * on 50023: such a route plays no audio on current firmware. It is sent as a
- * controller sends it all the same.
+ * Such a route plays no audio: the sink resolves the group to `arc_owner`'s
+ * audio return, on 50023, but audio return is compiled out of OneIP
+ * firmware. It is sent as a controller sends it all the same.
  *
  * `MXR_ERR_NOT_FOUND` for a unit not heard from, `MXR_ERR_UNSUPPORTED` for a
  * sink that is not a OneIP output or a source without an input of its own,
