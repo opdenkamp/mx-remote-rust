@@ -20,6 +20,7 @@ mod constants;
 mod enums;
 mod frame;
 mod link;
+mod mesh;
 mod netif;
 mod opcode;
 mod osd;
@@ -33,16 +34,16 @@ mod vectors;
 pub use constants::*;
 pub use enums::{
     BayFeatures, BayStatus, DeviceFeature, EdidProfile, FirmwareType, LinkFeature,
-    MeshOperationKind, MultiviewerAspectRatio, MultiviewerBool, MultiviewerEdidTemplate,
-    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
-    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, MxrSignalType, OsdCaptionAlign,
-    OsdCaptionField, OsdCaptionFormat, OsdLogoField, OsdMessageFlag, OsdMessagePriority,
-    OsdSyncSize, OsdSyncState, OsdSyncWhat, RcAction, RcKey, RcType, ThirdPartyVendorFlag,
-    UnitCommandFlag, UnitCommandKind, UnitFlag, UnitPowerSave, UtpLinkSpeed, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel,
-    V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipSdpClockMode, V2ipSdpClockState, V2ipSdpEncoding,
-    V2ipSdpFlag, V2ipSdpMediaClock, V2ipSdpRefClock, V2ipTestPattern, V2ipTestcardFlag,
-    V2ipToneMode, V2ipVlanFlag,
+    MeshOperationKind, MeshReplaceResult, MultiviewerAspectRatio, MultiviewerBool,
+    MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode,
+    MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode,
+    MxrSignalType, OsdCaptionAlign, OsdCaptionField, OsdCaptionFormat, OsdLogoField,
+    OsdMessageFlag, OsdMessagePriority, OsdSyncSize, OsdSyncState, OsdSyncWhat, RcAction, RcKey,
+    RcType, ThirdPartyVendorFlag, UnitCommandFlag, UnitCommandKind, UnitFlag, UnitPowerSave,
+    UtpLinkSpeed, V2ipColourSpace, V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode,
+    V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode, V2ipSdpClockMode,
+    V2ipSdpClockState, V2ipSdpEncoding, V2ipSdpFlag, V2ipSdpMediaClock, V2ipSdpRefClock,
+    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
 };
 pub use netif::valid_addresses;
 pub use tx::SendError;
@@ -53,6 +54,7 @@ pub(crate) use conn::{Conn, Path};
 pub(crate) use frame::HEADER_LEN;
 pub(crate) use frame::{cstr, Frame, DEVICE_NAME_LEN, FW_VERSION_LEN};
 pub(crate) use link::{udp_in_ethernet, Capture};
+pub(crate) use mesh::*;
 pub(crate) use netif::{address_of, broadcast_address};
 pub(crate) use opcode::{audio_sub, mv_sub, op, Opcode};
 pub(crate) use osd::*;

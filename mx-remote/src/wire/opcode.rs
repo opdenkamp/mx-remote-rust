@@ -101,6 +101,8 @@ pub(crate) mod op {
     /// An application's own message: a 4-byte vendor id, then bytes only that
     /// application reads.
     pub(crate) const THIRD_PARTY: Opcode = Opcode(0x55);
+    pub(crate) const MESH_REPLACE: Opcode = Opcode(0x56);
+    pub(crate) const MESH_CONFIG: Opcode = Opcode(0x57);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -205,6 +207,8 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         // device decodes the payload, so there is no layout for a stamp to
         // announce.
         op::THIRD_PARTY => 0x01,
+        op::MESH_REPLACE => 0x32,
+        op::MESH_CONFIG => 0x33,
         Opcode(_) => return None,
     })
 }

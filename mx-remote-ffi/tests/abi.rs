@@ -603,7 +603,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 40] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 41] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_MESH_OP_",
@@ -825,6 +825,12 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             core_bits(&enums, "OsdLogoField"),
             &[],
             3,
+        ),
+        (
+            "MXR_MESH_REPLACE_",
+            core_bits(&enums, "MeshReplaceResult"),
+            &[],
+            6,
         ),
     ];
 
@@ -2128,4 +2134,109 @@ fn the_mesh_wide_calls_refuse_a_null_handle() {
         let rc = mxr_remote_update_config(ptr::null(), ptr::null());
         assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
     }
+}
+
+/// A setting named `name` and valued `value`, each NUL-terminated.
+fn mesh_setting(name: &[u8], value: &[u8]) -> mxr_mesh_setting_t {
+    let mut s = mxr_mesh_setting_t {
+        name: [0; MXR_MESH_SETTING_LEN],
+        value: [0; MXR_MESH_SETTING_LEN],
+    };
+    for (slot, b) in s.name.iter_mut().zip(name) {
+        *slot = *b as c_char;
+    }
+    for (slot, b) in s.value.iter_mut().zip(value) {
+        *slot = *b as c_char;
+    }
+    s
+}
+
+/// The mesh replace and kept settings calls answer a caller's mistake as an
+/// argument error and a device never heard from as not found, before
+/// anything is sent; a read of what nothing reported finds nothing.
+#[test]
+fn the_mesh_module_calls_check_their_arguments_first() {
+    let remote = client(c"abi-mesh", c"00000024.00000000.00000000.000000b0");
+    let unit = uid_n(9);
+
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_mesh_config_digest(remote, unit, ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut digest = mxr_mesh_config_digest_t::default();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_mesh_config_digest(remote, unit, &mut digest) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle; a null output is what is under test.
+    let rc = unsafe { mxr_mesh_config(remote, unit, ptr::null_mut()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let mut config = mxr_mesh_config_t::default();
+    // SAFETY: a live handle and a writable struct.
+    let rc = unsafe { mxr_mesh_config(remote, unit, &mut config) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_REPORTED);
+    // SAFETY: a live handle; null outputs with no room.
+    let counts = unsafe {
+        [
+            mxr_mesh_config_settings(remote, unit, ptr::null_mut(), 0),
+            mxr_mesh_replaceable(remote, ptr::null_mut(), 0),
+        ]
+    };
+    assert_eq!(counts, [0, 0]);
+
+    let ok = [mesh_setting(b"led.status", b"1")];
+    let long = [mesh_setting(&[b'n'; MXR_MESH_SETTING_LEN], b"")];
+    let not_utf8 = [mesh_setting(b"\xFF", b"")];
+    for (settings, count) in [(ptr::null(), 1), (long.as_ptr(), 1), (not_utf8.as_ptr(), 1)] {
+        // SAFETY: a live handle, and null or count settings.
+        let rcs = unsafe {
+            [
+                mxr_send_mesh_config(remote, unit, unit, settings, count),
+                mxr_send_mesh_config_set(remote, unit, settings, count),
+                mxr_send_mesh_config_hello(remote, settings, count),
+            ]
+        };
+        assert_eq!(rcs, [mxr_result_t::MXR_ERR_INVALID_ARGUMENT; 3]);
+    }
+    // SAFETY: a live handle and one setting; this client follows no
+    // controller.
+    let rc = unsafe { mxr_send_mesh_config_hello(remote, ok.as_ptr(), 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "in no mesh");
+
+    let named = mxr_mesh_replace_unit_t {
+        uid: unit,
+        features: 0,
+        input: 1,
+        output: 0,
+        input_name: [b'i' as c_char; MXR_MESH_REPLACE_NAME_LEN],
+        output_name: [0; MXR_MESH_REPLACE_NAME_LEN],
+    };
+    let mut plain = named;
+    plain.input_name = [0; MXR_MESH_REPLACE_NAME_LEN];
+    let many = [plain; MXR_MESH_REPLACE_UNITS_MAX + 1];
+    for (units, count) in [
+        (ptr::null(), 1),
+        (&named as *const _, 1),
+        (many.as_ptr(), many.len()),
+    ] {
+        // SAFETY: a live handle, and null or count units.
+        let rc = unsafe { mxr_send_mesh_replaceable(remote, unit, false, units, count) };
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    }
+
+    // SAFETY: a live handle, and arrays of the counts given.
+    let rcs = unsafe {
+        [
+            mxr_send_mesh_replaceable(remote, unit, false, &plain, 1),
+            mxr_send_mesh_replaceable(remote, unit, true, ptr::null(), 0),
+            mxr_send_mesh_replace_result(remote, unit, unit, MXR_MESH_REPLACE_BUSY),
+            mxr_request_mesh_replace(remote, unit, unit),
+            mxr_request_mesh_config(remote, unit, unit),
+            mxr_send_mesh_config(remote, unit, unit, ok.as_ptr(), 1),
+            mxr_send_mesh_config(remote, unit, unit, ptr::null(), 0),
+            mxr_send_mesh_config_set(remote, unit, ok.as_ptr(), 1),
+        ]
+    };
+    assert_eq!(rcs, [mxr_result_t::MXR_ERR_NOT_FOUND; 8]);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
 }

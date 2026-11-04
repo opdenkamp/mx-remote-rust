@@ -5,7 +5,8 @@
 
 use crate::types::*;
 use crate::wire::{
-    BayUid, DeviceUid, EdidProfile, LinkFeature, RcAction, RcKey, RcType, V2ipFpgaFeature,
+    BayUid, DeviceUid, EdidProfile, LinkFeature, MeshReplaceResult, RcAction, RcKey, RcType,
+    V2ipFpgaFeature,
 };
 
 /// Declares the event set.
@@ -212,6 +213,32 @@ events! {
         /// controller report, which [`Event::MeshMasterChanged`] and
         /// [`Event::MeshControllerReportChanged`] cover.
         MeshOperationReceived => on_mesh_operation_received(operation: MeshOperation);
+        /// A unit outside any mesh asked which units it can replace. A
+        /// controller answers with its offline units, and a member whose
+        /// controller is offline with that controller.
+        MeshReplaceQueried => on_mesh_replace_queried();
+        /// The device listed units this client can ask it to have replaced:
+        /// the whole list it has sent so far, which
+        /// [`Remote::mesh_replaceable`](crate::Remote::mesh_replaceable) also
+        /// reads.
+        MeshReplaceUnitsReceived => on_mesh_replace_units_received(units: MeshReplaceUnits);
+        /// A unit outside any mesh asked the device to replace `unit` with
+        /// it.
+        MeshReplaceRequested => on_mesh_replace_requested(unit: DeviceUid);
+        /// The device answered this client's request to replace `unit`.
+        MeshReplaceAnswered => on_mesh_replace_answered(unit: DeviceUid, result: MeshReplaceResult);
+        /// The device announced a different length or crc32 of its kept
+        /// settings.
+        MeshConfigDigestChanged => on_mesh_config_digest_changed(digest: MeshConfigDigest);
+        /// The device asked for the kept settings of `subject`: its own when
+        /// it is the addressee, otherwise the copy the addressee keeps.
+        MeshConfigRequested => on_mesh_config_requested(subject: DeviceUid);
+        /// The device sent a unit's kept settings whole, which
+        /// [`Remote::mesh_config`](crate::Remote::mesh_config) also reads.
+        MeshConfigReceived => on_mesh_config_received(config: MeshConfig);
+        /// The controller this client follows told it to take these kept
+        /// settings, and reset every other one to its default.
+        MeshConfigSetRequested => on_mesh_config_set_requested(settings: Vec<MeshSetting>);
         /// The device reported its view of the mesh topology.
         TopologyChanged => on_topology_changed(topology: Vec<TopologyEntry>);
         /// A ProAmp8 reported its Dolby settings.

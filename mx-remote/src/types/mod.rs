@@ -6,6 +6,7 @@
 mod amp;
 mod audio;
 mod commands;
+mod mesh;
 mod multiviewer;
 mod network;
 mod osd;
@@ -26,6 +27,10 @@ pub use commands::{
     V2ipBlacklistChange, V2ipPowerSaveRequest, V2ipTilingConfig, VideoWallCommand, VideoWallOp,
     VideoWallWindow, RC_STATUS_MAX, RC_STATUS_NAME_MAX, VIDEO_WALL_CLEARED, VIDEO_WALL_MIN_SIZE,
     VIDEO_WALL_POS_ALIGN, VIDEO_WALL_WIDTH_ALIGN,
+};
+pub use mesh::{
+    MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits, MeshReplaceable, MeshSetting,
+    MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
 };
 pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{

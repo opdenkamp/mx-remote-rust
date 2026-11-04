@@ -763,7 +763,7 @@ fn put_ip(dst: &mut [c_char], ip: Option<Ipv4Addr>) {
 /// # Safety
 ///
 /// `out` is null or points at a writable `T`.
-unsafe fn fill<T>(
+pub(crate) unsafe fn fill<T>(
     r: &mxr_remote_t,
     uid: mxr_uid_t,
     out: *mut T,
@@ -2777,7 +2777,7 @@ pub unsafe extern "C" fn mxr_audio_endpoint_children(
 }
 
 /// Reports a null handle from a call whose answer is a count.
-fn no_handle() -> usize {
+pub(crate) fn no_handle() -> usize {
     fail(
         mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
         "the client handle is null",

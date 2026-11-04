@@ -12,6 +12,7 @@ mod audio;
 mod commands;
 mod content;
 mod handlers;
+mod mesh;
 mod multiviewer;
 mod network;
 mod osd;
@@ -36,6 +37,7 @@ use crate::wire::{
     PROTOCOL_VERSION,
 };
 
+pub(crate) use mesh::replace_list_kept;
 pub use svd::{lookup_svd, Svd};
 
 /// One received frame, with what the socket knew about it.
@@ -328,6 +330,8 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::TIME => handlers::time(state, rx, ev),
         op::V2IP_TESTCARD => handlers::v2ip_testcard(state, rx, ev),
         op::THIRD_PARTY => third_party::third_party(rx, ev),
+        op::MESH_REPLACE => mesh::mesh_replace(state, rx, ev),
+        op::MESH_CONFIG => mesh::mesh_config(state, rx, ev),
         Opcode(_) => {}
     }
 }

@@ -6695,3 +6695,380 @@ fn a_mesh_reboot_is_an_empty_reboot_to_both_endpoints() {
         Some(&Endpoints::Both)
     );
 }
+
+// ---- replacing a unit of a mesh, and the settings a mesh keeps ----
+
+/// A OneIP unit with the mesh module, announcing `protocol`.
+fn mesh_unit(f: &Fixture, uid: DeviceUid, protocol: u16) {
+    f.feed(
+        uid,
+        op::SYS_HELLO,
+        &hello_payload(
+            protocol,
+            "Unit",
+            "P9SN12345678",
+            "4.8.0",
+            DeviceFeature::MESH,
+        ),
+    );
+}
+
+/// A list of one unit, `unit`, with `features`, from a controller.
+fn listing(unit: DeviceUid, features: DeviceFeature) -> Vec<u8> {
+    let mut p = vec![1, 1, 0, 0, 1, 0, 0, 0];
+    p.extend_from_slice(unit.as_bytes());
+    p.extend_from_slice(&features.bits().to_le_bytes());
+    p.extend_from_slice(&[0; 36]);
+    p
+}
+
+#[test]
+fn a_query_for_replaceable_units_goes_at_most_every_2_seconds() {
+    let f = Fixture::new();
+    f.connect();
+    f.remote.query_mesh_replaceable().expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &[0x56, 0x00], "the opcode");
+    assert_eq!(&frame[2..4], &[0x32, 0x00], "the stamp");
+    assert_eq!(&frame[HEADER_LEN..], &[1, 0, 0, 0, 0, 0, 0, 0]);
+    f.tap.clear();
+    f.remote.query_mesh_replaceable().expect("refused");
+    assert!(f.tap.frames().is_empty(), "asked again at once");
+    f.remote.shared.mutate(|state, _| {
+        state.mesh_replace_queried = state
+            .mesh_replace_queried
+            .and_then(|at| at.checked_sub(std::time::Duration::from_secs(2)));
+    });
+    f.remote.query_mesh_replaceable().expect("sent");
+    assert_eq!(f.tap.frames().len(), 1, "not asked again after 2 s");
+}
+
+#[test]
+fn replaceable_units_are_listed_once_while_fresh() {
+    let f = Fixture::new();
+    let (a, b) = (uid_n(0x31), uid_n(0x32));
+    mesh_unit(&f, a, 0x33);
+    mesh_unit(&f, b, 0x33);
+    f.feed(a, op::MESH_REPLACE, &listing(uid_n(9), DeviceFeature::NONE));
+    let mut controller = listing(uid_n(9), DeviceFeature::NONE);
+    controller[6] = 1;
+    f.feed(b, op::MESH_REPLACE, &controller);
+    let found = f.remote.mesh_replaceable();
+    assert_eq!(found.len(), 1, "a unit two devices list, twice");
+    assert_eq!(found[0].unit.uid, uid_n(9));
+    assert_eq!(found[0].lister, a);
+    assert!(!found[0].offline_controller);
+
+    f.remote.shared.mutate(|state, _| {
+        let d = state.device_mut(a).expect("registered");
+        let (_, at) = d.mesh_replace_units.as_mut().expect("kept");
+        *at = at
+            .checked_sub(std::time::Duration::from_secs(30))
+            .expect("clock");
+    });
+    let found = f.remote.mesh_replaceable();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].lister, b, "a list 30 s old");
+    assert!(found[0].offline_controller);
+}
+
+#[test]
+fn a_request_to_replace_a_unit_names_it_to_its_lister() {
+    let f = Fixture::new();
+    f.connect();
+    let lister = uid_n(0x31);
+    let unit = uid_n(9);
+    mesh_unit(&f, lister, 0x33);
+    assert!(matches!(
+        f.remote.request_mesh_replace(lister, unit),
+        Err(ControlError::NotReported(_))
+    ));
+    f.feed(
+        lister,
+        op::MESH_REPLACE,
+        &listing(unit, DeviceFeature::IR_RX),
+    );
+    f.tap.clear();
+    f.remote.request_mesh_replace(lister, unit).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &[0x56, 0x00]);
+    assert_eq!(&frame[2..4], &[0x32, 0x00]);
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 32);
+    assert_eq!(&p[..8], &[1, 2, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(&p[8..24], unit.as_bytes());
+    assert_eq!(&p[24..], &[0; 8]);
+    let pending = f.remote.shared.read(|s| s.mesh_replace_pending);
+    assert_eq!(pending, Some((lister, unit)));
+
+    let mut answer = p.to_vec();
+    answer[1] = 3;
+    answer[24] = 3;
+    f.feed(lister, op::MESH_REPLACE, &answer);
+    assert_eq!(f.remote.shared.read(|s| s.mesh_replace_pending), None);
+}
+
+#[test]
+fn a_request_a_controller_would_refuse_is_not_sent() {
+    let f = Fixture::new();
+    f.connect();
+    let (lister, old) = (uid_n(0x31), uid_n(0x30));
+    let (sink, plain) = (uid_n(9), uid_n(10));
+    mesh_unit(&f, lister, 0x33);
+    mesh_unit(&f, old, 0x31);
+    let mut both = listing(sink, DeviceFeature::V2IP_SINK);
+    both.extend_from_slice(&listing(plain, DeviceFeature::IR_RX)[8..]);
+    both[4] = 2;
+    f.feed(lister, op::MESH_REPLACE, &both);
+    f.feed(old, op::MESH_REPLACE, &listing(plain, DeviceFeature::NONE));
+    f.tap.clear();
+    assert!(
+        matches!(
+            f.remote.request_mesh_replace(lister, sink),
+            Err(ControlError::Unsupported(_))
+        ),
+        "a OneIP sink, by a client that is none"
+    );
+    assert!(
+        refused(&f.remote.request_mesh_replace(old, plain)),
+        "a lister below 0x32"
+    );
+    f.remote.set_mesh_controller(uid_n(0x40));
+    f.tap.clear();
+    assert!(
+        matches!(
+            f.remote.request_mesh_replace(lister, plain),
+            Err(ControlError::InvalidRequest(_))
+        ),
+        "while in a mesh"
+    );
+    assert!(f.tap.frames().is_empty(), "a refused request was sent");
+    f.remote.set_mesh_controller(DeviceUid::ZERO);
+    f.remote.request_mesh_replace(lister, plain).expect("sent");
+
+    f.remote.shared.mutate(|state, _| {
+        let d = state.device_mut(lister).expect("registered");
+        let (_, at) = d.mesh_replace_units.as_mut().expect("kept");
+        *at = at
+            .checked_sub(std::time::Duration::from_secs(30))
+            .expect("clock");
+    });
+    assert!(
+        matches!(
+            f.remote.request_mesh_replace(lister, plain),
+            Err(ControlError::NotReported(_))
+        ),
+        "listed 30 s ago"
+    );
+}
+
+#[test]
+fn a_unit_on_a_default_serial_asks_to_replace_none() {
+    let request = |serial: &str| {
+        let remote = Remote::new(
+            Config {
+                uid: Some(uid_n(CLIENT)),
+                serial: Some(serial.to_owned()),
+                ..Config::default()
+            },
+            Arc::new(()),
+        )
+        .expect("a client given its own uid reads nothing from disk");
+        let lister = uid_n(0x31);
+        remote.shared.process_datagram(
+            &datagram(
+                lister,
+                op::SYS_HELLO,
+                0x33,
+                &hello_payload(0x33, "Unit", "P9SN12345678", "4.8.0", DeviceFeature::MESH),
+            ),
+            FROM,
+        );
+        remote.shared.process_datagram(
+            &datagram(
+                lister,
+                op::MESH_REPLACE,
+                0x33,
+                &listing(uid_n(9), DeviceFeature::NONE),
+            ),
+            FROM,
+        );
+        remote.request_mesh_replace(lister, uid_n(9))
+    };
+    assert!(matches!(
+        request("P9SN00000123"),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    // The default serial of this client is not one a unit counts as default,
+    // and neither is one outside P9SN0000; either goes on to the send, which
+    // fails here for want of a socket.
+    for serial in ["P9SN00000000", "P9SN10000123"] {
+        assert!(
+            matches!(
+                request(serial),
+                Err(ControlError::Send(SendError::NotConnected))
+            ),
+            "{serial}"
+        );
+    }
+}
+
+#[test]
+fn a_list_of_replaceable_units_goes_in_frames_of_24() {
+    let f = Fixture::new();
+    f.connect();
+    let to = uid_n(0x31);
+    mesh_unit(&f, to, 0x33);
+    let unit = |n: u8| crate::types::MeshReplaceUnit {
+        uid: uid_n(n),
+        ..Default::default()
+    };
+    let units: Vec<_> = (0..30).map(unit).collect();
+    f.tap.clear();
+    f.remote
+        .send_mesh_replaceable(to, true, &units)
+        .expect("sent");
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(
+        &frames[1][HEADER_LEN..HEADER_LEN + 8],
+        &[1, 1, 24, 0, 30, 0, 1, 0]
+    );
+    let too_many: Vec<_> = (0..33).map(unit).collect();
+    assert!(matches!(
+        f.remote.send_mesh_replaceable(to, false, &too_many),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    let mut named = unit(1);
+    named.output_name = "x".repeat(17);
+    assert!(matches!(
+        f.remote.send_mesh_replaceable(to, false, &[named]),
+        Err(ControlError::InvalidRequest(_))
+    ));
+
+    f.tap.clear();
+    f.remote
+        .send_mesh_replace_result(to, uid_n(9), crate::wire::MeshReplaceResult::NOT_CAPABLE)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..2], &[1, 3]);
+    assert_eq!(&p[8..24], uid_n(9).as_bytes());
+    assert_eq!(p[24], 3);
+}
+
+#[test]
+fn kept_settings_are_asked_of_a_unit_at_0x33() {
+    let f = Fixture::new();
+    f.connect();
+    let (new, old) = (uid_n(0x31), uid_n(0x32));
+    mesh_unit(&f, new, 0x33);
+    mesh_unit(&f, old, 0x32);
+    f.tap.clear();
+    f.remote.request_mesh_config(new, uid_n(9)).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &[0x57, 0x00], "the opcode");
+    assert_eq!(&frame[2..4], &[0x33, 0x00], "the stamp");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..16], &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(&p[16..], uid_n(9).as_bytes());
+    assert!(refused(&f.remote.request_mesh_config(old, uid_n(9))));
+}
+
+#[test]
+fn kept_settings_are_announced_only_in_a_mesh() {
+    let f = Fixture::new();
+    f.connect();
+    let settings = [crate::types::MeshSetting::new("led.status", "0")];
+    assert!(matches!(
+        f.remote.send_mesh_config_hello(&settings),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    f.remote.set_mesh_controller(uid_n(0x40));
+    f.tap.clear();
+    f.remote.send_mesh_config_hello(&settings).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    let carried = b"\x0aled.status\x010";
+    assert_eq!(&p[..4], &[1, 0, 0, 0]);
+    assert_eq!(&p[4..8], &[0, 0, carried.len() as u8, 0]);
+    assert_eq!(&p[8..12], &crate::wire::crc32(carried).to_le_bytes());
+    assert_eq!(&p[16..32], uid_n(CLIENT).as_bytes());
+    assert_eq!(p.len(), 32);
+}
+
+#[test]
+fn kept_settings_sent_of_another_unit_are_a_copy() {
+    let f = Fixture::new();
+    f.connect();
+    let to = uid_n(0x31);
+    mesh_unit(&f, to, 0x33);
+    let settings = [crate::types::MeshSetting::new(
+        "v".repeat(200),
+        "w".repeat(200),
+    )];
+    let many: Vec<_> = settings.iter().cycle().take(4).cloned().collect();
+    f.tap.clear();
+    f.remote
+        .send_mesh_config(to, uid_n(9), &many)
+        .expect("sent");
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 2, "1608 bytes");
+    for frame in &frames {
+        assert_eq!(&frame[HEADER_LEN..HEADER_LEN + 3], &[1, 2, 1]);
+    }
+    assert_eq!(frames[1][HEADER_LEN + 4..HEADER_LEN + 8], [0, 4, 0x48, 6]);
+    f.tap.clear();
+    f.remote
+        .send_mesh_config(to, uid_n(CLIENT), &settings)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        &frame[HEADER_LEN..HEADER_LEN + 3],
+        &[1, 2, 0],
+        "its own, flagged a copy"
+    );
+    let five: Vec<_> = settings.iter().cycle().take(5).cloned().collect();
+    assert!(
+        matches!(
+            f.remote.send_mesh_config(to, uid_n(9), &five),
+            Err(ControlError::InvalidRequest(_))
+        ),
+        "2010 bytes"
+    );
+}
+
+#[test]
+fn kept_settings_are_set_only_on_a_member_of_this_clients_mesh() {
+    let f = Fixture::new();
+    f.connect();
+    let member = uid_n(0x31);
+    mesh_unit(&f, member, 0x33);
+    let settings = [crate::types::MeshSetting::new("led.status", "1")];
+    let report = |controller: DeviceUid| {
+        f.feed(
+            member,
+            op::MESH_OPERATION,
+            &crate::wire::build_mesh_operation(&MeshOperation::report_membership(controller)),
+        );
+    };
+    assert!(matches!(
+        f.remote.send_mesh_config_set(member, &settings),
+        Err(ControlError::NotReported(_))
+    ));
+    report(uid_n(0x40));
+    assert!(matches!(
+        f.remote.send_mesh_config_set(member, &settings),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    report(uid_n(CLIENT));
+    f.tap.clear();
+    f.remote
+        .send_mesh_config_set(member, &settings)
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..4], &[1, 3, 0, 0]);
+    assert_eq!(&p[16..32], member.as_bytes());
+    assert_eq!(&p[32..], b"\x0aled.status\x011");
+}

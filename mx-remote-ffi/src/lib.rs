@@ -72,6 +72,7 @@ mod bits;
 mod control;
 mod events;
 mod info;
+mod mesh;
 mod remote;
 mod subsystems;
 
@@ -82,5 +83,6 @@ pub use bits::*;
 pub use control::*;
 pub use events::*;
 pub use info::*;
+pub use mesh::*;
 pub use remote::*;
 pub use subsystems::*;

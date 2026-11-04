@@ -10,11 +10,12 @@ use std::time::{Duration, Instant};
 use crate::event::Event;
 use crate::types::{
     AmpDolbySettings, AudioChangeSource, AudioEndpoints, AudioFeatures, AudioLink, DeviceStatus,
-    DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MeshControllerReport, MultiviewerStatus,
-    NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport, RcSettings, TimeZone, TopologyEntry,
-    UnitStatus, V2ipDeviceSettings, V2ipDeviceStats, V2ipDownmix, V2ipDscpConfig, V2ipPrivacy,
-    V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp, V2ipStreamSources, V2ipTestcard,
-    V2ipTilingConfig, V2ipVlan, VolumeMuteStatus, SCALING_FLAG_MODE_VALID,
+    DeviceV2ipDetails, DeviceV2ipSink, FirmwareVersion, MeshConfigDigest, MeshControllerReport,
+    MeshReplaceUnits, MultiviewerStatus, NetworkPortStatus, OsdMessage, OsdSync, OsdSyncReport,
+    RcSettings, TimeZone, TopologyEntry, UnitStatus, V2ipDeviceSettings, V2ipDeviceStats,
+    V2ipDownmix, V2ipDscpConfig, V2ipPrivacy, V2ipPtpState, V2ipScalingSettings, V2ipSinkSdp,
+    V2ipStreamSources, V2ipTestcard, V2ipTilingConfig, V2ipVlan, VolumeMuteStatus,
+    SCALING_FLAG_MODE_VALID,
 };
 use crate::wire::{
     BayConfig, BayFeatures, BayUid, DeviceFeature, DeviceUid, FirmwareType, Path, V2ipFpgaFeature,
@@ -176,6 +177,11 @@ pub(crate) struct Device {
     pub(crate) osd_sync: Option<OsdSync>,
     pub(crate) osd_sync_report: Option<OsdSyncReport>,
     pub(crate) osd_message: Option<OsdMessage>,
+    /// The units the device last listed as replaceable, and when its last
+    /// frame of that list arrived.
+    pub(crate) mesh_replace_units: Option<(MeshReplaceUnits, Instant)>,
+    /// The length and crc32 of its kept settings, as it last announced them.
+    pub(crate) mesh_config_digest: Option<MeshConfigDigest>,
     /// The PTP state the device last reported about itself, `None` while it
     /// reports none.
     pub(crate) v2ip_ptp: Option<V2ipPtpState>,
@@ -265,6 +271,8 @@ impl Device {
             osd_sync: None,
             osd_sync_report: None,
             osd_message: None,
+            mesh_replace_units: None,
+            mesh_config_digest: None,
             v2ip_testcard: None,
             v2ip_stats: None,
             setup_done: None,
@@ -1046,6 +1054,11 @@ impl Device {
         });
     }
 
+    /// The mesh master the device last reported, `None` until it has.
+    pub(crate) fn reported_mesh_master(&self) -> Option<DeviceUid> {
+        self.mesh_master_reported.then_some(self.mesh_master)
+    }
+
     pub(crate) fn set_mesh_master(&mut self, master: DeviceUid, ev: &mut Vec<Event>) {
         if self.mesh_master_reported && self.mesh_master == master {
             return;
@@ -1295,6 +1308,17 @@ impl Device {
         ev.push(Event::OsdSyncChanged {
             device: self.uid,
             sync,
+        });
+    }
+
+    pub(crate) fn set_mesh_config_digest(&mut self, digest: MeshConfigDigest, ev: &mut Vec<Event>) {
+        if self.mesh_config_digest == Some(digest) {
+            return;
+        }
+        self.mesh_config_digest = Some(digest);
+        ev.push(Event::MeshConfigDigestChanged {
+            device: self.uid,
+            digest,
         });
     }
 

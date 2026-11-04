@@ -7,6 +7,7 @@
 mod control;
 mod info;
 mod logo_server;
+mod mesh;
 mod osd;
 mod schedule;
 

@@ -8,6 +8,7 @@ mod handlers;
 mod listing;
 mod management;
 mod mesh_bays;
+mod mesh_module;
 mod osd;
 mod paths;
 mod privacy;

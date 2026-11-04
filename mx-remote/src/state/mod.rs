@@ -25,7 +25,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::event::Event;
-use crate::types::{MacAddress, OsdSyncRequest};
+use crate::types::{MacAddress, MeshConfig, OsdSyncRequest};
 use crate::wire::{BayFeatures, BayUid, DeviceFeature, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
@@ -53,6 +53,16 @@ pub(crate) struct State {
     /// Overlay sync requests this client may be the one to answer: those
     /// asking for a new sync, and those naming this client as the source.
     pub(crate) osd_requests: Vec<OsdSyncRequest>,
+    /// The kept settings of each unit, by that unit, as a device last sent
+    /// them whole.
+    pub(crate) mesh_configs: HashMap<DeviceUid, MeshConfig>,
+    /// The settings each sender is still sending, by sender.
+    pub(crate) mesh_config_transfers: HashMap<DeviceUid, MeshConfigTransfer>,
+    /// The lister and the unit of this client's last request to replace one,
+    /// until it is answered.
+    pub(crate) mesh_replace_pending: Option<(DeviceUid, DeviceUid)>,
+    /// When this client last asked which units it can replace.
+    pub(crate) mesh_replace_queried: Option<Instant>,
     /// Where each registered device, this client included, sits.
     tree: Tree,
     /// The source address of the last hello captured from each sender below
@@ -61,6 +71,19 @@ pub(crate) struct State {
     /// A digest and arrival time of each datagram received in the last
     /// [`DUPLICATE_WINDOW`], at most [`DUPLICATE_RING`] of them.
     recent: VecDeque<(u64, Instant)>,
+}
+
+/// The settings of one unit a sender is part way through sending: every
+/// frame names the same kind, unit, length and crc32, and brings the bytes
+/// that follow the ones already here.
+#[derive(Debug)]
+pub(crate) struct MeshConfigTransfer {
+    pub(crate) kind: u8,
+    pub(crate) flags: u8,
+    pub(crate) subject: DeviceUid,
+    pub(crate) total: u16,
+    pub(crate) crc: u32,
+    pub(crate) bytes: Vec<u8>,
 }
 
 /// How long a datagram identical to one already received counts as its
@@ -86,6 +109,10 @@ impl State {
             hello_requested: false,
             state_requests: Vec::new(),
             osd_requests: Vec::new(),
+            mesh_configs: HashMap::new(),
+            mesh_config_transfers: HashMap::new(),
+            mesh_replace_pending: None,
+            mesh_replace_queried: None,
             tree: Tree::new(uid),
             hello_sources: HashMap::new(),
             recent: VecDeque::with_capacity(DUPLICATE_RING),

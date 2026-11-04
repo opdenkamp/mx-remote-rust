@@ -132,7 +132,7 @@ impl From<SendError> for ControlError {
 type WriteBack = Box<dyn FnOnce(&mut State, &mut Vec<Event>) + Send>;
 
 /// One command: the frame to send, and what the addressee will do with it.
-struct Command {
+pub(super) struct Command {
     to: Addressee,
     opcode: Opcode,
     payload: Vec<u8>,
@@ -140,7 +140,7 @@ struct Command {
 }
 
 impl Command {
-    fn new(to: Addressee, opcode: Opcode, payload: Vec<u8>) -> Self {
+    pub(super) fn new(to: Addressee, opcode: Opcode, payload: Vec<u8>) -> Self {
         Self {
             to,
             opcode,
@@ -150,7 +150,10 @@ impl Command {
     }
 
     /// Records what to apply locally once the frame is away.
-    fn then(mut self, f: impl FnOnce(&mut State, &mut Vec<Event>) + Send + 'static) -> Self {
+    pub(super) fn then(
+        mut self,
+        f: impl FnOnce(&mut State, &mut Vec<Event>) + Send + 'static,
+    ) -> Self {
         self.write_back = Some(Box::new(f));
         self
     }
@@ -159,7 +162,7 @@ impl Command {
 impl Shared {
     /// Runs one command: prepare under the registry lock, send without it,
     /// then write back.
-    fn command(
+    pub(super) fn command(
         &self,
         prepare: impl FnOnce(&State) -> Result<Command, ControlError>,
     ) -> Result<(), ControlError> {
@@ -168,7 +171,7 @@ impl Shared {
 
     /// Runs several commands prepared together, in order, each written back
     /// once its own frame is away; the first that can't be sent ends the run.
-    fn commands(
+    pub(super) fn commands(
         &self,
         prepare: impl FnOnce(&State) -> Result<Vec<Command>, ControlError>,
     ) -> Result<(), ControlError> {
@@ -316,7 +319,7 @@ const SDP_DESCRIPTION_PROTOCOL: u16 = 0x31;
 /// description too.
 const SDP_REQUEST_DESCRIPTION: u8 = 1 << 0;
 
-fn device_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
+pub(super) fn device_of(state: &State, uid: DeviceUid) -> Result<&Device, ControlError> {
     state.device(uid).ok_or(ControlError::UnknownDevice(uid))
 }
 

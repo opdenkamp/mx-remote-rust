@@ -1659,3 +1659,27 @@ bitmask! {
         NOT_OUI = 1 << 0;
     }
 }
+
+wire_enum! {
+    /// How a controller answered a request to replace one of its units, or
+    /// how a member answered one to replace its offline controller.
+    ///
+    /// A value without a name is passed through as it arrived.
+    MeshReplaceResult: u8 {
+        /// The unit was replaced with the one that asked.
+        REPLACED = 0;
+        /// The unit that asked is a member of a mesh, or is on a default
+        /// serial.
+        REFUSED = 1;
+        /// The unit named is not one the controller lists as replaceable.
+        NOT_FOUND = 2;
+        /// The unit that asked lacks a OneIP source, OneIP sink or
+        /// multiviewer feature of the unit named.
+        NOT_CAPABLE = 3;
+        /// The controller could not replace the unit.
+        FAILED = 4;
+        /// A membership change of the controller's own has not completed,
+        /// such as handing the controller role over.
+        BUSY = 5;
+    }
+}

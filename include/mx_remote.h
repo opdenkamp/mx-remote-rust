@@ -1949,6 +1949,38 @@
 #define MXR_OSD_LOGO_FIELD_Y (1 << 2)
 
 /**
+ * The unit was replaced with the one that asked.
+ */
+#define MXR_MESH_REPLACE_REPLACED 0
+
+/**
+ * The unit that asked is a member of a mesh, or is on a default serial.
+ */
+#define MXR_MESH_REPLACE_REFUSED 1
+
+/**
+ * The unit named is not one the controller lists as replaceable.
+ */
+#define MXR_MESH_REPLACE_NOT_FOUND 2
+
+/**
+ * The unit that asked lacks a OneIP source, OneIP sink or multiviewer
+ * feature of the unit named.
+ */
+#define MXR_MESH_REPLACE_NOT_CAPABLE 3
+
+/**
+ * The controller could not replace the unit.
+ */
+#define MXR_MESH_REPLACE_FAILED 4
+
+/**
+ * A membership change of the controller's own has not completed, such as
+ * handing the controller role over.
+ */
+#define MXR_MESH_REPLACE_BUSY 5
+
+/**
  * The colour space a OneIP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -2057,6 +2089,28 @@
  * Bytes in one EDID: a base block and exactly one extension block.
  */
 #define MXR_EDID_LEN 256
+
+/**
+ * The most units a controller lists as replaceable.
+ */
+#define MXR_MESH_REPLACE_UNITS_MAX 32
+
+/**
+ * Bytes in a bay name of `mxr_mesh_replace_unit_t`, its NUL included.
+ */
+#define MXR_MESH_REPLACE_NAME_LEN 17
+
+/**
+ * Bytes in a name or value of `mxr_mesh_setting_t`, its NUL included.
+ */
+#define MXR_MESH_SETTING_LEN 256
+
+/**
+ * The most bytes a unit's kept settings take as they are carried: each
+ * setting a byte of name length, the name, a byte of value length and the
+ * value.
+ */
+#define MXR_MESH_CONFIG_MAX 1984
 
 /**
  * Bytes an IPv4 address needs when written as text, the terminator included.
@@ -3639,6 +3693,105 @@ typedef struct {
    */
   char value[MXR_BAY_CONTENT_VALUE_LEN];
 } mxr_bay_content_field_t;
+
+/**
+ * A unit a controller can have replaced: it has bays on the controller, it
+ * is not the controller, and it is offline.
+ */
+typedef struct {
+  /**
+   * The unit.
+   */
+  mxr_uid_t uid;
+  /**
+   * Its `MXR_FEATURE_*` OneIP source, OneIP sink and multiviewer bits,
+   * which a unit replacing it must have too.
+   */
+  uint32_t features;
+  /**
+   * Its first input bay on the controller, 0 when it has none.
+   */
+  uint16_t input;
+  /**
+   * Its first output bay on the controller, 0 when it has none.
+   */
+  uint16_t output;
+  /**
+   * The name of that input.
+   */
+  char input_name[MXR_MESH_REPLACE_NAME_LEN];
+  /**
+   * The name of that output.
+   */
+  char output_name[MXR_MESH_REPLACE_NAME_LEN];
+} mxr_mesh_replace_unit_t;
+
+/**
+ * A unit this client can ask to replace, and who to ask.
+ */
+typedef struct {
+  /**
+   * The device that listed it, which `mxr_request_mesh_replace()` asks.
+   */
+  mxr_uid_t lister;
+  /**
+   * The unit is the lister's own controller, which is offline.
+   */
+  bool offline_controller;
+  /**
+   * The unit.
+   */
+  mxr_mesh_replace_unit_t unit;
+} mxr_mesh_replaceable_t;
+
+/**
+ * The length and crc32 of the settings a unit keeps for its mesh, as it
+ * announces them.
+ */
+typedef struct {
+  /**
+   * The settings' length in bytes, as they are carried.
+   */
+  uint16_t length;
+  /**
+   * The crc32 of those bytes.
+   */
+  uint32_t crc32;
+} mxr_mesh_config_digest_t;
+
+/**
+ * Who sent a unit's kept settings; `mxr_mesh_config_settings()` reads the
+ * settings themselves.
+ */
+typedef struct {
+  /**
+   * The device that sent them.
+   */
+  mxr_uid_t holder;
+  /**
+   * They are a copy `holder` keeps of the unit, not its own.
+   */
+  bool copy;
+  /**
+   * How many settings there are.
+   */
+  size_t count;
+} mxr_mesh_config_t;
+
+/**
+ * One setting a unit keeps for its mesh: an application configuration name,
+ * such as `led.status`, and its value as text.
+ */
+typedef struct {
+  /**
+   * The name, NUL-terminated.
+   */
+  char name[MXR_MESH_SETTING_LEN];
+  /**
+   * The value, NUL-terminated.
+   */
+  char value[MXR_MESH_SETTING_LEN];
+} mxr_mesh_setting_t;
 
 /**
  * How a client finds the network.
@@ -7816,6 +7969,196 @@ size_t mxr_bay_content(const mxr_remote_t *remote,
                        mxr_bay_uid_t bay,
                        mxr_bay_content_field_t *out,
                        size_t cap);
+
+/**
+ * Asks every device which units this client can replace.
+ *
+ * Every controller answers with its offline units, and every member whose
+ * controller is offline with that controller; `mxr_mesh_replaceable()` then
+ * reads them. A unit lists none until its controller has been up 120 s, and
+ * a device without the mesh module answers nothing. A call within 2 s of
+ * the last sends nothing, as the answers to that one are still arriving.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_query_mesh_replaceable(const mxr_remote_t *remote);
+
+/**
+ * Writes the units this client can ask to replace, as listed in the last
+ * 30 s, and returns how many there are. A unit several members list appears
+ * once.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable [`mxr_mesh_replaceable_t`].
+ */
+size_t mxr_mesh_replaceable(const mxr_remote_t *remote, mxr_mesh_replaceable_t *out, size_t cap);
+
+/**
+ * Asks `lister` to replace `unit` with this client: the device takes over
+ * the unit's bays, their names and routes, and its kept settings. The answer
+ * is not reported through C.
+ *
+ * Asking a member to replace its offline controller makes it send the
+ * controller's kept settings, which `mxr_mesh_config()` then reads. Taking
+ * over is then this client's own: promoting itself to controller in place
+ * of the old one, and having the members replace it
+ * (`mxr_send_mesh_operation()`).
+ *
+ * `MXR_ERR_NOT_REPORTED` when `lister` has not listed `unit` in the last
+ * 30 s, `MXR_ERR_INVALID_ARGUMENT` while this client follows a mesh
+ * controller or is on a default serial, and `MXR_ERR_UNSUPPORTED` when it
+ * lacks a OneIP source, OneIP sink or multiviewer feature `unit` has.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_mesh_replace(const mxr_remote_t *remote, mxr_uid_t lister, mxr_uid_t unit);
+
+/**
+ * Answers a unit's query with the units this client, as controller, can have
+ * replaced, or with its offline controller, as a member. An empty list is
+ * sent all the same.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for more than `MXR_MESH_REPLACE_UNITS_MAX`
+ * units, or a name without a NUL in its field.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `units` is
+ * null or points at `count` units.
+ */
+mxr_result_t mxr_send_mesh_replaceable(const mxr_remote_t *remote,
+                                       mxr_uid_t to,
+                                       bool offline_controller,
+                                       const mxr_mesh_replace_unit_t *units,
+                                       size_t count);
+
+/**
+ * Answers a unit's request to replace `unit` with it; `result` is
+ * `MXR_MESH_REPLACE_*`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_send_mesh_replace_result(const mxr_remote_t *remote,
+                                          mxr_uid_t to,
+                                          mxr_uid_t unit,
+                                          uint8_t result);
+
+/**
+ * Fills `out` with the length and crc32 of a unit's kept settings, as it
+ * last announced them. `MXR_ERR_NOT_REPORTED` until it has.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_mesh_config_digest_t`.
+ */
+mxr_result_t mxr_mesh_config_digest(const mxr_remote_t *remote,
+                                    mxr_uid_t uid,
+                                    mxr_mesh_config_digest_t *out);
+
+/**
+ * Fills `out` with who last sent `subject`'s kept settings whole, and how
+ * many there are. `MXR_ERR_NOT_REPORTED` until a device has; ask for them
+ * with `mxr_request_mesh_config()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_mesh_config_t`.
+ */
+mxr_result_t mxr_mesh_config(const mxr_remote_t *remote, mxr_uid_t subject, mxr_mesh_config_t *out);
+
+/**
+ * Writes `subject`'s kept settings, as a device last sent them whole, and
+ * returns how many there are: none until one has.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable [`mxr_mesh_setting_t`].
+ */
+size_t mxr_mesh_config_settings(const mxr_remote_t *remote,
+                                mxr_uid_t subject,
+                                mxr_mesh_setting_t *out,
+                                size_t cap);
+
+/**
+ * Asks `holder` for the kept settings of `subject`: its own when `subject`
+ * is `holder`, otherwise the copy it keeps. A controller keeps one of every
+ * member, and a member one of its controller. `mxr_mesh_config()` reads them
+ * once they arrive; a device keeping no copy answers nothing.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_mesh_config(const mxr_remote_t *remote,
+                                     mxr_uid_t holder,
+                                     mxr_uid_t subject);
+
+/**
+ * Announces the length and crc32 of this client's own kept settings to every
+ * device, as a unit in a mesh does every 60 s.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` while this client follows no mesh controller,
+ * and for settings no unit takes: a name or value of more than 255 bytes, or
+ * more than `MXR_MESH_CONFIG_MAX` bytes together.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `settings`
+ * is null or points at `count` settings.
+ */
+mxr_result_t mxr_send_mesh_config_hello(const mxr_remote_t *remote,
+                                        const mxr_mesh_setting_t *settings,
+                                        size_t count);
+
+/**
+ * Sends `to` the kept settings of `subject`, as the answer to its request:
+ * this client's own when `subject` is this client, otherwise the copy it
+ * keeps.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for settings no unit takes, as
+ * `mxr_send_mesh_config_hello()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `settings`
+ * is null or points at `count` settings.
+ */
+mxr_result_t mxr_send_mesh_config(const mxr_remote_t *remote,
+                                  mxr_uid_t to,
+                                  mxr_uid_t subject,
+                                  const mxr_mesh_setting_t *settings,
+                                  size_t count);
+
+/**
+ * Has a member of the mesh this client controls take `settings` as its kept
+ * settings: it sets every one named, resets every other kept one to its
+ * default, and answers with the settings it then has. A member whose
+ * settings changed restarts 3 s later.
+ *
+ * `MXR_ERR_NOT_REPORTED` until the member has reported its controller,
+ * `MXR_ERR_INVALID_ARGUMENT` when that is not this client, and for settings
+ * no unit takes, as `mxr_send_mesh_config_hello()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `settings`
+ * is null or points at `count` settings.
+ */
+mxr_result_t mxr_send_mesh_config_set(const mxr_remote_t *remote,
+                                      mxr_uid_t member,
+                                      const mxr_mesh_setting_t *settings,
+                                      size_t count);
 
 /**
  * Creates a client, without opening a socket yet.

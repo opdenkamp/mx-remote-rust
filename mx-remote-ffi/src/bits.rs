@@ -1228,3 +1228,20 @@ pub extern "C" fn mxr_signal_type_bpp_index(signal_type: mxr_signal_type_t) -> u
 pub extern "C" fn mxr_signal_type_is_set(signal_type: mxr_signal_type_t) -> bool {
     guard(false, || MxrSignalType::from_wire(signal_type).is_set())
 }
+
+// ---- a mesh replace result, for `mxr_send_mesh_replace_result()` ----
+
+/// The unit was replaced with the one that asked.
+pub const MXR_MESH_REPLACE_REPLACED: u8 = 0;
+/// The unit that asked is a member of a mesh, or is on a default serial.
+pub const MXR_MESH_REPLACE_REFUSED: u8 = 1;
+/// The unit named is not one the controller lists as replaceable.
+pub const MXR_MESH_REPLACE_NOT_FOUND: u8 = 2;
+/// The unit that asked lacks a OneIP source, OneIP sink or multiviewer
+/// feature of the unit named.
+pub const MXR_MESH_REPLACE_NOT_CAPABLE: u8 = 3;
+/// The controller could not replace the unit.
+pub const MXR_MESH_REPLACE_FAILED: u8 = 4;
+/// A membership change of the controller's own has not completed, such as
+/// handing the controller role over.
+pub const MXR_MESH_REPLACE_BUSY: u8 = 5;
