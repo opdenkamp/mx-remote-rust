@@ -91,7 +91,7 @@ fn accepted(data: &[u8]) -> Option<Frame<'_>> {
 /// The first opcode past a unit's table (`MX_OP_NB`). A frame at or above it
 /// has no valid header to a unit, which drops it before either timer is
 /// touched.
-const OPCODE_LIMIT: u16 = 0x55;
+const OPCODE_LIMIT: u16 = 0x58;
 
 /// The shortest hello a unit takes. A shorter one is ignored whole, and a
 /// longer one read by its first this many bytes.
@@ -147,7 +147,7 @@ pub(crate) fn process_frame_on(
     // and an opcode no handler takes included. Once a sender has gone
     // silent, only a hello brings it back.
     // An opcode past a unit's table is no valid header to it, so it touches
-    // neither timer; this client still hands an application's message on.
+    // neither timer.
     let in_table = frame.opcode().0 < OPCODE_LIMIT;
     if let Some(device) = state.device_mut(sender).filter(|_| in_table) {
         if let Some(path) = path {

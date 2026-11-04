@@ -502,17 +502,26 @@ fn a_units_igmp_querier_is_its_uplinks() {
     assert_eq!(querier(&h), None, "0.0.0.0");
 }
 
-/// A frame whose opcode is 0x55 or above has no valid header to a unit: it
-/// neither keeps its sender alive nor proves its path. A message an
-/// application sends at 0x55 still reaches this client's application.
+/// A frame whose opcode is 0x58 or above has no valid header to a unit: it
+/// neither keeps its sender alive nor proves its path. Below that, a frame
+/// does both whether or not a handler takes it, as an application's message
+/// at 0x55 does.
 #[test]
 fn an_opcode_past_the_table_touches_no_timer() {
     let mut h = Harness::new(89);
     let hello = hello_payload(0x2A, "App", "OP0001", "4.8.0", DeviceFeature::MANAGER);
     let t0 = Instant::now();
     h.feed_at(op::SYS_HELLO, &hello, t0);
-    let message = datagram(h.sender, op::THIRD_PARTY, 1, b"VNDRhello");
     let t1 = t0 + Duration::from_secs(50);
+    let past = datagram(h.sender, crate::wire::Opcode(0x58), 1, &[]);
+    process_frame_on(&mut h.state, &past, None, Some(Path::Multicast), t1);
+    assert!(
+        !h.device().is_online(t0 + Duration::from_secs(60)),
+        "kept alive by 0x58"
+    );
+    assert_eq!(h.device().heard_multicast, None, "0x58 proved its path");
+
+    let message = datagram(h.sender, op::THIRD_PARTY, 1, b"VNDRhello");
     h.events.extend(process_frame_on(
         &mut h.state,
         &message,
@@ -525,16 +534,12 @@ fn an_opcode_past_the_table_touches_no_timer() {
         "the application's message was dropped"
     );
     assert!(
-        !h.device().is_online(t0 + Duration::from_secs(60)),
-        "kept alive"
+        h.device().is_online(t0 + Duration::from_secs(60)),
+        "0x55 did not keep its sender alive"
     );
-    assert_eq!(h.device().heard_multicast, None, "proved its path");
-
-    let past = datagram(h.sender, crate::wire::Opcode(0x7F), 1, &[]);
-    process_frame_on(&mut h.state, &past, None, Some(Path::Multicast), t1);
-    assert!(
-        !h.device().is_online(t0 + Duration::from_secs(60)),
-        "kept alive by 0x7F"
+    assert_eq!(
+        h.device().heard_multicast,
+        Some(t1),
+        "0x55 did not prove its path"
     );
-    assert_eq!(h.device().heard_multicast, None, "0x7F proved its path");
 }
