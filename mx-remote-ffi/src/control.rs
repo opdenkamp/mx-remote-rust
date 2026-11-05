@@ -29,7 +29,8 @@ use mx_remote::{
 };
 use mx_remote::{
     OsdCaption, OsdCaptionAlign, OsdCaptionFormat, OsdLogo, OsdMessagePriority, OsdSyncContent,
-    OsdSyncEntry, OsdSyncImage, OsdSyncSize, OsdSyncValue, OsdSyncWhat,
+    OsdSyncEntry, OsdSyncImage, OsdSyncReport, OsdSyncSize, OsdSyncState, OsdSyncValue,
+    OsdSyncWhat,
 };
 
 use crate::abi::{
@@ -42,9 +43,9 @@ use crate::events::mxr_mesh_operation_t;
 use crate::info::mxr_amp_zone_settings_t;
 use crate::remote::{mxr_remote_t, with};
 use crate::subsystems::{
-    mxr_rc_settings_t, mxr_tiling_config_t, mxr_v2ip_device_settings_t, mxr_v2ip_downmix_t,
-    mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t, mxr_v2ip_ptp_settings_t, mxr_v2ip_test_sync_t,
-    mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t, MXR_OSD_SYNC_SLOTS,
+    mxr_osd_sync_report_t, mxr_rc_settings_t, mxr_tiling_config_t, mxr_v2ip_device_settings_t,
+    mxr_v2ip_downmix_t, mxr_v2ip_power_save_t, mxr_v2ip_ptp_messages_t, mxr_v2ip_ptp_settings_t,
+    mxr_v2ip_test_sync_t, mxr_v2ip_test_tone_t, mxr_v2ip_vlan_t, MXR_OSD_SYNC_SLOTS,
 };
 
 /// A stream's sample rate and channel count.
@@ -3630,6 +3631,48 @@ pub unsafe extern "C" fn mxr_request_osd_sync(
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
         from_control(r.remote.request_osd_sync(OsdSyncWhat::from_bits(what)))
+    })
+}
+
+/// Reports to `source` how this client gets on with taking its sync
+/// `report->seq`, as a unit does at each stage: `state` taking, done or failed,
+/// with `written`, `refused` and a `reason` cut to 63 bytes. The source lists
+/// it among the units that took the sync.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a null report or a reason that is not
+/// NUL-terminated UTF-8, `MXR_ERR_UNKNOWN_DEVICE` for a source not heard.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `report` is
+/// null or readable.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_osd_report(
+    remote: *const mxr_remote_t,
+    source: mxr_uid_t,
+    report: *const mxr_osd_sync_report_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees a readable report or null.
+        let Some(report) = (unsafe { report.as_ref() }) else {
+            return fail(mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no report");
+        };
+        let reason = match field_str(&report.reason, "reason") {
+            Ok(reason) => reason.to_string(),
+            Err(code) => return code,
+        };
+        from_control(r.remote.send_osd_report(
+            source.into(),
+            &OsdSyncReport {
+                seq: report.seq,
+                state: OsdSyncState::from_wire(report.state),
+                written: report.written,
+                refused: report.refused,
+                reason,
+            },
+        ))
     })
 }
 

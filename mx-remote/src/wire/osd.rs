@@ -7,7 +7,7 @@
 //! the sync's `seq` and the unit it is for. The message kinds carry the
 //! message on one unit's output instead, with a `seq` of 0.
 
-use crate::types::{OsdSyncEntry, OsdSyncSlot, OsdSyncValue, OSD_SYNC_SLOTS};
+use crate::types::{OsdSyncEntry, OsdSyncReport, OsdSyncSlot, OsdSyncValue, OSD_SYNC_SLOTS};
 
 use super::enums::{OsdMessageFlag, OsdMessagePriority, OsdSyncWhat};
 use super::payload::append_fixed_str;
@@ -61,6 +61,8 @@ pub(crate) const OSD_BACKGROUND_SIZE: usize = 4;
 /// Width of a report: the header, state, written, refused and a 64-byte
 /// reason.
 pub(crate) const OSD_REPORT_SIZE: usize = 90;
+/// The bytes of a report's reason, its NUL left out.
+pub(crate) const OSD_REPORT_REASON_MAX: usize = 63;
 
 /// Width of a message frame without its text: the header, flags, logo,
 /// priority, a reserved byte and the text's length.
@@ -118,6 +120,22 @@ pub(crate) fn build_osd_request(
     p.extend_from_slice(&[what.bits(), 0]);
     p.extend_from_slice(missing);
     p.extend_from_slice(source.as_bytes());
+    p
+}
+
+/// Builds a report from `target`, the unit taking the sync, its reason cut to
+/// 63 bytes at a character boundary and NUL padded.
+pub(crate) fn build_osd_report(target: DeviceUid, report: &OsdSyncReport) -> Vec<u8> {
+    let mut p = header(osd_kind::REPORT, report.seq, target, OSD_REPORT_SIZE);
+    p.extend_from_slice(&[report.state.to_wire(), 0]);
+    p.extend_from_slice(&report.written.to_le_bytes());
+    p.extend_from_slice(&report.refused.to_le_bytes());
+    let mut end = report.reason.len().min(OSD_REPORT_REASON_MAX);
+    while !report.reason.is_char_boundary(end) {
+        end -= 1;
+    }
+    p.extend_from_slice(&report.reason.as_bytes()[..end]);
+    p.resize(OSD_REPORT_SIZE, 0);
     p
 }
 

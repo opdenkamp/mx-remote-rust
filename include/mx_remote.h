@@ -3278,6 +3278,32 @@ typedef struct {
 } mxr_osd_sync_image_t;
 
 /**
+ * How a unit last reported getting on with an overlay sync.
+ */
+typedef struct {
+  /**
+   * The sync it reports on, numbered by the source that sent it.
+   */
+  uint16_t seq;
+  /**
+   * `MXR_OSD_SYNC_STATE_*`.
+   */
+  uint8_t state;
+  /**
+   * The settings it wrote.
+   */
+  uint16_t written;
+  /**
+   * The settings it refused.
+   */
+  uint16_t refused;
+  /**
+   * Why it failed or refused any.
+   */
+  char reason[MXR_OSD_SYNC_REASON_LEN];
+} mxr_osd_sync_report_t;
+
+/**
  * What a device is, and what it is doing.
  */
 typedef struct {
@@ -5698,32 +5724,6 @@ typedef struct {
 } mxr_osd_sync_t;
 
 /**
- * How a unit last reported getting on with an overlay sync.
- */
-typedef struct {
-  /**
-   * The sync it reports on, numbered by the source that sent it.
-   */
-  uint16_t seq;
-  /**
-   * `MXR_OSD_SYNC_STATE_*`.
-   */
-  uint8_t state;
-  /**
-   * The settings it wrote.
-   */
-  uint16_t written;
-  /**
-   * The settings it refused.
-   */
-  uint16_t refused;
-  /**
-   * Why it failed or refused any.
-   */
-  char reason[MXR_OSD_SYNC_REASON_LEN];
-} mxr_osd_sync_report_t;
-
-/**
  * The message on a unit's output, as the unit last reported it.
  */
 typedef struct {
@@ -8055,6 +8055,24 @@ mxr_result_t mxr_resend_osd_sync(const mxr_remote_t *remote, mxr_uid_t device, u
  * `remote` is null or a live handle from `mxr_remote_new()`.
  */
 mxr_result_t mxr_request_osd_sync(const mxr_remote_t *remote, uint8_t what);
+
+/**
+ * Reports to `source` how this client gets on with taking its sync
+ * `report->seq`, as a unit does at each stage: `state` taking, done or failed,
+ * with `written`, `refused` and a `reason` cut to 63 bytes. The source lists
+ * it among the units that took the sync.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a null report or a reason that is not
+ * NUL-terminated UTF-8, `MXR_ERR_UNKNOWN_DEVICE` for a source not heard.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `report` is
+ * null or readable.
+ */
+mxr_result_t mxr_send_osd_report(const mxr_remote_t *remote,
+                                 mxr_uid_t source,
+                                 const mxr_osd_sync_report_t *report);
 
 /**
  * Asks `source` for the settings of its sync `seq` named in `missing`, `count`

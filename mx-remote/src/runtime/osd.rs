@@ -19,14 +19,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::types::{
-    OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncRequest, OsdSyncSlot, OsdSyncValue,
-    OSD_SETTINGS_ASKED, OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX,
-    OSD_SYNC_IMAGE_WIDTH_MAX, OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS,
-    OSD_SYNC_TEXT_MAX,
+    OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncReport, OsdSyncRequest, OsdSyncSlot,
+    OsdSyncValue, OSD_SETTINGS_ASKED, OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX,
+    OSD_SYNC_IMAGE_MAX, OSD_SYNC_IMAGE_WIDTH_MAX, OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX,
+    OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
 };
 use crate::wire::{
-    build_osd_request, build_osd_setting, build_osd_sync, crc32, op, Addressee, DeviceFeature,
-    DeviceUid, OsdSyncWhat,
+    build_osd_report, build_osd_request, build_osd_setting, build_osd_sync, crc32, op, Addressee,
+    DeviceFeature, DeviceUid, OsdSyncWhat,
 };
 
 use super::control::ControlError;
@@ -442,6 +442,26 @@ impl Remote {
             }
             asked.push_back((source, seq));
         });
+        self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
+        Ok(())
+    }
+
+    /// Reports to `source` how this client gets on with taking its sync
+    /// `report.seq`, as a unit does at each stage: taking, done or failed.
+    /// The source lists it among the units that took the sync. The reason is
+    /// cut to 63 bytes.
+    ///
+    /// Refused for a source not heard.
+    pub fn send_osd_report(
+        &self,
+        source: DeviceUid,
+        report: &OsdSyncReport,
+    ) -> Result<(), ControlError> {
+        let to = self
+            .shared
+            .addressee(source)
+            .ok_or(ControlError::UnknownDevice(source))?;
+        let frame = build_osd_report(self.shared.uid, report);
         self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
         Ok(())
     }

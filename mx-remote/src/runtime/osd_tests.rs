@@ -764,6 +764,47 @@ fn a_request_for_a_sync_of_its_own_goes_to_every_unit() {
 }
 
 #[test]
+fn a_report_goes_to_the_source_naming_this_client() {
+    let m = mesh();
+    m.remote
+        .send_osd_report(
+            m.a,
+            &crate::types::OsdSyncReport {
+                seq: 0x0102,
+                state: crate::wire::OsdSyncState::FAILED,
+                written: 3,
+                refused: 1,
+                reason: format!("{}é", "x".repeat(62)),
+            },
+        )
+        .expect("sent");
+    let sent = m.sent();
+    assert_eq!(sent.len(), 1);
+    let p = &sent[0];
+    assert_eq!(p.len(), 90);
+    assert_eq!(&p[..2], &[2, 3]);
+    assert_eq!(u16_at(p, 2), 0x0102);
+    assert_eq!(target(p), m.uid(), "the reporting unit");
+    assert_eq!(p[20], 2);
+    assert_eq!((u16_at(p, 22), u16_at(p, 24)), (3, 1));
+    assert_eq!(&p[26..88], "x".repeat(62).as_bytes());
+    assert_eq!(p[88..], [0, 0], "cut before the character that doesn't fit");
+    assert!(matches!(
+        m.remote.send_osd_report(
+            uid_n(0x7F),
+            &crate::types::OsdSyncReport {
+                seq: 1,
+                state: crate::wire::OsdSyncState::DONE,
+                written: 0,
+                refused: 0,
+                reason: String::new(),
+            }
+        ),
+        Err(ControlError::UnknownDevice(_))
+    ));
+}
+
+#[test]
 fn a_request_for_settings_names_the_missing_ones_and_the_source() {
     let m = mesh();
     m.remote
