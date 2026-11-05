@@ -10,10 +10,10 @@
 use std::net::Ipv4Addr;
 
 use crate::types::{
-    AmpZoneSettings, MeshOperation, RcSettings, ThirdPartyVendor, UnitNetConfig, V2ipAudioFormat,
-    V2ipDeviceSettings, V2ipDownmix, V2ipPtpMessages, V2ipStreamSources, V2ipTestcard,
-    V2ipTilingConfig, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, RC_STATUS_NAME_MAX,
-    VIDEO_WALL_CLEARED,
+    AmpZoneSettings, MeshOperation, RcSettings, ThirdPartyVendor, UnitNetConfig, UnitStatus,
+    V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipPtpMessages, V2ipStreamSources,
+    V2ipTestcard, V2ipTilingConfig, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus,
+    RC_STATUS_NAME_MAX, UNIT_MAX_TEMPERATURES, VIDEO_WALL_CLEARED,
 };
 
 use super::constants::{
@@ -238,6 +238,56 @@ pub(crate) fn build_unit_command(
             p.extend_from_slice(&addr.octets());
         }
     }
+    p
+}
+
+/// Width of `mxr_unit_status`: 108 bytes of fields that `ALIGN(8)` rounds up.
+pub(crate) const UNIT_STATUS_LEN: usize = 112;
+
+/// Bytes of `mxr_unit_status.status_message`, not NUL-terminated when full.
+pub(crate) const UNIT_STATUS_MESSAGE_LEN: usize = 48;
+
+/// Builds `SYS_UNIT_STATUS` (0x4F), `mxr_unit_status`: the flags, counters and
+/// health words, the IP configuration in network order, the fan, the status,
+/// the temperatures behind their count, the message NUL-padded to 48 bytes,
+/// the power save levels and the padding.
+///
+/// The temperatures and message are cut to their fields;
+/// [`crate::Remote::send_unit_status`] refuses what they would cut.
+pub(crate) fn build_unit_status(status: &UnitStatus) -> Vec<u8> {
+    let mut p = Vec::with_capacity(UNIT_STATUS_LEN);
+    for word in [
+        status.flags.bits(),
+        status.uptime,
+        status.boot_count,
+        status.reboot_count,
+        status.encoder_health,
+        status.decoder_health,
+    ] {
+        p.extend_from_slice(&word.to_le_bytes());
+    }
+    let n = &status.network;
+    for addr in [n.ip, n.netmask, n.gateway, n.dns1, n.dns2] {
+        p.extend_from_slice(&addr.octets());
+    }
+    p.extend_from_slice(&status.fan_rpm.to_le_bytes());
+    p.push(status.fan_duty);
+    p.push(status.status);
+    p.push(status.net_revert_s);
+    let temperatures = &status.temperatures[..status.temperatures.len().min(UNIT_MAX_TEMPERATURES)];
+    p.push(temperatures.len() as u8);
+    let mut slots = [0u8; UNIT_MAX_TEMPERATURES];
+    for (slot, t) in slots.iter_mut().zip(temperatures) {
+        *slot = *t as u8;
+    }
+    p.extend_from_slice(&slots);
+    let message = status.status_message.as_bytes();
+    let mut text = [0u8; UNIT_STATUS_MESSAGE_LEN];
+    let len = message.len().min(UNIT_STATUS_MESSAGE_LEN);
+    text[..len].copy_from_slice(&message[..len]);
+    p.extend_from_slice(&text);
+    p.extend(status.power_save.iter().map(|level| level.bits()));
+    p.resize(UNIT_STATUS_LEN, 0);
     p
 }
 

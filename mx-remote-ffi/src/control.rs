@@ -540,7 +540,7 @@ pub unsafe extern "C" fn mxr_set_v2ip_tiling(
 }
 
 /// Reads a NUL-terminated string out of a fixed-width field.
-fn field_str<'a>(field: &'a [c_char], what: &str) -> Result<&'a str, mxr_result_t> {
+pub(crate) fn field_str<'a>(field: &'a [c_char], what: &str) -> Result<&'a str, mxr_result_t> {
     // SAFETY: c_char and u8 have the same size and alignment.
     let bytes = unsafe { std::slice::from_raw_parts(field.as_ptr().cast::<u8>(), field.len()) };
     std::ffi::CStr::from_bytes_until_nul(bytes)

@@ -6235,6 +6235,82 @@ fn asking_for_the_description_sets_the_request_bit() {
     assert!(f.tap.frames().is_empty(), "a refused request was sent");
 }
 
+/// This client's own status goes to every device as the 112-byte report a
+/// unit sends, stamped 0x2C, each field at its own offset, and a peer reads it
+/// back whole.
+#[test]
+fn this_client_s_unit_status_goes_out_as_a_unit_sends_its_own() {
+    let f = Fixture::new();
+    f.connect();
+    let status = crate::types::UnitStatus {
+        flags: UnitFlag::FIRMWARE_UPGRADE | UnitFlag::FPGA_UPGRADE,
+        uptime: 0x0001_0203,
+        boot_count: 0x0002_0304,
+        reboot_count: 0x0003_0405,
+        encoder_health: 0x0004_0506,
+        decoder_health: 0x0005_0607,
+        network: UnitNetConfig {
+            ip: Ipv4Addr::new(10, 1, 2, 3),
+            netmask: Ipv4Addr::new(255, 255, 254, 0),
+            gateway: Ipv4Addr::new(10, 1, 2, 254),
+            dns1: Ipv4Addr::new(8, 8, 4, 4),
+            dns2: Ipv4Addr::new(9, 9, 9, 10),
+        },
+        fan_rpm: 0x0A0B,
+        fan_duty: 55,
+        status: 3,
+        net_revert_s: 17,
+        temperatures: vec![41, -5],
+        status_message: "m".repeat(48),
+        power_save: [1, 3, 5, 7].map(crate::wire::UnitPowerSave::from_bits),
+    };
+    f.tap.clear();
+    f.remote.send_unit_status(&status).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[2..4], &0x2Cu16.to_le_bytes(), "the stamp");
+    assert_eq!(&frame[20..22], &op::SYS_UNIT_STATUS.0.to_le_bytes());
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(p.len(), 112);
+    assert_eq!(&p[..4], &(1u32 << 18 | 1 << 1).to_le_bytes());
+    assert_eq!(&p[20..28], &[7, 6, 5, 0, 10, 1, 2, 3]);
+    assert_eq!(&p[40..50], &[9, 9, 9, 10, 0x0B, 0x0A, 55, 3, 17, 2]);
+    assert_eq!(&p[50..56], &[41, 251, 0, 0, 0, 0]);
+    assert_eq!(&p[56..104], &[b'm'; 48][..]);
+    assert_eq!(&p[104..], &[1, 3, 5, 7, 0, 0, 0, 0]);
+    let peer = uid_n(240);
+    f.everything(peer, 0x2C, "US0001");
+    f.feed(peer, op::SYS_UNIT_STATUS, p);
+    assert_eq!(f.remote.unit_status(peer), Some(status));
+}
+
+/// A status a unit couldn't send is refused before anything is sent.
+#[test]
+fn a_unit_status_that_does_not_fit_is_not_sent() {
+    let f = Fixture::new();
+    f.connect();
+    f.tap.clear();
+    for status in [
+        crate::types::UnitStatus {
+            temperatures: vec![1; 7],
+            ..Default::default()
+        },
+        crate::types::UnitStatus {
+            status_message: "m".repeat(49),
+            ..Default::default()
+        },
+        crate::types::UnitStatus {
+            status_message: "a\0b".to_string(),
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            f.remote.send_unit_status(&status),
+            Err(ControlError::InvalidRequest(_))
+        ));
+    }
+    assert!(f.tap.frames().is_empty());
+}
+
 /// A unit is located for 30 s or until stopped, only once it has reported
 /// that it can be, and the cached status says so at once.
 #[test]

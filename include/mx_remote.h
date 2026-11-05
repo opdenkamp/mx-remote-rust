@@ -8581,6 +8581,25 @@ mxr_result_t mxr_v2ip_vlan(const mxr_remote_t *remote, mxr_uid_t uid, mxr_v2ip_v
 mxr_result_t mxr_unit_status(const mxr_remote_t *remote, mxr_uid_t uid, mxr_unit_status_t *out);
 
 /**
+ * Reports this client's own health and IP configuration to every device, as
+ * a unit does. A mesh controller that runs no update checks of its own passes
+ * its members' `MXR_UNIT_FIRMWARE_UPGRADE` and `MXR_UNIT_FPGA_UPGRADE` on
+ * this way.
+ *
+ * Every field of `status` is sent; an empty address is 0.0.0.0, and no power
+ * save level is reported. `MXR_ERR_INVALID_ARGUMENT` for a null `status`, an
+ * address that isn't one, more than `MXR_UNIT_MAX_TEMPERATURES`
+ * temperatures, and a status message that isn't NUL-terminated UTF-8 of at
+ * most 48 bytes.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `status` is null or points at a
+ * readable `mxr_unit_status_t`.
+ */
+mxr_result_t mxr_send_unit_status(const mxr_remote_t *remote, const mxr_unit_status_t *status);
+
+/**
  * Fills `out` with the level a OneIP device powers down to in power save,
  * `MXR_V2IP_POWER_SAVE_LEVEL_*`, which the device picks itself.
  *

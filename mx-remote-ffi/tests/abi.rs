@@ -1020,6 +1020,57 @@ fn the_device_settings_calls_check_their_arguments_first() {
     unsafe { mxr_remote_free(remote) };
 }
 
+/// Sending this client's own status checks the struct before anything is
+/// sent; a status that fits reaches the transmit path.
+#[test]
+fn sending_the_unit_status_checks_the_struct_first() {
+    let remote = client(c"abi-own-status", c"00000022.00000000.00000000.000000ab");
+    let mut fits = mxr_unit_status_t {
+        flags: MXR_UNIT_FIRMWARE_UPGRADE,
+        uptime: 0,
+        boot_count: 0,
+        reboot_count: 0,
+        encoder_health: 0,
+        decoder_health: 0,
+        ip: [0; MXR_IP_STRING_LEN],
+        netmask: [0; MXR_IP_STRING_LEN],
+        gateway: [0; MXR_IP_STRING_LEN],
+        dns1: [0; MXR_IP_STRING_LEN],
+        dns2: [0; MXR_IP_STRING_LEN],
+        fan_rpm: 0,
+        fan_duty: 0,
+        status: 0,
+        net_revert_s: 0,
+        nb_temperatures: 1,
+        temperatures: [0; MXR_UNIT_MAX_TEMPERATURES],
+        status_message: [0; MXR_UNIT_STATUS_MESSAGE_LEN],
+    };
+    for (slot, b) in fits.ip.iter_mut().zip(b"10.66.0.2") {
+        *slot = *b as c_char;
+    }
+    fits.status_message[..48].fill(b'm' as c_char);
+    let mut bad_ip = fits;
+    bad_ip.dns2[0] = b'x' as c_char;
+    let mut too_hot = fits;
+    too_hot.nb_temperatures = 7;
+    let mut unterminated = fits;
+    unterminated.status_message.fill(b'm' as c_char);
+    // SAFETY: a live handle; a null status is what is under test.
+    let rc = unsafe { mxr_send_unit_status(remote, ptr::null()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    for status in [bad_ip, too_hot, unterminated] {
+        // SAFETY: a live handle and a readable struct.
+        let rc = unsafe { mxr_send_unit_status(remote, &status) };
+        assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    }
+    // SAFETY: a live handle and a readable struct; the client isn't started.
+    let rc = unsafe { mxr_send_unit_status(remote, &fits) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_CONNECTED);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// The unit calls answer a caller's mistake as an argument error and a device
 /// never heard from as not found, before anything is sent.
 #[test]

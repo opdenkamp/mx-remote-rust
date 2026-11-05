@@ -28,11 +28,12 @@ use mx_remote::{
     OSD_MESSAGE_TEXT_MAX, OSD_SYNC_SLOTS, V2IP_DOWNMIX_LFE_MAX,
 };
 
+use crate::abi::from_control;
 use crate::abi::{fail, guard, mxr_result_t, mxr_uid_t, put_str};
 use crate::bits::{
     MXR_V2IP_DOWNMIX_ALWAYS, MXR_V2IP_DOWNMIX_LEVEL_UNSCALED, MXR_V2IP_DOWNMIX_LFE_MAX,
 };
-use crate::control::mxr_audio_format_t;
+use crate::control::{field_str, mxr_audio_format_t};
 use crate::info::{copy_into, not_heard_from, null_out, MXR_NAME_LEN, MXR_VERSION_LEN};
 use crate::remote::{mxr_remote_t, with, MXR_IP_STRING_LEN};
 
@@ -1358,6 +1359,85 @@ pub unsafe extern "C" fn mxr_unit_status(
         });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { fill(r, uid, out, "unit status", value) }
+    })
+}
+
+/// Reports this client's own health and IP configuration to every device, as
+/// a unit does. A mesh controller that runs no update checks of its own passes
+/// its members' `MXR_UNIT_FIRMWARE_UPGRADE` and `MXR_UNIT_FPGA_UPGRADE` on
+/// this way.
+///
+/// Every field of `status` is sent; an empty address is 0.0.0.0, and no power
+/// save level is reported. `MXR_ERR_INVALID_ARGUMENT` for a null `status`, an
+/// address that isn't one, more than `MXR_UNIT_MAX_TEMPERATURES`
+/// temperatures, and a status message that isn't NUL-terminated UTF-8 of at
+/// most 48 bytes.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `status` is null or points at a
+/// readable `mxr_unit_status_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_unit_status(
+    remote: *const mxr_remote_t,
+    status: *const mxr_unit_status_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees a readable struct or null.
+        let Some(s) = (unsafe { status.as_ref() }) else {
+            return fail(mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "no status");
+        };
+        match unit_status_of(s) {
+            Ok(status) => from_control(r.remote.send_unit_status(&status)),
+            Err(code) => code,
+        }
+    })
+}
+
+/// The status a C caller filled in.
+fn unit_status_of(s: &mxr_unit_status_t) -> Result<UnitStatus, mxr_result_t> {
+    let address = |field: &[c_char], what: &str| -> Result<Ipv4Addr, mxr_result_t> {
+        let text = field_str(field, what)?;
+        if text.is_empty() {
+            return Ok(Ipv4Addr::UNSPECIFIED);
+        }
+        text.parse().map_err(|_| {
+            fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                &format!("{what} is not an IPv4 address: {text:?}"),
+            )
+        })
+    };
+    let count = usize::from(s.nb_temperatures);
+    let Some(temperatures) = s.temperatures.get(..count) else {
+        return Err(fail(
+            mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+            "more temperatures than a unit reports",
+        ));
+    };
+    Ok(UnitStatus {
+        flags: mx_remote::UnitFlag::from_bits(s.flags),
+        uptime: s.uptime,
+        boot_count: s.boot_count,
+        reboot_count: s.reboot_count,
+        encoder_health: s.encoder_health,
+        decoder_health: s.decoder_health,
+        network: mx_remote::UnitNetConfig {
+            ip: address(&s.ip, "ip")?,
+            netmask: address(&s.netmask, "netmask")?,
+            gateway: address(&s.gateway, "gateway")?,
+            dns1: address(&s.dns1, "dns1")?,
+            dns2: address(&s.dns2, "dns2")?,
+        },
+        fan_rpm: s.fan_rpm,
+        fan_duty: s.fan_duty,
+        status: s.status,
+        net_revert_s: s.net_revert_s,
+        temperatures: temperatures.to_vec(),
+        status_message: field_str(&s.status_message, "status_message")?.to_string(),
+        power_save: Default::default(),
     })
 }
 

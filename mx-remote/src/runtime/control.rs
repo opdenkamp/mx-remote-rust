@@ -33,15 +33,15 @@ use crate::state::{Bay, Device, State};
 use crate::types::{
     AmpZoneSettings, AudioEndpoint, AudioEndpoints, AudioFeatures, AudioHop, BayMirrorStatus,
     HiddenStatus, MeshOperation, MultiviewerStatus, PowerStatus, RcSettings, ThirdPartyVendor,
-    UnitNetConfig, V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig,
+    UnitNetConfig, UnitStatus, V2ipAudioFormat, V2ipDeviceSettings, V2ipDownmix, V2ipDscpConfig,
     V2ipOutputMode, V2ipPowerSaveSchedule, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget,
     V2ipScalingSettings, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
     V2ipTilingConfig, V2ipVlan, VideoWallOp, VideoWallWindow, VolumeMuteStatus, MULTIVIEWER_INPUTS,
     OSD_MESSAGE_TEXT_MAX, RC_STATUS_MAX, RC_STATUS_NAME_MAX, SCALING_FLAG_AUTO_SCALING,
     SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID,
     SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420, THIRD_PARTY_PAYLOAD_MAX,
-    V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX, V2IP_SOURCE_FILTER_MAX,
-    V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
+    UNIT_MAX_TEMPERATURES, V2IP_PTP_DOMAIN_MAX, V2IP_SDP_MAX, V2IP_SINK_ROTATION_MAX,
+    V2IP_SOURCE_FILTER_MAX, V2IP_VLAN_PORT_SFP, VIDEO_WALL_CLEARED,
 };
 use crate::wire::{
     audio_cmd_header, audio_param, audio_sub, build_amp_zone_settings, build_audio_select_input,
@@ -49,7 +49,7 @@ use crate::wire::{
     build_mesh_operation, build_mirror_status, build_osd_message, build_privacy_request,
     build_rc_action, build_rc_key, build_rc_settings, build_set_bay_name, build_set_volume,
     build_sink_sdp_command, build_sink_sdp_pages, build_stats_request, build_target_only,
-    build_third_party, build_tiling, build_time_zone, build_unit_command,
+    build_third_party, build_tiling, build_time_zone, build_unit_command, build_unit_status,
     build_v2ip_device_settings, build_v2ip_downmix, build_v2ip_dscp, build_v2ip_locale,
     build_v2ip_manual_source_switch, build_v2ip_scaling, build_v2ip_settings_all,
     build_v2ip_source_frames, build_v2ip_source_switch, build_v2ip_testcard, build_v2ip_vlan,
@@ -60,8 +60,9 @@ use crate::wire::{
     MxrSignalType, Opcode, OsdMessageFlag, OsdMessagePriority, RcAction, RcKey, SendError,
     StreamAddr, UnitCommandFlag, UnitCommandKind, UnitFlag, V2ipDeviceSetting, V2ipFpgaFeature,
     V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode, V2ipVlanFlag,
-    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX,
-    V2IP_IR_PROFILE_NOT_SET, V2IP_LOCALE_MAX, V2IP_PORT_ANC, V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
+    DEVICE_NAME_LEN, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, UNIT_STATUS_MESSAGE_LEN,
+    V2IP_DSCP_MAX, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET, V2IP_LOCALE_MAX, V2IP_PORT_ANC,
+    V2IP_PORT_AUDIO, V2IP_PORT_VIDEO,
 };
 
 use super::{Remote, Shared};
@@ -1863,6 +1864,40 @@ impl Remote {
     }
 
     // ---- units ----
+
+    /// Reports this client's own health and IP configuration to every
+    /// device, as a unit does in its periodic broadcast and when they change.
+    ///
+    /// A mesh controller that runs no update checks of its own passes its
+    /// members' upgrade flags on this way: a member acts on
+    /// [`UnitFlag::FIRMWARE_UPGRADE`](crate::UnitFlag::FIRMWARE_UPGRADE) and
+    /// [`UnitFlag::FPGA_UPGRADE`](crate::UnitFlag::FPGA_UPGRADE) gained in its
+    /// controller's report by checking for the upgrade itself.
+    ///
+    /// Refused before anything is sent for more than
+    /// [`UNIT_MAX_TEMPERATURES`](crate::UNIT_MAX_TEMPERATURES) temperatures,
+    /// and for a status message over 48 bytes or holding a NUL.
+    pub fn send_unit_status(&self, status: &UnitStatus) -> Result<(), ControlError> {
+        if status.temperatures.len() > UNIT_MAX_TEMPERATURES {
+            return Err(ControlError::InvalidRequest(
+                "a unit reports at most 6 temperatures",
+            ));
+        }
+        let message = status.status_message.as_bytes();
+        if message.len() > UNIT_STATUS_MESSAGE_LEN || message.contains(&0) {
+            return Err(ControlError::InvalidRequest(
+                "a status message is at most 48 bytes, with no NUL",
+            ));
+        }
+        let payload = build_unit_status(status);
+        self.shared.command(move |_| {
+            Ok(Command::new(
+                Addressee::Broadcast,
+                op::SYS_UNIT_STATUS,
+                payload,
+            ))
+        })
+    }
 
     /// Clears a unit's current system status.
     ///
