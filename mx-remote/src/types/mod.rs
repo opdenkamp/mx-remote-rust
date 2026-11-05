@@ -6,6 +6,7 @@
 mod amp;
 mod audio;
 mod commands;
+mod controller;
 mod mesh;
 mod multiviewer;
 mod network;
@@ -28,6 +29,7 @@ pub use commands::{
     VideoWallWindow, RC_STATUS_MAX, RC_STATUS_NAME_MAX, VIDEO_WALL_CLEARED, VIDEO_WALL_MIN_SIZE,
     VIDEO_WALL_POS_ALIGN, VIDEO_WALL_WIDTH_ALIGN,
 };
+pub use controller::{ControllerHello, ControllerPart, CONTROLLER_PARTS_MAX};
 pub use mesh::{
     MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits,
     MeshReplaceable, MeshSetting, MESH_BAYS_MAX, MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX,

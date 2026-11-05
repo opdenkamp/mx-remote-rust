@@ -91,6 +91,11 @@ pub struct mxr_config_t {
     /// frame on every interface, which `mxr_remote_start()` fails without.
     /// Linux only, and it needs `CAP_NET_RAW`.
     pub capture_hello_mac: bool,
+    /// Announce this client as a dedicated mesh controller, one without bays
+    /// of its own such as a router: it sends a `CONTROLLER_STATE` hello after
+    /// its hello to every unit, at most every 10 s, and at once when
+    /// `mxr_set_controller_hello()` changes it.
+    pub dedicated_controller: bool,
 }
 
 /// Reads an address argument, where null means "not set".
@@ -158,6 +163,7 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.logo_port = (c.logo_port != 0).then_some(c.logo_port);
     config.mesh_device = c.mesh_device;
     config.capture_hello_mac = c.capture_hello_mac;
+    config.dedicated_controller = c.dedicated_controller;
     Ok(config)
 }
 

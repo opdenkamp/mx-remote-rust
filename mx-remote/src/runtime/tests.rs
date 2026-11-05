@@ -285,6 +285,113 @@ fn the_probe_loop_announces() {
     );
 }
 
+/// A dedicated controller follows its 54-byte hello with a `CONTROLLER_STATE`
+/// hello, which marks it as one to a peer; any other client sends the hello
+/// alone (matrixos e958c49).
+#[test]
+fn a_dedicated_controller_marks_itself_with_a_controller_hello() {
+    for dedicated in [false, true] {
+        let remote = Remote::new(
+            Config {
+                uid: Some(uid_n(208)),
+                dedicated_controller: dedicated,
+                ..Config::default()
+            },
+            Arc::new(()),
+        )
+        .expect("a client given its own uid reads nothing from disk");
+        let tap = Arc::new(Tap::default());
+        let sink = Arc::clone(&tap);
+        lock(&remote.shared.tx).set_tap(Arc::new(move |frame: &[u8]| {
+            sink.0.lock().expect("tap").push(frame.to_vec())
+        }));
+        remote.shared.announce();
+        let frames = tap.frames();
+        assert_eq!(frames.len(), if dedicated { 2 } else { 1 });
+        assert_eq!(frames[0].len() - HEADER_LEN, 54, "the hello");
+        assert_eq!(u16::from_le_bytes([frames[0][20], frames[0][21]]), 0x00);
+        let (peer, _) = client(209);
+        for frame in &frames {
+            peer.shared
+                .process_datagram(frame, Ipv4Addr::new(10, 8, 8, 1));
+        }
+        let seen = peer.device(remote.uid()).expect("a peer decodes it");
+        assert_eq!(seen.dedicated_controller, dedicated);
+        assert_eq!(
+            peer.controller_hello(remote.uid()),
+            dedicated.then(ControllerHello::default)
+        );
+        peer.close();
+        remote.close();
+    }
+}
+
+/// The controller hello follows a hello at most every 10 s, and goes at once
+/// when the application changes it, but not when it sets the same one again.
+#[test]
+fn a_controller_hello_goes_every_10_s_and_on_a_change() {
+    let remote = Remote::new(
+        Config {
+            uid: Some(uid_n(210)),
+            dedicated_controller: true,
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    let tap = Arc::new(Tap::default());
+    let sink = Arc::clone(&tap);
+    lock(&remote.shared.tx).set_tap(Arc::new(move |frame: &[u8]| {
+        sink.0.lock().expect("tap").push(frame.to_vec())
+    }));
+    let state_frames = |tap: &Tap| {
+        tap.frames()
+            .iter()
+            .filter(|f| u16::from_le_bytes([f[20], f[21]]) == 0x58)
+            .count()
+    };
+    let t0 = Instant::now();
+    remote.shared.announce();
+    assert_eq!(state_frames(&tap), 1, "after the first hello");
+    remote.shared.announce();
+    assert_eq!(state_frames(&tap), 1, "within 10 s of the last");
+    lock(&remote.shared.controller_hello).1 = Some(t0 - Duration::from_secs(10));
+    remote.shared.announce();
+    assert_eq!(state_frames(&tap), 2, "10 s after the last");
+    let hello = ControllerHello {
+        role: crate::ControllerRole::PRIMARY,
+        generation: 7,
+        primary: uid_n(210),
+        parts: vec![crate::ControllerPart {
+            part: 0,
+            length: 100,
+            crc: 0xDEAD_BEEF,
+        }],
+    };
+    remote
+        .set_controller_hello(hello.clone())
+        .expect("a dedicated controller sets its hello");
+    assert_eq!(state_frames(&tap), 3, "at once on a change");
+    remote
+        .set_controller_hello(hello)
+        .expect("a dedicated controller sets its hello");
+    assert_eq!(state_frames(&tap), 3, "the same one again");
+    remote.close();
+
+    let plain = Remote::new(
+        Config {
+            uid: Some(uid_n(211)),
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    assert!(plain
+        .set_controller_hello(ControllerHello::default())
+        .is_err());
+    plain.close();
+}
+
 /// What the client says about itself has to parse as a hello, or no peer will
 /// know it is there.
 #[test]

@@ -182,6 +182,9 @@ pub(crate) struct Device {
     pub(crate) mesh_replace_units: Option<(MeshReplaceUnits, Instant)>,
     /// The length and crc32 of its kept settings, as it last announced them.
     pub(crate) mesh_config_digest: Option<MeshConfigDigest>,
+    /// The device's last `CONTROLLER_STATE` hello: it is a dedicated
+    /// controller, such as a router, once it has sent one.
+    pub(crate) controller_hello: Option<crate::types::ControllerHello>,
     /// The PTP state the device last reported about itself, `None` while it
     /// reports none.
     pub(crate) v2ip_ptp: Option<V2ipPtpState>,
@@ -273,6 +276,7 @@ impl Device {
             osd_message: None,
             mesh_replace_units: None,
             mesh_config_digest: None,
+            controller_hello: None,
             v2ip_testcard: None,
             v2ip_stats: None,
             setup_done: None,
@@ -1319,6 +1323,21 @@ impl Device {
         ev.push(Event::MeshConfigDigestChanged {
             device: self.uid,
             digest,
+        });
+    }
+
+    pub(crate) fn set_controller_hello(
+        &mut self,
+        hello: crate::types::ControllerHello,
+        ev: &mut Vec<Event>,
+    ) {
+        if self.controller_hello.as_ref() == Some(&hello) {
+            return;
+        }
+        self.controller_hello = Some(hello.clone());
+        ev.push(Event::ControllerHelloChanged {
+            device: self.uid,
+            hello,
         });
     }
 

@@ -93,7 +93,7 @@ fn accepted(data: &[u8]) -> Option<Frame<'_>> {
 /// The first opcode past a unit's table (`MX_OP_NB`). A frame at or above it
 /// has no valid header to a unit, which drops it before either timer is
 /// touched.
-const OPCODE_LIMIT: u16 = 0x58;
+const OPCODE_LIMIT: u16 = 0x59;
 
 /// The shortest hello a unit takes. A shorter one is ignored whole, and a
 /// longer one read by its first this many bytes.
@@ -332,6 +332,7 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::THIRD_PARTY => third_party::third_party(rx, ev),
         op::MESH_REPLACE => mesh::mesh_replace(state, rx, ev),
         op::MESH_CONFIG => mesh::mesh_config(state, rx, ev),
+        op::CONTROLLER_STATE => mesh::controller_state(state, rx, ev),
         Opcode(_) => {}
     }
 }

@@ -1981,6 +1981,21 @@
 #define MXR_MESH_REPLACE_BUSY 5
 
 /**
+ * Neither primary nor failsafe: in no mesh, or not settled yet.
+ */
+#define MXR_CONTROLLER_ROLE_NONE 0
+
+/**
+ * The mesh's primary controller.
+ */
+#define MXR_CONTROLLER_ROLE_PRIMARY 1
+
+/**
+ * The failsafe, holding a copy of the primary's state.
+ */
+#define MXR_CONTROLLER_ROLE_FAILSAFE 2
+
+/**
  * The colour space a OneIP sink scales its output to.
  */
 #define MXR_V2IP_COLOUR_RGB 0
@@ -2116,6 +2131,12 @@
  * The most bays a controller's numbering holds: up to 256 of each mode.
  */
 #define MXR_MESH_BAYS_MAX 512
+
+/**
+ * The most parts a controller hello lists: the state, and the four overlay
+ * logo slots.
+ */
+#define MXR_CONTROLLER_PARTS_MAX 5
 
 /**
  * Bytes an IPv4 address needs when written as text, the terminator included.
@@ -3418,6 +3439,11 @@ typedef struct {
    * stores it; empty while it names none.
    */
   char igmp_querier[MXR_IP_STRING_LEN];
+  /**
+   * The device is a dedicated mesh controller, such as a router: it has
+   * sent a `CONTROLLER_STATE` hello, which `mxr_controller_hello()` reads.
+   */
+  bool dedicated_controller;
 } mxr_device_info_t;
 
 /**
@@ -3822,6 +3848,50 @@ typedef struct {
 } mxr_mesh_bay_t;
 
 /**
+ * One part of a dedicated controller's state, as its hello lists it.
+ */
+typedef struct {
+  /**
+   * The part's length in bytes.
+   */
+  uint32_t length;
+  /**
+   * The crc32 of the whole part.
+   */
+  uint32_t crc;
+  /**
+   * Which part: 0 the state, 1-4 the PNG of overlay logo slot N.
+   */
+  uint8_t part;
+} mxr_controller_part_t;
+
+/**
+ * A dedicated controller's `CONTROLLER_STATE` hello.
+ */
+typedef struct {
+  /**
+   * The primary in the sender's state, all zero for none.
+   */
+  mxr_uid_t primary;
+  /**
+   * Raised on every change of the sender's state.
+   */
+  uint32_t generation;
+  /**
+   * The parts, `nb_parts` of them.
+   */
+  mxr_controller_part_t parts[MXR_CONTROLLER_PARTS_MAX];
+  /**
+   * `MXR_CONTROLLER_ROLE_*`.
+   */
+  uint8_t role;
+  /**
+   * How many of `parts` are listed.
+   */
+  uint8_t nb_parts;
+} mxr_controller_hello_t;
+
+/**
  * How a client finds the network.
  *
  * Zeroing the whole struct asks for the default: both endpoints a unit has,
@@ -3910,6 +3980,13 @@ typedef struct {
    * Linux only, and it needs `CAP_NET_RAW`.
    */
   bool capture_hello_mac;
+  /**
+   * Announce this client as a dedicated mesh controller, one without bays
+   * of its own such as a router: it sends a `CONTROLLER_STATE` hello after
+   * its hello to every unit, at most every 10 s, and at once when
+   * `mxr_set_controller_hello()` changes it.
+   */
+  bool dedicated_controller;
 } mxr_config_t;
 
 /**
@@ -8230,6 +8307,34 @@ mxr_result_t mxr_send_mesh_bays(const mxr_remote_t *remote,
                                 mxr_uid_t subject,
                                 const mxr_mesh_bay_t *bays,
                                 size_t count);
+
+/**
+ * Fills `out` with the `CONTROLLER_STATE` hello device `uid` last sent.
+ * `MXR_ERR_NOT_REPORTED` until it has sent one; a device that has is a
+ * dedicated controller.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` points at a writable
+ * `mxr_controller_hello_t`.
+ */
+mxr_result_t mxr_controller_hello(const mxr_remote_t *remote,
+                                  mxr_uid_t uid,
+                                  mxr_controller_hello_t *out);
+
+/**
+ * Sets the `CONTROLLER_STATE` hello this client sends as a dedicated
+ * controller (`dedicated_controller` in its config), and sends it at once
+ * when it changed. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't one, or
+ * for more than `MXR_CONTROLLER_PARTS_MAX` parts.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `hello` is
+ * null or points at a readable [`mxr_controller_hello_t`].
+ */
+mxr_result_t mxr_set_controller_hello(const mxr_remote_t *remote,
+                                      const mxr_controller_hello_t *hello);
 
 /**
  * Creates a client, without opening a socket yet.

@@ -103,6 +103,9 @@ pub(crate) mod op {
     pub(crate) const THIRD_PARTY: Opcode = Opcode(0x55);
     pub(crate) const MESH_REPLACE: Opcode = Opcode(0x56);
     pub(crate) const MESH_CONFIG: Opcode = Opcode(0x57);
+    /// The mesh state a failsafe router holds of the primary; only dedicated
+    /// controllers send or take it.
+    pub(crate) const CONTROLLER_STATE: Opcode = Opcode(0x58);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -209,6 +212,7 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::THIRD_PARTY => 0x01,
         op::MESH_REPLACE => 0x32,
         op::MESH_CONFIG => 0x33,
+        op::CONTROLLER_STATE => 0x34,
         Opcode(_) => return None,
     })
 }

@@ -1245,3 +1245,12 @@ pub const MXR_MESH_REPLACE_FAILED: u8 = 4;
 /// A membership change of the controller's own has not completed, such as
 /// handing the controller role over.
 pub const MXR_MESH_REPLACE_BUSY: u8 = 5;
+
+// ---- a dedicated controller's role, in `mxr_controller_hello_t::role` ----
+
+/// Neither primary nor failsafe: in no mesh, or not settled yet.
+pub const MXR_CONTROLLER_ROLE_NONE: u8 = 0;
+/// The mesh's primary controller.
+pub const MXR_CONTROLLER_ROLE_PRIMARY: u8 = 1;
+/// The failsafe, holding a copy of the primary's state.
+pub const MXR_CONTROLLER_ROLE_FAILSAFE: u8 = 2;

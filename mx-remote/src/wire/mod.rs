@@ -17,6 +17,7 @@
 mod bayconfig;
 mod conn;
 mod constants;
+mod controller;
 mod enums;
 mod frame;
 mod link;
@@ -33,7 +34,7 @@ mod vectors;
 
 pub use constants::*;
 pub use enums::{
-    BayFeatures, BayStatus, DeviceFeature, EdidProfile, FirmwareType, LinkFeature,
+    BayFeatures, BayStatus, ControllerRole, DeviceFeature, EdidProfile, FirmwareType, LinkFeature,
     MeshOperationKind, MeshReplaceResult, MultiviewerAspectRatio, MultiviewerBool,
     MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode,
     MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode,
@@ -51,6 +52,7 @@ pub use uid::{BayUid, DeviceUid, UidParseError};
 
 pub(crate) use bayconfig::{parse_bay_config, BayConfig, BAY_CONFIG_SIZE};
 pub(crate) use conn::{Conn, Path};
+pub(crate) use controller::*;
 pub(crate) use frame::HEADER_LEN;
 pub(crate) use frame::{cstr, Frame, DEVICE_NAME_LEN, FW_VERSION_LEN};
 pub(crate) use link::{udp_in_ethernet, Capture};

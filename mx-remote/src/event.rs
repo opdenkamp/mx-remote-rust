@@ -246,6 +246,12 @@ events! {
         /// The device sent a controller's numbering whole, which
         /// [`Remote::mesh_bays`](crate::Remote::mesh_bays) also reads.
         MeshBaysReceived => on_mesh_bays_received(bays: MeshBays);
+        /// The device sent a `CONTROLLER_STATE` hello other than its last: it
+        /// is a dedicated controller, such as a router, which
+        /// [`DeviceInfo::dedicated_controller`](crate::DeviceInfo::dedicated_controller)
+        /// says from then on, and
+        /// [`Remote::controller_hello`](crate::Remote::controller_hello) reads.
+        ControllerHelloChanged => on_controller_hello_changed(hello: ControllerHello);
         /// The device reported its view of the mesh topology.
         TopologyChanged => on_topology_changed(topology: Vec<TopologyEntry>);
         /// A ProAmp8 reported its Dolby settings.

@@ -12,7 +12,9 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::types::{MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshSetting};
+use crate::types::{
+    ControllerHello, ControllerPart, MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshSetting,
+};
 use crate::wire::{op, DeviceFeature, MeshReplaceResult};
 
 /// A `MESH_REPLACE` header, its reserved byte poisoned.
@@ -489,5 +491,87 @@ fn a_numbering_of_no_bays_and_a_request_for_one_are_read() {
     h.feed(op::MESH_CONFIG, &config_header(4, 0, 0, 0, 0, uid_n(9)));
     assert!(
         h.saw(|e| matches!(e, Event::MeshBaysRequested { subject, .. } if *subject == uid_n(9)))
+    );
+}
+
+/// A `CONTROLLER_STATE` hello, byte by byte: header, role, part count, two
+/// reserved bytes poisoned, the primary and one entry per part.
+fn controller_hello(
+    version: u8,
+    kind: u8,
+    role: u8,
+    primary: DeviceUid,
+    parts: &[(u8, u32, u32)],
+) -> Vec<u8> {
+    let mut p = vec![version, kind, 0, 0xA5];
+    p.extend_from_slice(&0x0102_0304u32.to_le_bytes());
+    p.extend_from_slice(&[0; 12]);
+    p.extend_from_slice(&[role, parts.len() as u8, 0xA5, 0xA5]);
+    p.extend_from_slice(primary.as_bytes());
+    for &(part, length, crc) in parts {
+        p.extend_from_slice(&[part, 0xA5, 0xA5, 0xA5]);
+        p.extend_from_slice(&length.to_le_bytes());
+        p.extend_from_slice(&crc.to_le_bytes());
+    }
+    p
+}
+
+/// A `CONTROLLER_STATE` hello (version 1, kind 0, 40 bytes or more) from a
+/// known sender marks it as a dedicated controller (matrixos e958c49); one of
+/// another version or kind, or shorter, is dropped, as is a stranger's.
+#[test]
+fn a_controller_hello_marks_a_dedicated_controller() {
+    let mut h = Harness::new(84);
+    let stranger = controller_hello(1, 0, 1, uid_n(84), &[]);
+    h.feed(op::CONTROLLER_STATE, &stranger);
+    assert!(h.state.device(h.sender).is_none(), "a stranger registered");
+
+    h.feed(
+        op::SYS_HELLO,
+        &hello_payload(0x34, "Router", "SH0004", "1.0", DeviceFeature::MESH),
+    );
+    for (what, payload) in [
+        ("version 2", controller_hello(2, 0, 1, uid_n(84), &[])),
+        ("a request", controller_hello(1, 1, 1, uid_n(84), &[])),
+        (
+            "39 bytes",
+            controller_hello(1, 0, 1, uid_n(84), &[])[..39].to_vec(),
+        ),
+    ] {
+        h.feed(op::CONTROLLER_STATE, &payload);
+        assert_eq!(h.device().controller_hello, None, "{what}");
+    }
+
+    let mut hello = controller_hello(
+        1,
+        0,
+        2,
+        uid_n(85),
+        &[(0, 0x0000_1234, 0xCAFE_F00D), (3, 0x0000_0800, 0x0BAD_BEEF)],
+    );
+    // A part entry cut short is left out.
+    hello.extend_from_slice(&[4, 0, 0, 0, 1]);
+    hello[21] = 3;
+    h.feed(op::CONTROLLER_STATE, &hello);
+    let expected = ControllerHello {
+        role: crate::ControllerRole::FAILSAFE,
+        generation: 0x0102_0304,
+        primary: uid_n(85),
+        parts: vec![
+            ControllerPart {
+                part: 0,
+                length: 0x1234,
+                crc: 0xCAFE_F00D,
+            },
+            ControllerPart {
+                part: 3,
+                length: 0x0800,
+                crc: 0x0BAD_BEEF,
+            },
+        ],
+    };
+    assert_eq!(h.device().controller_hello, Some(expected.clone()));
+    assert!(
+        h.saw(|e| matches!(e, Event::ControllerHelloChanged { hello, .. } if *hello == expected))
     );
 }

@@ -40,6 +40,7 @@ fn client(name: &CStr, uid: &CStr) -> *mut mxr_remote_t {
         version: ptr::null(),
         mesh_device: false,
         capture_hello_mac: false,
+        dedicated_controller: false,
     };
     // SAFETY: every pointer in the config is a live NUL-terminated string, and
     // a null callback table asks for no callbacks.
@@ -400,6 +401,7 @@ fn a_configuration_that_cannot_be_read_yields_no_client() {
         version: ptr::null(),
         mesh_device: false,
         capture_hello_mac: false,
+        dedicated_controller: false,
     };
     // SAFETY: every non-null pointer in the config is a live NUL-terminated
     // string, and a null callback table asks for no callbacks.
@@ -603,7 +605,7 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 41] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 42] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_MESH_OP_",
@@ -831,6 +833,12 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
             core_bits(&enums, "MeshReplaceResult"),
             &[],
             6,
+        ),
+        (
+            "MXR_CONTROLLER_ROLE_",
+            core_bits(&enums, "ControllerRole"),
+            &[],
+            3,
         ),
     ];
 

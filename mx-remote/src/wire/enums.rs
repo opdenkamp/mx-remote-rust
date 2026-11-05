@@ -1683,3 +1683,18 @@ wire_enum! {
         BUSY = 5;
     }
 }
+
+wire_enum! {
+    /// The role a dedicated controller says it has in its `CONTROLLER_STATE`
+    /// hello.
+    ///
+    /// A value without a name is passed through as it arrived.
+    ControllerRole: u8 {
+        /// Neither: in no mesh, or not settled yet.
+        NONE = 0;
+        /// The mesh's primary controller.
+        PRIMARY = 1;
+        /// The failsafe, holding a copy of the primary's state.
+        FAILSAFE = 2;
+    }
+}

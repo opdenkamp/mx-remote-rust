@@ -34,8 +34,9 @@ use crate::rx::{hello_source, process_frame_on};
 use crate::state::{Device, State, CONFIG_GRACE};
 use crate::types::*;
 use crate::wire::{
-    build_hello, op, Addressee, BayUid, Capture, Conn, DeviceFeature, DeviceUid, FirmwareType,
-    Opcode, Path, SendError, Tx, V2ipFpgaFeature, MULTICAST_PORT, PROTOCOL_VERSION, VERSION,
+    build_controller_hello, build_hello, op, Addressee, BayUid, Capture, Conn, DeviceFeature,
+    DeviceUid, FirmwareType, Opcode, Path, SendError, Tx, V2ipFpgaFeature, MULTICAST_PORT,
+    PROTOCOL_VERSION, VERSION,
 };
 
 pub use control::ControlError;
@@ -68,6 +69,10 @@ const SHUTDOWN_POLL: Duration = Duration::from_millis(50);
 
 /// Longest a unit leaves its hello off the broadcast endpoint.
 const HELLO_BROADCAST: Duration = Duration::from_secs(30);
+
+/// How often a dedicated controller sends its `CONTROLLER_STATE` hello, right
+/// after a hello to every unit.
+const CONTROLLER_HELLO_EVERY: Duration = Duration::from_secs(10);
 
 /// Whether a hello at `now` goes to the broadcast endpoint whatever peers
 /// need: the first since the sockets opened, or [`HELLO_BROADCAST`] or more
@@ -184,6 +189,15 @@ pub struct Config {
     /// [`Remote::start`] fails without. Linux only, and it needs
     /// `CAP_NET_RAW`. Only a hello to one of this client's own ports counts.
     pub capture_hello_mac: bool,
+    /// Announce this client as a dedicated mesh controller, one without bays
+    /// of its own such as a router: right after its hello to every unit, at
+    /// most every 10 s, and at once when
+    /// [`Remote::set_controller_hello`] changes it, it sends a
+    /// `CONTROLLER_STATE` (0x58) hello, in a mesh or not. Its hello stays at
+    /// the 54 bytes every unit takes. A OneIP unit at protocol 0x34 or later
+    /// knows it as a dedicated controller once it has had one, and then takes
+    /// the controller role from none while one it follows is online.
+    pub dedicated_controller: bool,
 }
 
 impl Default for Config {
@@ -203,6 +217,7 @@ impl Default for Config {
             logo_port: None,
             mesh_device: false,
             capture_hello_mac: false,
+            dedicated_controller: false,
         }
     }
 }
@@ -215,6 +230,10 @@ struct Shared {
     version: String,
     mesh_device: bool,
     capture_hello_mac: bool,
+    dedicated_controller: bool,
+    /// The `CONTROLLER_STATE` hello a dedicated controller sends, and when it
+    /// last went out, `None` since the sockets opened.
+    controller_hello: Mutex<(ControllerHello, Option<Instant>)>,
     /// The mesh controller this client follows, zero for none.
     mesh_controller: Mutex<DeviceUid>,
     /// Whether the caller has mesh bays mapped, without which a controller
@@ -316,6 +335,8 @@ impl Remote {
                 version,
                 mesh_device: config.mesh_device,
                 capture_hello_mac: config.capture_hello_mac,
+                dedicated_controller: config.dedicated_controller,
+                controller_hello: Mutex::new((ControllerHello::default(), None)),
                 mesh_controller: Mutex::new(DeviceUid::ZERO),
                 mesh_bays_mapped: AtomicBool::new(false),
                 handler,
@@ -356,6 +377,7 @@ impl Remote {
         lock(&self.shared.tx).set_conn(Some(conn));
         // The first hello on new sockets goes to both endpoints.
         *lock(&self.shared.hello_on_broadcast) = None;
+        lock(&self.shared.controller_hello).1 = None;
         self.shared.closing.store(false, Ordering::SeqCst);
         self.spawn_workers(capture)?;
         self.shared.announce();
@@ -833,6 +855,7 @@ impl Remote {
         lock(&self.shared.tx).set_conn(Some(conn));
         // The first hello on new sockets goes to both endpoints.
         *lock(&self.shared.hello_on_broadcast) = None;
+        lock(&self.shared.controller_hello).1 = None;
         self.shared.announce();
         let _ = self.shared.discover();
         Ok(())
@@ -1029,6 +1052,30 @@ impl Shared {
             Ok(n) if n > 0 => lock(&self.schedule).announced(now),
             _ => {}
         }
+        self.announce_controller(now, false);
+    }
+
+    /// A dedicated controller's `CONTROLLER_STATE` hello, which follows its
+    /// hello to every unit at most every [`CONTROLLER_HELLO_EVERY`], and goes
+    /// at once when `now_due`. Until a unit has had one it does not know this
+    /// client is a dedicated controller, so the first follows the first hello.
+    fn announce_controller(&self, now: Instant, now_due: bool) {
+        if !self.dedicated_controller {
+            return;
+        }
+        let payload = {
+            let mut sent = lock(&self.controller_hello);
+            let due = now_due
+                || sent
+                    .1
+                    .map_or(true, |at| now.duration_since(at) >= CONTROLLER_HELLO_EVERY);
+            if !due {
+                return;
+            }
+            sent.1 = Some(now);
+            build_controller_hello(&sent.0)
+        };
+        let _ = self.send(&Addressee::Broadcast, op::CONTROLLER_STATE, &payload);
     }
 
     /// The features this client announces as of now.

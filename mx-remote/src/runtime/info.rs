@@ -50,6 +50,10 @@ pub struct DeviceInfo {
     pub supported_protocol: u16,
     /// What the device says it can do.
     pub features: DeviceFeature,
+    /// The device is a dedicated mesh controller, such as a router: it has
+    /// sent a `CONTROLLER_STATE` hello, which
+    /// [`Remote::controller_hello`](crate::Remote::controller_hello) reads.
+    pub dedicated_controller: bool,
     /// The address the device was last heard from.
     pub address: Option<Ipv4Addr>,
     /// Online, offline, booting or rebooting.
@@ -148,6 +152,7 @@ impl DeviceInfo {
             raw_serial: device.hello.raw_serial.clone(),
             supported_protocol: device.hello.supported_protocol,
             features: device.hello.features,
+            dedicated_controller: device.controller_hello.is_some(),
             address: device.hello.address,
             status: device.status(now),
             online: device.is_online(now),

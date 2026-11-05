@@ -280,6 +280,9 @@ pub struct mxr_device_info_t {
     /// The IGMP querier the device's last uplink report names, as a unit
     /// stores it; empty while it names none.
     pub igmp_querier: [c_char; MXR_IP_STRING_LEN],
+    /// The device is a dedicated mesh controller, such as a router: it has
+    /// sent a `CONTROLLER_STATE` hello, which `mxr_controller_hello()` reads.
+    pub dedicated_controller: bool,
 }
 
 /// What a bay is, and what is connected to it.
@@ -590,6 +593,7 @@ impl mxr_device_info_t {
             has_mac: info.mac.is_some(),
             mac: info.mac.unwrap_or_default().0,
             igmp_querier: [0; MXR_IP_STRING_LEN],
+            dedicated_controller: info.dedicated_controller,
         };
         if let Some(querier) = info.igmp_querier {
             put_str(&mut out.igmp_querier, &querier.to_string());

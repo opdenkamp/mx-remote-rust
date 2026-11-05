@@ -13,11 +13,11 @@ use crate::types::{
     MESH_CONFIG_MAX, MESH_REPLACE_UNITS_MAX,
 };
 use crate::wire::{
-    config_kind, cstr, decode_mesh_bays, decode_mesh_settings, replace_kind, DeviceFeature,
-    DeviceUid, MeshReplaceResult, MESH_BAYS_ENTRY_SIZE, MESH_CONFIG_FLAG_COPY,
-    MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION, MESH_REPLACE_FLAG_CONTROLLER,
-    MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT, MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE,
-    MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
+    config_kind, cstr, decode_controller_hello, decode_mesh_bays, decode_mesh_settings,
+    replace_kind, DeviceFeature, DeviceUid, MeshReplaceResult, MESH_BAYS_ENTRY_SIZE,
+    MESH_CONFIG_FLAG_COPY, MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION,
+    MESH_REPLACE_FLAG_CONTROLLER, MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT,
+    MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE, MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
 };
 
 use super::handlers::{u16_at, u32_at, uid_at};
@@ -249,5 +249,19 @@ fn settings_frame(
             });
         }
         _ => {}
+    }
+}
+
+/// Reads a `CONTROLLER_STATE` frame. A hello (version 1, kind 0, at least 40
+/// bytes) marks its sender, which a frame only reaches here from once it is
+/// known, as a dedicated controller for as long as it is known, as a unit
+/// from protocol 0x34 on does. Pulling a controller's state with a request
+/// and its data is not taken yet.
+pub(super) fn controller_state(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
+    let Some(hello) = decode_controller_hello(rx.frame.payload()) else {
+        return;
+    };
+    if let Some(device) = state.device_mut(rx.sender()) {
+        device.set_controller_hello(hello, ev);
     }
 }

@@ -9,8 +9,9 @@
 use std::ffi::c_char;
 
 use mx_remote::{
-    DeviceFeature, MeshBay, MeshReplaceResult, MeshReplaceUnit, MeshReplaceable, MeshSetting,
-    MESH_BAYS_MAX, MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
+    ControllerHello, ControllerPart, ControllerRole, DeviceFeature, MeshBay, MeshReplaceResult,
+    MeshReplaceUnit, MeshReplaceable, MeshSetting, CONTROLLER_PARTS_MAX, MESH_BAYS_MAX,
+    MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
 };
 
 use crate::abi::{fail, from_control, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -669,5 +670,130 @@ pub unsafe extern "C" fn mxr_send_mesh_bays(
             })
             .collect();
         from_control(r.remote.send_mesh_bays(to.into(), subject.into(), &bays))
+    })
+}
+
+/// The most parts a controller hello lists: the state, and the four overlay
+/// logo slots.
+pub const MXR_CONTROLLER_PARTS_MAX: usize = 5;
+
+const _: () = assert!(MXR_CONTROLLER_PARTS_MAX == CONTROLLER_PARTS_MAX);
+
+/// One part of a dedicated controller's state, as its hello lists it.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct mxr_controller_part_t {
+    /// The part's length in bytes.
+    pub length: u32,
+    /// The crc32 of the whole part.
+    pub crc: u32,
+    /// Which part: 0 the state, 1-4 the PNG of overlay logo slot N.
+    pub part: u8,
+}
+
+/// A dedicated controller's `CONTROLLER_STATE` hello.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct mxr_controller_hello_t {
+    /// The primary in the sender's state, all zero for none.
+    pub primary: mxr_uid_t,
+    /// Raised on every change of the sender's state.
+    pub generation: u32,
+    /// The parts, `nb_parts` of them.
+    pub parts: [mxr_controller_part_t; MXR_CONTROLLER_PARTS_MAX],
+    /// `MXR_CONTROLLER_ROLE_*`.
+    pub role: u8,
+    /// How many of `parts` are listed.
+    pub nb_parts: u8,
+}
+
+impl From<&ControllerHello> for mxr_controller_hello_t {
+    fn from(h: &ControllerHello) -> Self {
+        let mut out = Self {
+            primary: h.primary.into(),
+            generation: h.generation,
+            role: h.role.to_wire(),
+            ..Self::default()
+        };
+        for (slot, part) in out.parts.iter_mut().zip(&h.parts) {
+            *slot = mxr_controller_part_t {
+                length: part.length,
+                crc: part.crc,
+                part: part.part,
+            };
+            out.nb_parts += 1;
+        }
+        out
+    }
+}
+
+/// Fills `out` with the `CONTROLLER_STATE` hello device `uid` last sent.
+/// `MXR_ERR_NOT_REPORTED` until it has sent one; a device that has is a
+/// dedicated controller.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` points at a writable
+/// `mxr_controller_hello_t`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_controller_hello(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+    out: *mut mxr_controller_hello_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let value = r
+            .remote
+            .controller_hello(uid.into())
+            .map(|h| mxr_controller_hello_t::from(&h));
+        // SAFETY: the caller guarantees a writable struct or null.
+        unsafe { crate::subsystems::fill(r, uid, out, "controller hello", value) }
+    })
+}
+
+/// Sets the `CONTROLLER_STATE` hello this client sends as a dedicated
+/// controller (`dedicated_controller` in its config), and sends it at once
+/// when it changed. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't one, or
+/// for more than `MXR_CONTROLLER_PARTS_MAX` parts.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `hello` is
+/// null or points at a readable [`mxr_controller_hello_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_controller_hello(
+    remote: *const mxr_remote_t,
+    hello: *const mxr_controller_hello_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees hello is null or readable.
+        let Some(h) = (unsafe { hello.as_ref() }) else {
+            return fail(mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "hello is null");
+        };
+        let Some(parts) = h.parts.get(..usize::from(h.nb_parts)) else {
+            return fail(
+                mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                "more parts than MXR_CONTROLLER_PARTS_MAX",
+            );
+        };
+        from_control(
+            r.remote.set_controller_hello(ControllerHello {
+                role: ControllerRole::from_wire(h.role),
+                generation: h.generation,
+                primary: h.primary.into(),
+                parts: parts
+                    .iter()
+                    .map(|p| ControllerPart {
+                        part: p.part,
+                        length: p.length,
+                        crc: p.crc,
+                    })
+                    .collect(),
+            }),
+        )
     })
 }
