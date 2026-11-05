@@ -2202,6 +2202,30 @@ fn mesh_setting(name: &[u8], value: &[u8]) -> mxr_mesh_setting_t {
     s
 }
 
+/// The numbering calls find nothing before a device sent one, refuse a
+/// caller's mistake, and answer a device never heard from as not found.
+#[test]
+fn the_numbering_calls_check_their_arguments_first() {
+    let remote = client(c"abi-bays", c"00000024.00000000.00000000.000000b1");
+    let unit = uid_n(9);
+    // SAFETY: a live handle; a null output with no room.
+    let count = unsafe { mxr_mesh_bays(remote, unit, ptr::null_mut(), 0) };
+    assert_eq!(count, 0);
+    // SAFETY: a live handle; a null list of one is what is under test.
+    let rc = unsafe { mxr_send_mesh_bays(remote, unit, unit, ptr::null(), 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let many = [mxr_mesh_bay_t::default(); MXR_MESH_BAYS_MAX + 1];
+    // SAFETY: a live handle and that many bays.
+    let rc = unsafe { mxr_send_mesh_bays(remote, unit, unit, many.as_ptr(), many.len()) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_request_mesh_bays(remote, unit, unit) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}
+
 /// The mesh replace and kept settings calls answer a caller's mistake as an
 /// argument error and a device never heard from as not found, before
 /// anything is sent; a read of what nothing reported finds nothing.

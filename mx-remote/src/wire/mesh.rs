@@ -14,9 +14,9 @@
 //! this frame's bytes in the settings, the settings' length and crc32, and the
 //! unit the settings belong to at 16.
 
-use crate::types::{MeshReplaceUnit, MeshSetting};
+use crate::types::{MeshBay, MeshReplaceUnit, MeshSetting};
 
-use super::enums::MeshReplaceResult;
+use super::enums::{DeviceFeature, MeshReplaceResult};
 use super::payload::append_fixed_str;
 use super::uid::DeviceUid;
 
@@ -69,6 +69,8 @@ pub(crate) mod config_kind {
     pub(crate) const REQUEST: u8 = 1;
     pub(crate) const DUMP: u8 = 2;
     pub(crate) const SET: u8 = 3;
+    pub(crate) const BAYS_REQUEST: u8 = 4;
+    pub(crate) const BAYS: u8 = 5;
 }
 
 /// The flag at byte 2 of a dump: the settings are a copy the sender keeps of
@@ -244,6 +246,83 @@ pub(crate) fn decode_mesh_settings(mut p: &[u8]) -> Option<Vec<MeshSetting>> {
         settings.push(MeshSetting { name, value });
     }
     Some(settings)
+}
+
+/// Width of one `mesh_bays_entry`: the mode, a reserved byte, the bay number,
+/// the unit's features and its uid, on natural alignment with no padding.
+pub(crate) const MESH_BAYS_ENTRY_SIZE: usize = 24;
+
+/// The most entries one `MESH_CONFIG` bays frame carries.
+pub(crate) const MESH_BAYS_PER_FRAME: usize = 42;
+
+/// The mode byte of an input entry; an output's is 0.
+const MESH_BAYS_INPUT: u8 = 1;
+
+/// Builds a `MESH_CONFIG` bays request for the numbering of controller
+/// `subject`: the header alone.
+pub(crate) fn build_mesh_bays_request(subject: DeviceUid) -> Vec<u8> {
+    config_header(config_kind::BAYS_REQUEST, 0, 0, 0, 0, subject)
+}
+
+/// Lays out a numbering's entries as a unit carries them.
+pub(crate) fn encode_mesh_bays(bays: &[MeshBay]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(bays.len() * MESH_BAYS_ENTRY_SIZE);
+    for bay in bays {
+        p.push(if bay.input { MESH_BAYS_INPUT } else { 0 });
+        p.push(0);
+        p.extend_from_slice(&bay.bay.to_le_bytes());
+        p.extend_from_slice(&bay.features.bits().to_le_bytes());
+        p.extend_from_slice(bay.unit.as_bytes());
+    }
+    p
+}
+
+/// Builds the frames of a `MESH_CONFIG` bays answer, in order: each the
+/// header, with the offset of its bytes, then at most
+/// [`MESH_BAYS_PER_FRAME`] entries. A numbering of no bays is one frame.
+///
+/// `encoded` comes from [`encode_mesh_bays`] of at most
+/// [`MESH_BAYS_MAX`](crate::MESH_BAYS_MAX) entries, which the caller checks.
+pub(crate) fn build_mesh_bays_pages(flags: u8, subject: DeviceUid, encoded: &[u8]) -> Vec<Vec<u8>> {
+    let total = encoded.len() as u16;
+    let crc = super::osd::crc32(encoded);
+    let frame = |offset: usize, chunk: &[u8]| {
+        let mut p = config_header(config_kind::BAYS, flags, offset as u16, total, crc, subject);
+        p.extend_from_slice(chunk);
+        p
+    };
+    if encoded.is_empty() {
+        return vec![frame(0, &[])];
+    }
+    let page = MESH_BAYS_PER_FRAME * MESH_BAYS_ENTRY_SIZE;
+    encoded
+        .chunks(page)
+        .enumerate()
+        .map(|(i, chunk)| frame(i * page, chunk))
+        .collect()
+}
+
+/// Reads a numbering's entries, `None` for bytes that end inside one.
+pub(crate) fn decode_mesh_bays(p: &[u8]) -> Option<Vec<MeshBay>> {
+    if p.len() % MESH_BAYS_ENTRY_SIZE != 0 {
+        return None;
+    }
+    Some(
+        p.chunks_exact(MESH_BAYS_ENTRY_SIZE)
+            .map(|e| {
+                let mut uid = [0; 16];
+                uid.copy_from_slice(&e[8..24]);
+                MeshBay {
+                    input: e[0] == MESH_BAYS_INPUT,
+                    bay: u16::from_le_bytes([e[2], e[3]]),
+                    features: DeviceFeature::from_bits(u32::from_le_bytes([
+                        e[4], e[5], e[6], e[7],
+                    ])),
+                    unit: DeviceUid::from_array(uid),
+                }
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]

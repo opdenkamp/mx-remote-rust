@@ -9,14 +9,15 @@ use std::time::Instant;
 use crate::event::Event;
 use crate::state::{MeshConfigTransfer, State};
 use crate::types::{
-    MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits, MESH_CONFIG_MAX,
-    MESH_REPLACE_UNITS_MAX,
+    MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits, MESH_BAYS_MAX,
+    MESH_CONFIG_MAX, MESH_REPLACE_UNITS_MAX,
 };
 use crate::wire::{
-    config_kind, cstr, decode_mesh_settings, replace_kind, DeviceFeature, DeviceUid,
-    MeshReplaceResult, MESH_CONFIG_FLAG_COPY, MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION,
-    MESH_REPLACE_FLAG_CONTROLLER, MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT,
-    MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE, MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
+    config_kind, cstr, decode_mesh_bays, decode_mesh_settings, replace_kind, DeviceFeature,
+    DeviceUid, MeshReplaceResult, MESH_BAYS_ENTRY_SIZE, MESH_CONFIG_FLAG_COPY,
+    MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION, MESH_REPLACE_FLAG_CONTROLLER,
+    MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT, MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE,
+    MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
 };
 
 use super::handlers::{u16_at, u32_at, uid_at};
@@ -144,9 +145,13 @@ pub(super) fn mesh_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             device: sender,
             subject,
         }),
-        kind @ (config_kind::DUMP | config_kind::SET) => {
+        kind @ (config_kind::DUMP | config_kind::SET | config_kind::BAYS) => {
             settings_frame(state, sender, kind, subject, p, ev);
         }
+        config_kind::BAYS_REQUEST => ev.push(Event::MeshBaysRequested {
+            device: sender,
+            subject,
+        }),
         _ => {}
     }
 }
@@ -186,7 +191,12 @@ fn settings_frame(
         _ => return,
     };
     let total = usize::from(total);
-    if total > MESH_CONFIG_MAX {
+    let most = if kind == config_kind::BAYS {
+        MESH_BAYS_MAX * MESH_BAYS_ENTRY_SIZE
+    } else {
+        MESH_CONFIG_MAX
+    };
+    if total > most {
         return;
     }
     transfer.bytes.extend_from_slice(chunk);
@@ -196,6 +206,23 @@ fn settings_frame(
     }
     // Bytes past the length fail the crc32 like any other wrong bytes.
     if crate::wire::crc32(&transfer.bytes) != crc {
+        return;
+    }
+    if kind == config_kind::BAYS {
+        let Some(entries) = decode_mesh_bays(&transfer.bytes) else {
+            return;
+        };
+        let bays = MeshBays {
+            subject,
+            holder: sender,
+            copy: flags & MESH_CONFIG_FLAG_COPY != 0,
+            bays: entries,
+        };
+        state.mesh_bays.insert(subject, bays.clone());
+        ev.push(Event::MeshBaysReceived {
+            device: sender,
+            bays,
+        });
         return;
     }
     let Some(settings) = decode_mesh_settings(&transfer.bytes) else {

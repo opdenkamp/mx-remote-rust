@@ -25,7 +25,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::event::Event;
-use crate::types::{MacAddress, MeshConfig, OsdSyncRequest};
+use crate::types::{MacAddress, MeshBays, MeshConfig, OsdSyncRequest};
 use crate::wire::{BayFeatures, BayUid, DeviceFeature, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
@@ -56,6 +56,9 @@ pub(crate) struct State {
     /// The kept settings of each unit, by that unit, as a device last sent
     /// them whole.
     pub(crate) mesh_configs: HashMap<DeviceUid, MeshConfig>,
+    /// Each controller's numbering, by controller, as a device last sent it
+    /// whole.
+    pub(crate) mesh_bays: HashMap<DeviceUid, MeshBays>,
     /// The settings each sender is still sending, by sender.
     pub(crate) mesh_config_transfers: HashMap<DeviceUid, MeshConfigTransfer>,
     /// The lister and the unit of this client's last request to replace one,
@@ -110,6 +113,7 @@ impl State {
             state_requests: Vec::new(),
             osd_requests: Vec::new(),
             mesh_configs: HashMap::new(),
+            mesh_bays: HashMap::new(),
             mesh_config_transfers: HashMap::new(),
             mesh_replace_pending: None,
             mesh_replace_queried: None,

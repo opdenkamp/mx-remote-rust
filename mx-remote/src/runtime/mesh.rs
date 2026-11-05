@@ -21,12 +21,13 @@ use std::time::{Duration, Instant};
 
 use crate::rx::replace_list_kept;
 use crate::types::{
-    MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceable, MeshSetting,
-    MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
+    MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceable, MeshSetting,
+    MESH_BAYS_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
 };
 use crate::wire::{
-    build_mesh_config_hello, build_mesh_config_pages, build_mesh_config_request,
-    build_mesh_replace_query, build_mesh_replace_target, build_mesh_replace_units, config_kind,
+    build_mesh_bays_pages, build_mesh_bays_request, build_mesh_config_hello,
+    build_mesh_config_pages, build_mesh_config_request, build_mesh_replace_query,
+    build_mesh_replace_target, build_mesh_replace_units, config_kind, encode_mesh_bays,
     encode_mesh_settings, op, replace_kind, Addressee, DeviceFeature, DeviceUid, MeshReplaceResult,
     MESH_CONFIG_FLAG_COPY,
 };
@@ -354,6 +355,69 @@ impl Remote {
                     .map(|p| Command::new(addressee.clone(), op::MESH_CONFIG, p))
                     .collect(),
             )
+        })
+    }
+
+    // ---- a controller's numbering ----
+
+    /// Asks `holder` for the numbering of controller `subject`: which unit
+    /// owns each of its bays, so a device taking over from it numbers them the
+    /// same. A controller answers for itself with its own; a member with the
+    /// copy it keeps of its controller's, also once that controller is
+    /// offline. It arrives at [`crate::EventHandler::on_mesh_bays_received`],
+    /// and [`Remote::mesh_bays`] reads it. A device keeping none, or whose
+    /// mesh module predates the request, answers nothing.
+    pub fn request_mesh_bays(
+        &self,
+        holder: DeviceUid,
+        subject: DeviceUid,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, holder)?;
+            Ok(Command::new(
+                Addressee::direct(d, d.heard_path(Instant::now())),
+                op::MESH_CONFIG,
+                build_mesh_bays_request(subject),
+            ))
+        })
+    }
+
+    /// The numbering of controller `subject`, as a device last sent it whole,
+    /// `None` until one has.
+    pub fn mesh_bays(&self, subject: DeviceUid) -> Option<MeshBays> {
+        self.shared
+            .read(|state| state.mesh_bays.get(&subject).cloned())
+    }
+
+    /// Sends `to` the numbering of controller `subject`, as the answer to its
+    /// request: this client's own when `subject` is this client, otherwise
+    /// the copy it keeps.
+    ///
+    /// Refused for more than [`MESH_BAYS_MAX`] bays.
+    pub fn send_mesh_bays(
+        &self,
+        to: DeviceUid,
+        subject: DeviceUid,
+        bays: &[MeshBay],
+    ) -> Result<(), ControlError> {
+        if bays.len() > MESH_BAYS_MAX {
+            return Err(ControlError::InvalidRequest(
+                "a numbering holds at most 512 bays",
+            ));
+        }
+        let encoded = encode_mesh_bays(bays);
+        self.shared.commands(move |state| {
+            let d = device_of(state, to)?;
+            let flags = if subject == state.uid {
+                0
+            } else {
+                MESH_CONFIG_FLAG_COPY
+            };
+            let addressee = Addressee::direct(d, d.heard_path(Instant::now()));
+            Ok(build_mesh_bays_pages(flags, subject, &encoded)
+                .into_iter()
+                .map(|p| Command::new(addressee.clone(), op::MESH_CONFIG, p))
+                .collect())
         })
     }
 }

@@ -9,8 +9,8 @@
 use std::ffi::c_char;
 
 use mx_remote::{
-    DeviceFeature, MeshReplaceResult, MeshReplaceUnit, MeshReplaceable, MeshSetting,
-    MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
+    DeviceFeature, MeshBay, MeshReplaceResult, MeshReplaceUnit, MeshReplaceable, MeshSetting,
+    MESH_BAYS_MAX, MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
 };
 
 use crate::abi::{fail, from_control, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -550,5 +550,124 @@ pub unsafe extern "C" fn mxr_send_mesh_config_set(
             Ok(settings) => from_control(r.remote.send_mesh_config_set(member.into(), &settings)),
             Err(code) => code,
         }
+    })
+}
+
+/// The most bays a controller's numbering holds: up to 256 of each mode.
+pub const MXR_MESH_BAYS_MAX: usize = 512;
+
+const _: () = assert!(MXR_MESH_BAYS_MAX == MESH_BAYS_MAX);
+
+/// One bay of a controller's numbering: the unit that owns it.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct mxr_mesh_bay_t {
+    /// The unit that owns the bay.
+    pub unit: mxr_uid_t,
+    /// The unit's `MXR_FEATURE_*` OneIP source, OneIP sink and multiviewer
+    /// bits as the sender knows them, 0 when it doesn't.
+    pub features: u32,
+    /// The bay number the controller gives it; 0 is the controller's own.
+    pub bay: u16,
+    /// An input, or else an output.
+    pub input: bool,
+}
+
+impl From<&MeshBay> for mxr_mesh_bay_t {
+    fn from(b: &MeshBay) -> Self {
+        Self {
+            unit: b.unit.into(),
+            features: b.features.bits(),
+            bay: b.bay,
+            input: b.input,
+        }
+    }
+}
+
+/// Asks `holder` for the numbering of controller `subject`: which unit owns
+/// each of its bays. A controller answers for itself; a member with the copy
+/// it keeps of its controller's, also once that controller is offline.
+/// `mxr_mesh_bays()` reads it once it arrives; a device keeping none answers
+/// nothing.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_mesh_bays(
+    remote: *const mxr_remote_t,
+    holder: mxr_uid_t,
+    subject: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_mesh_bays(holder.into(), subject.into()))
+    })
+}
+
+/// Writes controller `subject`'s numbering, as a device last sent it whole,
+/// and returns how many bays it holds: none until one has.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `out` is null or points at `cap`
+/// writable [`mxr_mesh_bay_t`].
+#[no_mangle]
+pub unsafe extern "C" fn mxr_mesh_bays(
+    remote: *const mxr_remote_t,
+    subject: mxr_uid_t,
+    out: *mut mxr_mesh_bay_t,
+    cap: usize,
+) -> usize {
+    guard(0, || {
+        // SAFETY: the caller guarantees a live handle or null.
+        let Some(r) = (unsafe { remote.as_ref() }) else {
+            return crate::subsystems::no_handle();
+        };
+        let bays: Vec<mxr_mesh_bay_t> = r
+            .remote
+            .mesh_bays(subject.into())
+            .map(|b| b.bays.iter().map(Into::into).collect())
+            .unwrap_or_default();
+        // SAFETY: the caller guarantees cap writable elements at out.
+        unsafe { copy_into(&bays, out, cap) }
+    })
+}
+
+/// Sends `to` the numbering of controller `subject`: this client's own when
+/// `subject` is this client, otherwise the copy it keeps.
+/// `MXR_ERR_INVALID_ARGUMENT` for more than `MXR_MESH_BAYS_MAX` bays.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `bays` is
+/// null or points at `count` bays.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_send_mesh_bays(
+    remote: *const mxr_remote_t,
+    to: mxr_uid_t,
+    subject: mxr_uid_t,
+    bays: *const mxr_mesh_bay_t,
+    count: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees count bays at bays.
+        let bays = match unsafe { items(bays, count, "bays") } {
+            Ok(bays) => bays,
+            Err(code) => return code,
+        };
+        let bays: Vec<MeshBay> = bays
+            .iter()
+            .map(|b| MeshBay {
+                input: b.input,
+                bay: b.bay,
+                features: DeviceFeature::from_bits(b.features),
+                unit: b.unit.into(),
+            })
+            .collect();
+        from_control(r.remote.send_mesh_bays(to.into(), subject.into(), &bays))
     })
 }

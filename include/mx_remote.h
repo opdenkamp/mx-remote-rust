@@ -2113,6 +2113,11 @@
 #define MXR_MESH_CONFIG_MAX 1984
 
 /**
+ * The most bays a controller's numbering holds: up to 256 of each mode.
+ */
+#define MXR_MESH_BAYS_MAX 512
+
+/**
  * Bytes an IPv4 address needs when written as text, the terminator included.
  */
 #define MXR_IP_STRING_LEN 16
@@ -3792,6 +3797,29 @@ typedef struct {
    */
   char value[MXR_MESH_SETTING_LEN];
 } mxr_mesh_setting_t;
+
+/**
+ * One bay of a controller's numbering: the unit that owns it.
+ */
+typedef struct {
+  /**
+   * The unit that owns the bay.
+   */
+  mxr_uid_t unit;
+  /**
+   * The unit's `MXR_FEATURE_*` OneIP source, OneIP sink and multiviewer
+   * bits as the sender knows them, 0 when it doesn't.
+   */
+  uint32_t features;
+  /**
+   * The bay number the controller gives it; 0 is the controller's own.
+   */
+  uint16_t bay;
+  /**
+   * An input, or else an output.
+   */
+  bool input;
+} mxr_mesh_bay_t;
 
 /**
  * How a client finds the network.
@@ -8159,6 +8187,49 @@ mxr_result_t mxr_send_mesh_config_set(const mxr_remote_t *remote,
                                       mxr_uid_t member,
                                       const mxr_mesh_setting_t *settings,
                                       size_t count);
+
+/**
+ * Asks `holder` for the numbering of controller `subject`: which unit owns
+ * each of its bays. A controller answers for itself; a member with the copy
+ * it keeps of its controller's, also once that controller is offline.
+ * `mxr_mesh_bays()` reads it once it arrives; a device keeping none answers
+ * nothing.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_mesh_bays(const mxr_remote_t *remote, mxr_uid_t holder, mxr_uid_t subject);
+
+/**
+ * Writes controller `subject`'s numbering, as a device last sent it whole,
+ * and returns how many bays it holds: none until one has.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable [`mxr_mesh_bay_t`].
+ */
+size_t mxr_mesh_bays(const mxr_remote_t *remote,
+                     mxr_uid_t subject,
+                     mxr_mesh_bay_t *out,
+                     size_t cap);
+
+/**
+ * Sends `to` the numbering of controller `subject`: this client's own when
+ * `subject` is this client, otherwise the copy it keeps.
+ * `MXR_ERR_INVALID_ARGUMENT` for more than `MXR_MESH_BAYS_MAX` bays.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `bays` is
+ * null or points at `count` bays.
+ */
+mxr_result_t mxr_send_mesh_bays(const mxr_remote_t *remote,
+                                mxr_uid_t to,
+                                mxr_uid_t subject,
+                                const mxr_mesh_bay_t *bays,
+                                size_t count);
 
 /**
  * Creates a client, without opening a socket yet.

@@ -12,8 +12,8 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::types::{MeshConfig, MeshConfigDigest, MeshSetting};
-use crate::wire::{op, MeshReplaceResult};
+use crate::types::{MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshSetting};
+use crate::wire::{op, DeviceFeature, MeshReplaceResult};
 
 /// A `MESH_REPLACE` header, its reserved byte poisoned.
 fn replace_header(kind: u8, first: u16, total: u16, flags: u8) -> Vec<u8> {
@@ -392,4 +392,102 @@ fn a_set_is_reported_only_from_this_clients_controller() {
     assert!(!set(&mut h, uid_n(7)), "for another unit");
     assert!(set(&mut h, own));
     assert!(h.state.mesh_configs.is_empty(), "a set kept as a dump");
+}
+
+/// One `mesh_bays_entry`, its reserved byte poisoned.
+fn bays_entry(input: bool, bay: u16, features: u32, unit: DeviceUid) -> Vec<u8> {
+    let mut e = vec![u8::from(input), 0xA5];
+    e.extend_from_slice(&bay.to_le_bytes());
+    e.extend_from_slice(&features.to_le_bytes());
+    e.extend_from_slice(unit.as_bytes());
+    e
+}
+
+/// A numbering of 50 bays: inputs 0 to 24 of units 0 to 24, then outputs
+/// 1 to 25 of units 100 to 124, each with features of its own.
+fn numbering() -> (Vec<MeshBay>, Vec<u8>) {
+    let mut bays = Vec::new();
+    let mut bytes = Vec::new();
+    for n in 0u8..50 {
+        let input = n < 25;
+        let bay = MeshBay {
+            input,
+            bay: if input {
+                u16::from(n)
+            } else {
+                u16::from(n) - 24
+            },
+            features: DeviceFeature::from_bits(0x0040_0018 ^ u32::from(n)),
+            unit: uid_n(if input { n } else { n + 75 }),
+        };
+        bytes.extend(bays_entry(
+            bay.input,
+            bay.bay,
+            bay.features.bits(),
+            bay.unit,
+        ));
+        bays.push(bay);
+    }
+    (bays, bytes)
+}
+
+#[test]
+fn a_numbering_is_taken_entry_by_entry_once_every_frame_has_arrived() {
+    let mut h = Harness::new(0x33);
+    mesh_unit(&mut h);
+    let (bays, bytes) = numbering();
+    assert_eq!(bytes.len(), 1200);
+    let crc = crate::wire::crc32(&bytes);
+    let frames = pages(5, 1, uid_n(7), &bytes, crc);
+    for (i, frame) in frames.iter().enumerate() {
+        assert!(h.state.mesh_bays.is_empty(), "taken after {i} frames");
+        h.feed(op::MESH_CONFIG, frame);
+    }
+    let expected = MeshBays {
+        subject: uid_n(7),
+        holder: h.sender,
+        copy: true,
+        bays,
+    };
+    assert_eq!(h.state.mesh_bays.get(&uid_n(7)), Some(&expected));
+    assert!(h.saw(|e| matches!(e, Event::MeshBaysReceived { bays, .. } if bays == &expected)));
+    assert!(
+        h.state.mesh_configs.is_empty(),
+        "a numbering kept as settings"
+    );
+}
+
+#[test]
+fn a_numbering_of_ragged_entries_or_another_crc_is_dropped() {
+    let (_, bytes) = numbering();
+    let fed = |bytes: &[u8], crc: u32| {
+        let mut h = Harness::new(0x33);
+        mesh_unit(&mut h);
+        for frame in pages(5, 0, uid_n(7), bytes, crc) {
+            h.feed(op::MESH_CONFIG, &frame);
+        }
+        h.state.mesh_bays.is_empty()
+    };
+    assert!(!fed(&bytes, crate::wire::crc32(&bytes)));
+    let ragged = &bytes[..bytes.len() - 1];
+    assert!(fed(ragged, crate::wire::crc32(ragged)), "a part entry");
+    assert!(fed(&bytes, crate::wire::crc32(&bytes) ^ 1), "another crc");
+}
+
+#[test]
+fn a_numbering_of_no_bays_and_a_request_for_one_are_read() {
+    let mut h = Harness::new(0x33);
+    mesh_unit(&mut h);
+    h.feed(
+        op::MESH_CONFIG,
+        &config_header(5, 0, 0, 0, crate::wire::crc32(&[]), uid_n(7)),
+    );
+    assert_eq!(
+        h.state.mesh_bays.get(&uid_n(7)).map(|b| b.bays.len()),
+        Some(0)
+    );
+    h.feed(op::MESH_CONFIG, &config_header(4, 0, 0, 0, 0, uid_n(9)));
+    assert!(
+        h.saw(|e| matches!(e, Event::MeshBaysRequested { subject, .. } if *subject == uid_n(9)))
+    );
 }

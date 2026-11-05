@@ -7115,6 +7115,71 @@ fn kept_settings_sent_of_another_unit_are_a_copy() {
 }
 
 #[test]
+fn a_numbering_is_asked_of_a_unit_at_0x33() {
+    let f = Fixture::new();
+    f.connect();
+    let (new, old) = (uid_n(0x31), uid_n(0x32));
+    mesh_unit(&f, new, 0x33);
+    mesh_unit(&f, old, 0x32);
+    f.tap.clear();
+    f.remote.request_mesh_bays(new, uid_n(9)).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &[0x57, 0x00], "the opcode");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..16], &[1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(&p[16..], uid_n(9).as_bytes());
+    assert!(refused(&f.remote.request_mesh_bays(old, uid_n(9))));
+}
+
+#[test]
+fn a_numbering_goes_in_frames_of_42_entries_a_copy_flagged() {
+    let f = Fixture::new();
+    f.connect();
+    let to = uid_n(0x31);
+    mesh_unit(&f, to, 0x33);
+    let bay = |n: u16| crate::types::MeshBay {
+        input: n % 2 == 0,
+        bay: n,
+        features: crate::wire::DeviceFeature::V2IP_SINK,
+        unit: uid_n(n as u8),
+    };
+    let fifty: Vec<_> = (0..50).map(bay).collect();
+    f.tap.clear();
+    f.remote.send_mesh_bays(to, uid_n(9), &fifty).expect("sent");
+    let frames = f.tap.frames();
+    assert_eq!(frames.len(), 2, "1200 bytes");
+    let (first, second) = (&frames[0][HEADER_LEN..], &frames[1][HEADER_LEN..]);
+    assert_eq!(&first[..3], &[1, 5, 1]);
+    assert_eq!(first.len(), 32 + 42 * 24);
+    assert_eq!(
+        &second[4..8],
+        &[0xF0, 3, 0xB0, 4],
+        "offset 1008, total 1200"
+    );
+    assert_eq!(
+        &first[32..56],
+        &crate::wire::encode_mesh_bays(&fifty[..1])[..]
+    );
+    assert_eq!(&first[32..36], &[1, 0, 0, 0], "input, bay 0");
+    assert_eq!(&first[36..40], &(1u32 << 4).to_le_bytes());
+    f.tap.clear();
+    f.remote
+        .send_mesh_bays(to, uid_n(CLIENT), &[])
+        .expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(
+        &frame[HEADER_LEN..HEADER_LEN + 8],
+        &[1, 5, 0, 0, 0, 0, 0, 0],
+        "its own, of no bays, in one frame"
+    );
+    let too_many: Vec<_> = (0..513).map(|n| bay(n % 256)).collect();
+    assert!(matches!(
+        f.remote.send_mesh_bays(to, uid_n(9), &too_many),
+        Err(ControlError::InvalidRequest(_))
+    ));
+}
+
+#[test]
 fn kept_settings_are_set_only_on_a_member_of_this_clients_mesh() {
     let f = Fixture::new();
     f.connect();

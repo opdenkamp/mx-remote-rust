@@ -29,8 +29,9 @@ pub use commands::{
     VIDEO_WALL_POS_ALIGN, VIDEO_WALL_WIDTH_ALIGN,
 };
 pub use mesh::{
-    MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits, MeshReplaceable, MeshSetting,
-    MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
+    MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits,
+    MeshReplaceable, MeshSetting, MESH_BAYS_MAX, MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX,
+    MESH_REPLACE_UNITS_MAX,
 };
 pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{

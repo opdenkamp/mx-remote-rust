@@ -239,6 +239,13 @@ events! {
         /// The controller this client follows told it to take these kept
         /// settings, and reset every other one to its default.
         MeshConfigSetRequested => on_mesh_config_set_requested(settings: Vec<MeshSetting>);
+        /// The device asked for the numbering of controller `subject`: its own
+        /// when it is the addressee and controller, otherwise the copy the
+        /// addressee keeps.
+        MeshBaysRequested => on_mesh_bays_requested(subject: DeviceUid);
+        /// The device sent a controller's numbering whole, which
+        /// [`Remote::mesh_bays`](crate::Remote::mesh_bays) also reads.
+        MeshBaysReceived => on_mesh_bays_received(bays: MeshBays);
         /// The device reported its view of the mesh topology.
         TopologyChanged => on_topology_changed(topology: Vec<TopologyEntry>);
         /// A ProAmp8 reported its Dolby settings.

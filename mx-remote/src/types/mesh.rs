@@ -108,3 +108,38 @@ pub struct MeshConfig {
     /// The settings, in the order they were sent.
     pub settings: Vec<MeshSetting>,
 }
+
+/// The most entries a controller's numbering holds: up to 256 bays of each
+/// mode, as a unit walks them.
+pub const MESH_BAYS_MAX: usize = 2 * 256;
+
+/// One bay of a controller's numbering: the unit that owns it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct MeshBay {
+    /// An input, or else an output.
+    pub input: bool,
+    /// The bay number the controller gives it, as its `/port/list` `Bay`; 0
+    /// is the controller's own.
+    pub bay: u16,
+    /// The unit's [`DeviceFeature::V2IP_SOURCE`],
+    /// [`DeviceFeature::V2IP_SINK`] and [`DeviceFeature::MULTIVIEWER`] as the
+    /// sender knows them, none when it doesn't.
+    pub features: DeviceFeature,
+    /// The unit that owns the bay.
+    pub unit: DeviceUid,
+}
+
+/// A controller's numbering, as a device sent it: the controller its own,
+/// a member the copy it keeps of its controller's.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MeshBays {
+    /// The controller the numbering is of.
+    pub subject: DeviceUid,
+    /// The device that sent it.
+    pub holder: DeviceUid,
+    /// It is a copy `holder` keeps of `subject`'s numbering.
+    pub copy: bool,
+    /// The bays that name a unit, inputs first, each mode by bay number; a
+    /// bay naming none is left out.
+    pub bays: Vec<MeshBay>,
+}
