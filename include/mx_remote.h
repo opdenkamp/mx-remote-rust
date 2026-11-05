@@ -3898,6 +3898,24 @@ typedef struct {
 } mxr_controller_hello_t;
 
 /**
+ * One part of this client's state, as `mxr_set_controller_parts()` takes it.
+ */
+typedef struct {
+  /**
+   * The bytes, `len` of them; null for none.
+   */
+  const uint8_t *bytes;
+  /**
+   * How many bytes `bytes` points at.
+   */
+  size_t len;
+  /**
+   * Which part: 0 the state, 1-4 the PNG of overlay logo slot N.
+   */
+  uint8_t part;
+} mxr_controller_part_data_t;
+
+/**
  * How a client finds the network.
  *
  * Zeroing the whole struct asks for the default: both endpoints a unit has,
@@ -3990,7 +4008,8 @@ typedef struct {
    * Announce this client as a dedicated mesh controller, one without bays
    * of its own such as a router: it sends a `CONTROLLER_STATE` hello after
    * its hello to every unit, at most every 10 s, and at once when
-   * `mxr_set_controller_hello()` changes it.
+   * `mxr_set_controller_role()` or `mxr_set_controller_parts()` changes
+   * it.
    */
   bool dedicated_controller;
   /**
@@ -4598,6 +4617,25 @@ typedef void (*mxr_osd_sync_setting_cb)(void *userdata,
                                         const mxr_osd_sync_setting_t *setting);
 
 /**
+ * Names a device, a part of its state and the generation, with the part's
+ * bytes, borrowed for the call.
+ */
+typedef void (*mxr_controller_part_cb)(void *userdata,
+                                       mxr_uid_t device,
+                                       uint8_t part,
+                                       uint32_t generation,
+                                       const uint8_t *bytes,
+                                       size_t len);
+
+/**
+ * Names a device, a part of its state and the generation a pull of it was for.
+ */
+typedef void (*mxr_controller_part_failed_cb)(void *userdata,
+                                              mxr_uid_t device,
+                                              uint8_t part,
+                                              uint32_t generation);
+
+/**
  * What to call when something happens.
  *
  * Zero the whole struct and fill in only what is wanted: a null member drops
@@ -4973,6 +5011,18 @@ typedef struct {
    * (`mxr_request_osd_settings()`) to this client.
    */
   mxr_osd_sync_setting_cb on_osd_sync_setting_received;
+  /**
+   * A part of the device's state that `mxr_pull_controller_part()` asked
+   * for arrived whole, its crc32 matching. `bytes` is borrowed for the
+   * call.
+   */
+  mxr_controller_part_cb on_controller_part_received;
+  /**
+   * A pull of a part of the device's state ended without it: the device no
+   * longer holds that generation, sent a part other than the one asked
+   * for, went offline, or sent nothing through ten asks in a row.
+   */
+  mxr_controller_part_failed_cb on_controller_part_failed;
 } mxr_callbacks_t;
 
 /**
@@ -8428,18 +8478,67 @@ mxr_result_t mxr_controller_hello(const mxr_remote_t *remote,
                                   mxr_controller_hello_t *out);
 
 /**
- * Sets the `CONTROLLER_STATE` hello this client sends as a dedicated
- * controller (`dedicated_controller` in its config), and sends it at once
- * when it changed. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't one, or
- * for more than `MXR_CONTROLLER_PARTS_MAX` parts.
+ * Sets the role (`MXR_CONTROLLER_ROLE_*`) and the primary this client's
+ * `CONTROLLER_STATE` hello carries as a dedicated controller
+ * (`dedicated_controller` in its config), and sends it at once when they
+ * changed. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't one.
  *
  * # Safety
  *
- * `remote` is null or a live handle from `mxr_remote_new()`, and `hello` is
- * null or points at a readable [`mxr_controller_hello_t`].
+ * `remote` is null or a live handle from `mxr_remote_new()`.
  */
-mxr_result_t mxr_set_controller_hello(const mxr_remote_t *remote,
-                                      const mxr_controller_hello_t *hello);
+mxr_result_t mxr_set_controller_role(const mxr_remote_t *remote, uint8_t role, mxr_uid_t primary);
+
+/**
+ * Sets the parts of this client's state as a dedicated controller, `count`
+ * of them: its hello then lists each part's length and crc32 under
+ * `generation`, and goes at once when either changed. A request from
+ * another dedicated controller of this client's mesh, or the one
+ * `mxr_allow_controller_state()` names, is answered from them. The library
+ * keeps its own copies. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't a
+ * dedicated controller, for more than `MXR_CONTROLLER_PARTS_MAX` parts, or a
+ * part listed twice.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`. `parts` is null
+ * with `count` 0, or points at `count` entries, each `bytes` null with `len`
+ * 0 or pointing at `len` readable bytes.
+ */
+mxr_result_t mxr_set_controller_parts(const mxr_remote_t *remote,
+                                      uint32_t generation,
+                                      const mxr_controller_part_data_t *parts,
+                                      size_t count);
+
+/**
+ * Also takes `CONTROLLER_STATE` requests and data from `uid`, a dedicated
+ * controller of no mesh of this client's: one this client is replacing a
+ * router of its mesh with. The all-zero uid takes them only from this
+ * client's mesh again.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_allow_controller_state(const mxr_remote_t *remote, mxr_uid_t uid);
+
+/**
+ * Pulls `part` of device `from`'s state `generation`, which its hello lists
+ * with `length` and `crc`, in place of a pull of the same part under way. It
+ * arrives at `on_controller_part_received`, or the pull ends at
+ * `on_controller_part_failed`. `MXR_ERR_UNKNOWN_DEVICE` for a device not
+ * online.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_pull_controller_part(const mxr_remote_t *remote,
+                                      mxr_uid_t from,
+                                      uint8_t part,
+                                      uint32_t generation,
+                                      uint32_t length,
+                                      uint32_t crc);
 
 /**
  * Creates a client, without opening a socket yet.

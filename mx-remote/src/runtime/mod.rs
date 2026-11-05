@@ -5,6 +5,7 @@
 //! read surface over what they discover.
 
 mod control;
+mod controller;
 mod info;
 mod logo_server;
 mod mesh;
@@ -13,6 +14,8 @@ mod schedule;
 
 #[cfg(test)]
 mod control_tests;
+#[cfg(test)]
+mod controller_tests;
 #[cfg(test)]
 mod tests;
 
@@ -192,7 +195,8 @@ pub struct Config {
     /// Announce this client as a dedicated mesh controller, one without bays
     /// of its own such as a router: right after its hello to every unit, at
     /// most every 10 s, and at once when
-    /// [`Remote::set_controller_hello`] changes it, it sends a
+    /// [`Remote::set_controller_role`] or
+    /// [`Remote::set_controller_parts`] changes it, it sends a
     /// `CONTROLLER_STATE` (0x58) hello, in a mesh or not. Its hello stays at
     /// the 54 bytes every unit takes. A OneIP unit at protocol 0x34 or later
     /// knows it as a dedicated controller once it has had one, and then takes
@@ -247,9 +251,9 @@ struct Shared {
     dedicated_controller: bool,
     /// The hello announces [`DeviceFeature::OSD_SYNC`] whatever is held.
     osd_sync: bool,
-    /// The `CONTROLLER_STATE` hello a dedicated controller sends, and when it
-    /// last went out, `None` since the sockets opened.
-    controller_hello: Mutex<(ControllerHello, Option<Instant>)>,
+    /// What a dedicated controller announces in its `CONTROLLER_STATE` hello
+    /// and serves, and when the hello last went out.
+    own_controller: Mutex<controller::OwnController>,
     /// The mesh controller this client follows, zero for none.
     mesh_controller: Mutex<DeviceUid>,
     /// Whether the caller has mesh bays mapped, without which a controller
@@ -353,7 +357,7 @@ impl Remote {
                 capture_hello_mac: config.capture_hello_mac,
                 dedicated_controller: config.dedicated_controller,
                 osd_sync: config.osd_sync,
-                controller_hello: Mutex::new((ControllerHello::default(), None)),
+                own_controller: Mutex::default(),
                 mesh_controller: Mutex::new(DeviceUid::ZERO),
                 mesh_bays_mapped: AtomicBool::new(false),
                 handler,
@@ -394,7 +398,7 @@ impl Remote {
         lock(&self.shared.tx).set_conn(Some(conn));
         // The first hello on new sockets goes to both endpoints.
         *lock(&self.shared.hello_on_broadcast) = None;
-        lock(&self.shared.controller_hello).1 = None;
+        lock(&self.shared.own_controller).sent = None;
         self.shared.closing.store(false, Ordering::SeqCst);
         self.spawn_workers(capture)?;
         self.shared.announce();
@@ -872,7 +876,7 @@ impl Remote {
         lock(&self.shared.tx).set_conn(Some(conn));
         // The first hello on new sockets goes to both endpoints.
         *lock(&self.shared.hello_on_broadcast) = None;
-        lock(&self.shared.controller_hello).1 = None;
+        lock(&self.shared.own_controller).sent = None;
         self.shared.announce();
         let _ = self.shared.discover();
         Ok(())
@@ -932,7 +936,7 @@ impl Shared {
     /// [`Self::process_datagram`] for a datagram that arrived by a known one
     /// of two endpoints.
     fn process_datagram_on(&self, data: &[u8], from: Ipv4Addr, path: Option<Path>) {
-        let (events, hello_requested, state_requests, osd_requests) = {
+        let (events, hello_requested, state_requests, osd_requests, controller_requests) = {
             let mut state = lock(&self.state);
             let now = Instant::now();
             let events = process_frame_on(&mut state, data, Some(from), path, now);
@@ -942,6 +946,7 @@ impl Shared {
                 std::mem::take(&mut state.hello_requested) || fault_changed,
                 std::mem::take(&mut state.state_requests),
                 std::mem::take(&mut state.osd_requests),
+                std::mem::take(&mut state.controller_state_requests),
             )
         };
         self.dispatch(events);
@@ -954,6 +959,10 @@ impl Shared {
         if !osd_requests.is_empty() {
             self.answer_osd_requests(osd_requests);
         }
+        if !controller_requests.is_empty() {
+            self.answer_controller_requests(controller_requests);
+        }
+        self.send_controller_asks();
     }
 
     /// Takes one frame captured below the IP stack, recording the source
@@ -1081,16 +1090,16 @@ impl Shared {
             return;
         }
         let payload = {
-            let mut sent = lock(&self.controller_hello);
+            let mut own = lock(&self.own_controller);
             let due = now_due
-                || sent
-                    .1
+                || own
+                    .sent
                     .map_or(true, |at| now.duration_since(at) >= CONTROLLER_HELLO_EVERY);
             if !due {
                 return;
             }
-            sent.1 = Some(now);
-            build_controller_hello(&sent.0)
+            own.sent = Some(now);
+            build_controller_hello(&own.hello())
         };
         let _ = self.send(&Addressee::Broadcast, op::CONTROLLER_STATE, &payload);
     }
@@ -1237,6 +1246,7 @@ impl Shared {
                 }
             }
             state.forget_silent(now, ev);
+            state.check_controller_pulls(now, ev);
             let fault_changed = self.judge_paths(state, now);
             (state.devices.is_empty(), owed, fault_changed)
         });
@@ -1251,6 +1261,7 @@ impl Shared {
         for device in owed {
             let _ = self.send(&Addressee::Broadcast, op::SYS_DISCOVER, device.as_bytes());
         }
+        self.send_controller_asks();
     }
 }
 

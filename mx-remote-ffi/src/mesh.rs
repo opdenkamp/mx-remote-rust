@@ -9,9 +9,9 @@
 use std::ffi::c_char;
 
 use mx_remote::{
-    ControllerHello, ControllerPart, ControllerRole, DeviceFeature, MeshBay, MeshReplaceResult,
-    MeshReplaceUnit, MeshReplaceable, MeshSetting, CONTROLLER_PARTS_MAX, MESH_BAYS_MAX,
-    MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
+    ControllerHello, ControllerRole, DeviceFeature, MeshBay, MeshReplaceResult, MeshReplaceUnit,
+    MeshReplaceable, MeshSetting, CONTROLLER_PARTS_MAX, MESH_BAYS_MAX, MESH_CONFIG_MAX,
+    MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
 };
 
 use crate::abi::{fail, from_control, guard, mxr_result_t, mxr_uid_t, put_str};
@@ -753,47 +753,147 @@ pub unsafe extern "C" fn mxr_controller_hello(
     })
 }
 
-/// Sets the `CONTROLLER_STATE` hello this client sends as a dedicated
-/// controller (`dedicated_controller` in its config), and sends it at once
-/// when it changed. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't one, or
-/// for more than `MXR_CONTROLLER_PARTS_MAX` parts.
+/// Sets the role (`MXR_CONTROLLER_ROLE_*`) and the primary this client's
+/// `CONTROLLER_STATE` hello carries as a dedicated controller
+/// (`dedicated_controller` in its config), and sends it at once when they
+/// changed. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't one.
 ///
 /// # Safety
 ///
-/// `remote` is null or a live handle from `mxr_remote_new()`, and `hello` is
-/// null or points at a readable [`mxr_controller_hello_t`].
+/// `remote` is null or a live handle from `mxr_remote_new()`.
 #[no_mangle]
-pub unsafe extern "C" fn mxr_set_controller_hello(
+pub unsafe extern "C" fn mxr_set_controller_role(
     remote: *const mxr_remote_t,
-    hello: *const mxr_controller_hello_t,
+    role: u8,
+    primary: mxr_uid_t,
 ) -> mxr_result_t {
     // SAFETY: the caller guarantees a live handle or null.
     let handle = unsafe { remote.as_ref() };
     with(handle, |r| {
-        // SAFETY: the caller guarantees hello is null or readable.
-        let Some(h) = (unsafe { hello.as_ref() }) else {
-            return fail(mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "hello is null");
-        };
-        let Some(parts) = h.parts.get(..usize::from(h.nb_parts)) else {
+        from_control(
+            r.remote
+                .set_controller_role(ControllerRole::from_wire(role), primary.into()),
+        )
+    })
+}
+
+/// One part of this client's state, as `mxr_set_controller_parts()` takes it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_controller_part_data_t {
+    /// The bytes, `len` of them; null for none.
+    pub bytes: *const u8,
+    /// How many bytes `bytes` points at.
+    pub len: usize,
+    /// Which part: 0 the state, 1-4 the PNG of overlay logo slot N.
+    pub part: u8,
+}
+
+/// Sets the parts of this client's state as a dedicated controller, `count`
+/// of them: its hello then lists each part's length and crc32 under
+/// `generation`, and goes at once when either changed. A request from
+/// another dedicated controller of this client's mesh, or the one
+/// `mxr_allow_controller_state()` names, is answered from them. The library
+/// keeps its own copies. `MXR_ERR_INVALID_ARGUMENT` on a client that isn't a
+/// dedicated controller, for more than `MXR_CONTROLLER_PARTS_MAX` parts, or a
+/// part listed twice.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`. `parts` is null
+/// with `count` 0, or points at `count` entries, each `bytes` null with `len`
+/// 0 or pointing at `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_controller_parts(
+    remote: *const mxr_remote_t,
+    generation: u32,
+    parts: *const mxr_controller_part_data_t,
+    count: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        if count > MXR_CONTROLLER_PARTS_MAX {
             return fail(
                 mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
                 "more parts than MXR_CONTROLLER_PARTS_MAX",
             );
+        }
+        if count > 0 && parts.is_null() {
+            return fail(mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "parts is null");
+        }
+        let entries = if count == 0 {
+            &[][..]
+        } else {
+            // SAFETY: the caller guarantees `count` readable entries.
+            unsafe { std::slice::from_raw_parts(parts, count) }
         };
+        let mut owned = Vec::with_capacity(count);
+        for entry in entries {
+            let bytes = if entry.len == 0 {
+                Vec::new()
+            } else if entry.bytes.is_null() {
+                return fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    "part bytes are null",
+                );
+            } else {
+                // SAFETY: the caller guarantees `len` readable bytes.
+                unsafe { std::slice::from_raw_parts(entry.bytes, entry.len) }.to_vec()
+            };
+            owned.push((entry.part, bytes));
+        }
+        from_control(r.remote.set_controller_parts(generation, owned))
+    })
+}
+
+/// Also takes `CONTROLLER_STATE` requests and data from `uid`, a dedicated
+/// controller of no mesh of this client's: one this client is replacing a
+/// router of its mesh with. The all-zero uid takes them only from this
+/// client's mesh again.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_allow_controller_state(
+    remote: *const mxr_remote_t,
+    uid: mxr_uid_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let uid: mx_remote::DeviceUid = uid.into();
+        r.remote
+            .allow_controller_state((!uid.is_zero()).then_some(uid));
+        mxr_result_t::MXR_OK
+    })
+}
+
+/// Pulls `part` of device `from`'s state `generation`, which its hello lists
+/// with `length` and `crc`, in place of a pull of the same part under way. It
+/// arrives at `on_controller_part_received`, or the pull ends at
+/// `on_controller_part_failed`. `MXR_ERR_UNKNOWN_DEVICE` for a device not
+/// online.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_pull_controller_part(
+    remote: *const mxr_remote_t,
+    from: mxr_uid_t,
+    part: u8,
+    generation: u32,
+    length: u32,
+    crc: u32,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
         from_control(
-            r.remote.set_controller_hello(ControllerHello {
-                role: ControllerRole::from_wire(h.role),
-                generation: h.generation,
-                primary: h.primary.into(),
-                parts: parts
-                    .iter()
-                    .map(|p| ControllerPart {
-                        part: p.part,
-                        length: p.length,
-                        crc: p.crc,
-                    })
-                    .collect(),
-            }),
+            r.remote
+                .pull_controller_part(from.into(), part, generation, length, crc),
         )
     })
 }

@@ -19,11 +19,10 @@
 
 use std::time::{Duration, Instant};
 
-use super::lock;
 use crate::rx::replace_list_kept;
 use crate::types::{
-    ControllerHello, MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit,
-    MeshReplaceable, MeshSetting, MESH_BAYS_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
+    MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceable, MeshSetting,
+    MESH_BAYS_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
 };
 use crate::wire::{
     build_mesh_bays_pages, build_mesh_bays_request, build_mesh_config_hello,
@@ -234,38 +233,6 @@ impl Remote {
                 build_mesh_replace_target(replace_kind::RESULT, unit, result),
             ))
         })
-    }
-
-    // ---- dedicated controllers ----
-
-    /// The `CONTROLLER_STATE` hello a device last sent, `None` until it has
-    /// sent one; a device that has is a dedicated controller.
-    pub fn controller_hello(&self, uid: DeviceUid) -> Option<ControllerHello> {
-        self.shared
-            .read(|state| state.device(uid)?.controller_hello.clone())
-    }
-
-    /// Sets the `CONTROLLER_STATE` hello this client sends as a dedicated
-    /// controller ([`Config::dedicated_controller`](crate::Config::dedicated_controller)),
-    /// and sends it at once when it changed. It starts as role
-    /// [`ControllerRole::NONE`](crate::ControllerRole::NONE), generation 0,
-    /// no primary and no parts.
-    pub fn set_controller_hello(&self, hello: ControllerHello) -> Result<(), ControlError> {
-        if !self.shared.dedicated_controller {
-            return Err(ControlError::InvalidRequest(
-                "only a dedicated controller sends a controller hello",
-            ));
-        }
-        let changed = {
-            let mut sent = lock(&self.shared.controller_hello);
-            let changed = sent.0 != hello;
-            sent.0 = hello;
-            changed
-        };
-        if changed {
-            self.shared.announce_controller(Instant::now(), true);
-        }
-        Ok(())
     }
 
     // ---- the settings a mesh keeps of its units ----

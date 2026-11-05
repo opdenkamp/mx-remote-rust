@@ -94,7 +94,8 @@ pub struct mxr_config_t {
     /// Announce this client as a dedicated mesh controller, one without bays
     /// of its own such as a router: it sends a `CONTROLLER_STATE` hello after
     /// its hello to every unit, at most every 10 s, and at once when
-    /// `mxr_set_controller_hello()` changes it.
+    /// `mxr_set_controller_role()` or `mxr_set_controller_parts()` changes
+    /// it.
     pub dedicated_controller: bool,
     /// Take overlay syncs as a unit does: the hello announces
     /// `MXR_FEATURE_OSD_SYNC`, for which a source sends this client a sync of

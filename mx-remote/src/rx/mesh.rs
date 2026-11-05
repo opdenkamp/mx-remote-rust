@@ -14,10 +14,11 @@ use crate::types::{
 };
 use crate::wire::{
     config_kind, cstr, decode_controller_hello, decode_mesh_bays, decode_mesh_settings,
-    replace_kind, DeviceFeature, DeviceUid, MeshReplaceResult, MESH_BAYS_ENTRY_SIZE,
-    MESH_CONFIG_FLAG_COPY, MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION,
-    MESH_REPLACE_FLAG_CONTROLLER, MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT,
-    MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE, MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
+    replace_kind, state_kind, DeviceFeature, DeviceUid, MeshReplaceResult, StateHeader,
+    CONTROLLER_STATE_HEADER_SIZE, MESH_BAYS_ENTRY_SIZE, MESH_CONFIG_FLAG_COPY,
+    MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION, MESH_REPLACE_FLAG_CONTROLLER,
+    MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT, MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE,
+    MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
 };
 
 use super::handlers::{u16_at, u32_at, uid_at};
@@ -252,16 +253,37 @@ fn settings_frame(
     }
 }
 
-/// Reads a `CONTROLLER_STATE` frame. A hello (version 1, kind 0, at least 40
-/// bytes) marks its sender, which a frame only reaches here from once it is
-/// known, as a dedicated controller for as long as it is known, as a unit
-/// from protocol 0x34 on does. Pulling a controller's state with a request
-/// and its data is not taken yet.
+/// Reads a `CONTROLLER_STATE` frame, which a frame only reaches here from
+/// a known sender.
+///
+/// A hello (version 1, kind 0, at least 40 bytes) marks its sender as a
+/// dedicated controller for as long as it is known, as a unit from protocol
+/// 0x34 on does. A request or data is taken only from a dedicated controller
+/// of this client's mesh, or the one it was allowed (routers.md, Receiver):
+/// a request is queued for the runtime to answer from the parts it holds,
+/// and data goes to the pull of its part.
 pub(super) fn controller_state(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
-    let Some(hello) = decode_controller_hello(rx.frame.payload()) else {
+    let p = rx.frame.payload();
+    let Some(header) = StateHeader::decode(p) else {
         return;
     };
-    if let Some(device) = state.device_mut(rx.sender()) {
-        device.set_controller_hello(hello, ev);
+    let sender = rx.sender();
+    match header.kind {
+        state_kind::HELLO => {
+            let Some(hello) = decode_controller_hello(p) else {
+                return;
+            };
+            if let Some(device) = state.device_mut(sender) {
+                device.set_controller_hello(hello, ev);
+            }
+        }
+        state_kind::REQUEST if state.takes_controller_state(sender) => {
+            state.controller_state_requests.push((sender, header));
+        }
+        state_kind::DATA if state.takes_controller_state(sender) => {
+            let data = &p[CONTROLLER_STATE_HEADER_SIZE..];
+            state.on_controller_data(sender, &header, data, rx.timestamp, ev);
+        }
+        _ => {}
     }
 }

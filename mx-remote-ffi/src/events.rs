@@ -408,6 +408,21 @@ pub type mxr_set_route_cb = Option<
 pub type mxr_osd_sync_setting_cb = Option<
     extern "C" fn(userdata: *mut c_void, device: mxr_uid_t, setting: *const mxr_osd_sync_setting_t),
 >;
+/// Names a device, a part of its state and the generation, with the part's
+/// bytes, borrowed for the call.
+pub type mxr_controller_part_cb = Option<
+    extern "C" fn(
+        userdata: *mut c_void,
+        device: mxr_uid_t,
+        part: u8,
+        generation: u32,
+        bytes: *const u8,
+        len: usize,
+    ),
+>;
+/// Names a device, a part of its state and the generation a pull of it was for.
+pub type mxr_controller_part_failed_cb =
+    Option<extern "C" fn(userdata: *mut c_void, device: mxr_uid_t, part: u8, generation: u32)>;
 /// Carries a request for a device's EDID.
 pub type mxr_edid_request_cb = Option<
     extern "C" fn(userdata: *mut c_void, device: mxr_uid_t, request: *const mxr_edid_request_t),
@@ -720,6 +735,14 @@ pub struct mxr_callbacks_t {
     /// unit, or the source of a sync this client asks the settings of
     /// (`mxr_request_osd_settings()`) to this client.
     pub on_osd_sync_setting_received: mxr_osd_sync_setting_cb,
+    /// A part of the device's state that `mxr_pull_controller_part()` asked
+    /// for arrived whole, its crc32 matching. `bytes` is borrowed for the
+    /// call.
+    pub on_controller_part_received: mxr_controller_part_cb,
+    /// A pull of a part of the device's state ended without it: the device no
+    /// longer holds that generation, sent a part other than the one asked
+    /// for, went offline, or sent nothing through ten asks in a row.
+    pub on_controller_part_failed: mxr_controller_part_failed_cb,
 }
 
 /// The caller's cookie, which this library carries and never reads.
@@ -972,6 +995,26 @@ impl EventHandler for Bridge {
             };
             forward!(self.on_osd_sync_setting_received(device.into(), &payload));
         });
+    }
+
+    fn on_controller_part_received(
+        &self,
+        device: DeviceUid,
+        part: u8,
+        generation: u32,
+        bytes: Vec<u8>,
+    ) {
+        forward!(self.on_controller_part_received(
+            device.into(),
+            part,
+            generation,
+            bytes.as_ptr(),
+            bytes.len()
+        ));
+    }
+
+    fn on_controller_part_failed(&self, device: DeviceUid, part: u8, generation: u32) {
+        forward!(self.on_controller_part_failed(device.into(), part, generation));
     }
 
     fn on_edid_requested(&self, device: DeviceUid, request: EdidRequest) {

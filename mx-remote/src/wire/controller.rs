@@ -28,13 +28,16 @@ pub(crate) const CONTROLLER_HELLO_MIN: usize = 40;
 /// Width of one part entry of a hello.
 pub(crate) const CONTROLLER_PART_SIZE: usize = 12;
 
+/// The most bytes one REQUEST asks for.
+pub(crate) const CONTROLLER_WINDOW_MAX: u32 = 8192;
+
+/// The most part bytes one DATA frame carries.
+pub(crate) const CONTROLLER_DATA_MAX: usize = 1024;
+
 /// The `CONTROLLER_STATE` kind at byte 1.
 pub(crate) mod state_kind {
     pub(crate) const HELLO: u8 = 0;
-    // Pulling another's state, which the failsafe work adds.
-    #[allow(dead_code)]
     pub(crate) const REQUEST: u8 = 1;
-    #[allow(dead_code)]
     pub(crate) const DATA: u8 = 2;
 }
 
@@ -99,6 +102,48 @@ pub(crate) fn build_controller_hello(hello: &ControllerHello) -> Vec<u8> {
         p.extend_from_slice(&part.length.to_le_bytes());
         p.extend_from_slice(&part.crc.to_le_bytes());
     }
+    p
+}
+
+/// Builds a REQUEST for `length` bytes of `part` of state `generation`, from
+/// byte `offset`.
+pub(crate) fn build_controller_request(
+    part: u8,
+    generation: u32,
+    offset: u32,
+    length: u32,
+) -> Vec<u8> {
+    StateHeader {
+        kind: state_kind::REQUEST,
+        part,
+        generation,
+        offset,
+        length,
+        crc: 0,
+    }
+    .encode()
+}
+
+/// Builds a DATA frame carrying `bytes` of `part` at `offset`; `length` and
+/// `crc` describe the whole part.
+pub(crate) fn build_controller_data(
+    part: u8,
+    generation: u32,
+    offset: u32,
+    length: u32,
+    crc: u32,
+    bytes: &[u8],
+) -> Vec<u8> {
+    let mut p = StateHeader {
+        kind: state_kind::DATA,
+        part,
+        generation,
+        offset,
+        length,
+        crc,
+    }
+    .encode();
+    p.extend_from_slice(bytes);
     p
 }
 
@@ -181,6 +226,39 @@ mod tests {
         let p = build_controller_hello(&hello);
         assert_eq!(p[21], 5);
         assert_eq!(p.len(), CONTROLLER_HELLO_MIN + 5 * CONTROLLER_PART_SIZE);
+    }
+
+    /// A REQUEST is the header alone: kind 1, the part, the generation asked
+    /// for, the first byte and the count, crc zero. Composed from routers.md
+    /// alongside the builder, not captured: it rules out a slip, not a shared
+    /// misreading.
+    #[test]
+    fn a_request_is_laid_out_as_routers_md_says() {
+        let p = build_controller_request(3, 0x0A0B_0C0D, 0x2000, 8192);
+        assert_eq!(
+            p,
+            [1, 1, 3, 0, 0x0D, 0x0C, 0x0B, 0x0A, 0x00, 0x20, 0, 0, 0x00, 0x20, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    /// DATA is the header, kind 2, with the frame's offset and the whole
+    /// part's length and crc, then the bytes. Composed from routers.md, as
+    /// the one above.
+    #[test]
+    fn data_is_laid_out_as_routers_md_says() {
+        let p = build_controller_data(0, 5, 1024, 3000, 0x1122_3344, &[0xAA, 0xBB]);
+        assert_eq!(
+            p,
+            [
+                1, 2, 0, 0, 5, 0, 0, 0, 0x00, 0x04, 0, 0, 0xB8, 0x0B, 0, 0, 0x44, 0x33, 0x22, 0x11,
+                0xAA, 0xBB
+            ]
+        );
+        let header = StateHeader::decode(&p).expect("a header");
+        assert_eq!(
+            (header.kind, header.offset, header.length, header.crc),
+            (state_kind::DATA, 1024, 3000, 0x1122_3344)
+        );
     }
 
     #[test]

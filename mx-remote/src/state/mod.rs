@@ -13,6 +13,7 @@
 //! the library.
 
 mod bay;
+mod controller;
 mod device;
 mod links;
 mod tree;
@@ -72,6 +73,17 @@ pub(crate) struct State {
     pub(crate) mesh_replace_pending: Option<(DeviceUid, DeviceUid)>,
     /// When this client last asked which units it can replace.
     pub(crate) mesh_replace_queried: Option<Instant>,
+    /// A dedicated controller whose `CONTROLLER_STATE` requests and data are
+    /// taken though it is of no mesh of this client's: one replacing a router
+    /// of it.
+    pub(crate) controller_state_allowed: Option<DeviceUid>,
+    /// `CONTROLLER_STATE` requests to answer, as their sender and header.
+    pub(crate) controller_state_requests: Vec<(DeviceUid, crate::wire::StateHeader)>,
+    /// The parts of other dedicated controllers' state being pulled.
+    pub(crate) controller_pulls: Vec<controller::ControllerPull>,
+    /// `CONTROLLER_STATE` requests the pulls raised, to send, as their
+    /// addressee and payload.
+    pub(crate) controller_asks: Vec<(DeviceUid, Vec<u8>)>,
     /// Where each registered device, this client included, sits.
     tree: Tree,
     /// The source address of the last hello captured from each sender below
@@ -125,6 +137,10 @@ impl State {
             mesh_config_transfers: HashMap::new(),
             mesh_replace_pending: None,
             mesh_replace_queried: None,
+            controller_state_allowed: None,
+            controller_state_requests: Vec::new(),
+            controller_pulls: Vec::new(),
+            controller_asks: Vec::new(),
             tree: Tree::new(uid),
             hello_sources: HashMap::new(),
             recent: VecDeque::with_capacity(DUPLICATE_RING),

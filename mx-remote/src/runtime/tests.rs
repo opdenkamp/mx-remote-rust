@@ -355,27 +355,40 @@ fn a_controller_hello_goes_every_10_s_and_on_a_change() {
     assert_eq!(state_frames(&tap), 1, "after the first hello");
     remote.shared.announce();
     assert_eq!(state_frames(&tap), 1, "within 10 s of the last");
-    lock(&remote.shared.controller_hello).1 = Some(t0 - Duration::from_secs(10));
+    lock(&remote.shared.own_controller).sent = Some(t0 - Duration::from_secs(10));
     remote.shared.announce();
     assert_eq!(state_frames(&tap), 2, "10 s after the last");
-    let hello = ControllerHello {
-        role: crate::ControllerRole::PRIMARY,
-        generation: 7,
-        primary: uid_n(210),
-        parts: vec![crate::ControllerPart {
-            part: 0,
-            length: 100,
-            crc: 0xDEAD_BEEF,
-        }],
-    };
     remote
-        .set_controller_hello(hello.clone())
-        .expect("a dedicated controller sets its hello");
+        .set_controller_role(crate::ControllerRole::PRIMARY, uid_n(210))
+        .expect("a dedicated controller sets its role");
     assert_eq!(state_frames(&tap), 3, "at once on a change");
     remote
-        .set_controller_hello(hello)
-        .expect("a dedicated controller sets its hello");
+        .set_controller_role(crate::ControllerRole::PRIMARY, uid_n(210))
+        .expect("a dedicated controller sets its role");
     assert_eq!(state_frames(&tap), 3, "the same one again");
+    remote
+        .set_controller_parts(7, vec![(0, vec![1, 2, 3])])
+        .expect("a dedicated controller sets its parts");
+    assert_eq!(state_frames(&tap), 4, "at once on new parts");
+    remote
+        .set_controller_parts(7, vec![(0, vec![1, 2, 3])])
+        .expect("a dedicated controller sets its parts");
+    assert_eq!(state_frames(&tap), 4, "the same parts again");
+    let last = tap.frames().pop().expect("a frame");
+    let hello = crate::wire::decode_controller_hello(&last[HEADER_LEN..]).expect("a hello");
+    assert_eq!(
+        hello,
+        ControllerHello {
+            role: crate::ControllerRole::PRIMARY,
+            generation: 7,
+            primary: uid_n(210),
+            parts: vec![crate::ControllerPart {
+                part: 0,
+                length: 3,
+                crc: crate::wire::crc32(&[1, 2, 3]),
+            }],
+        }
+    );
     remote.close();
 
     let plain = Remote::new(
@@ -387,8 +400,9 @@ fn a_controller_hello_goes_every_10_s_and_on_a_change() {
     )
     .expect("a client given its own uid reads nothing from disk");
     assert!(plain
-        .set_controller_hello(ControllerHello::default())
+        .set_controller_role(crate::ControllerRole::PRIMARY, DeviceUid::ZERO)
         .is_err());
+    assert!(plain.set_controller_parts(1, Vec::new()).is_err());
     plain.close();
 }
 

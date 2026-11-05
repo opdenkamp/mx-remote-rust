@@ -252,6 +252,14 @@ events! {
         /// says from then on, and
         /// [`Remote::controller_hello`](crate::Remote::controller_hello) reads.
         ControllerHelloChanged => on_controller_hello_changed(hello: ControllerHello);
+        /// A part of the device's state that
+        /// [`Remote::pull_controller_part`](crate::Remote::pull_controller_part)
+        /// asked for arrived whole, its crc32 matching.
+        ControllerPartReceived => on_controller_part_received(part: u8, generation: u32, bytes: Vec<u8>);
+        /// A pull of a part of the device's state ended without it: the device
+        /// no longer holds that generation, sent a part other than the one
+        /// asked for, went offline, or sent nothing through ten asks in a row.
+        ControllerPartFailed => on_controller_part_failed(part: u8, generation: u32);
         /// The device reported its view of the mesh topology.
         TopologyChanged => on_topology_changed(topology: Vec<TopologyEntry>);
         /// A ProAmp8 reported its Dolby settings.
