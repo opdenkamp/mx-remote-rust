@@ -14,7 +14,7 @@
 //! discards the frame without answering and a send would report a success that
 //! changed nothing.
 
-use std::ffi::c_char;
+use std::ffi::{c_char, CString};
 use std::net::Ipv4Addr;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -3561,6 +3561,35 @@ pub unsafe extern "C" fn mxr_send_osd_sync(
     })
 }
 
+/// Keeps an overlay sync in place as `mxr_send_osd_sync()` does, serving its
+/// images and answering units' requests for its settings, without having any
+/// unit copy it now: a mesh controller holding the sync its units already took
+/// from another source, to send a unit that joins with `mxr_resend_osd_sync()`.
+/// Refused as `mxr_send_osd_sync()` is.
+///
+/// # Safety
+///
+/// As `mxr_send_osd_sync()`, without `seq`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_keep_osd_sync(
+    remote: *const mxr_remote_t,
+    what: u8,
+    entries: *const mxr_osd_sync_entry_t,
+    count: usize,
+    images: *const mxr_osd_sync_image_t,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees the arrays and the strings in them.
+        let content = match unsafe { osd_content(what, entries, count, images) } {
+            Ok(content) => content,
+            Err(code) => return code,
+        };
+        from_control(r.remote.keep_osd_sync(content))
+    })
+}
+
 /// Has one unit copy the overlay sync this client holds again, writing the
 /// new sync's number to `seq` when it is not null. As `mxr_send_osd_sync()`.
 ///
@@ -3582,6 +3611,125 @@ pub unsafe extern "C" fn mxr_resend_osd_sync(
         // SAFETY: the caller guarantees a writable u16 or null.
         unsafe { sent_seq(r.remote.resend_osd_sync(device.into()), seq) }
     })
+}
+
+/// Asks for an overlay sync of this client's own, copying `what`
+/// (`MXR_OSD_SYNC_WHAT_*`), as a unit does: the controller answers with a sync
+/// naming this client, read with `mxr_osd_sync()` on its sender. For 10 s
+/// after, a sync naming this client is read from any device.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_osd_sync(
+    remote: *const mxr_remote_t,
+    what: u8,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.request_osd_sync(OsdSyncWhat::from_bits(what)))
+    })
+}
+
+/// Asks `source` for the settings of its sync `seq` named in `missing`, `count`
+/// indexes each below 128, as a unit taking that sync does. Each arrives at
+/// `on_osd_sync_setting_received`, for the last `MXR_OSD_SETTINGS_ASKED` syncs
+/// asked about. A source whose latest sync is another answers with a new sync
+/// copying `what`.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for an index of 128 or more,
+/// `MXR_ERR_UNKNOWN_DEVICE` for a source not heard.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`, and `missing`
+/// is null with `count` zero or points at `count` indexes.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_request_osd_settings(
+    remote: *const mxr_remote_t,
+    source: mxr_uid_t,
+    seq: u16,
+    what: u8,
+    missing: *const u16,
+    count: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let missing: &[u16] = match (missing.is_null(), count) {
+            (_, 0) => &[],
+            (true, _) => {
+                return fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    "missing indexes, or a count of zero",
+                )
+            }
+            // SAFETY: the caller guarantees `count` readable indexes.
+            (false, n) => unsafe { std::slice::from_raw_parts(missing, n) },
+        };
+        from_control(r.remote.request_osd_settings(
+            source.into(),
+            seq,
+            OsdSyncWhat::from_bits(what),
+            missing,
+        ))
+    })
+}
+
+/// Hands `body` a setting as a C entry, its strings borrowed for the call.
+pub(crate) fn with_osd_entry<R>(
+    entry: &OsdSyncEntry,
+    body: impl FnOnce(&mxr_osd_sync_entry_t) -> R,
+) -> R {
+    // A NUL inside would cut the string short in C; a unit reads both up to
+    // their first NUL anyway.
+    let cstring = |s: &str| CString::new(s).unwrap_or_default();
+    let mut e = mxr_osd_sync_entry_t {
+        kind: 0,
+        size: entry.size.to_wire(),
+        layers: entry.layers,
+        set: entry.set,
+        font: std::ptr::null(),
+        font_size: 0,
+        x: 0,
+        y: 0,
+        wrap: 0,
+        align: 0,
+        format: 0,
+        colour: 0,
+        text: std::ptr::null(),
+        logo: 0,
+    };
+    match &entry.value {
+        OsdSyncValue::Caption(c) => {
+            let (font, text) = (cstring(&c.font), cstring(&c.text));
+            e.kind = MXR_OSD_SYNC_TYPE_CAPTION;
+            e.font = font.as_ptr();
+            e.font_size = c.size;
+            e.x = c.x;
+            e.y = c.y;
+            e.wrap = c.wrap;
+            e.align = c.align.to_wire();
+            e.format = c.format.to_wire();
+            e.colour = c.colour;
+            e.text = text.as_ptr();
+            body(&e)
+        }
+        OsdSyncValue::Logo(l) => {
+            e.kind = MXR_OSD_SYNC_TYPE_LOGO;
+            e.logo = l.logo;
+            e.x = l.x;
+            e.y = l.y;
+            body(&e)
+        }
+        OsdSyncValue::Background(colour) => {
+            e.kind = MXR_OSD_SYNC_TYPE_BACKGROUND;
+            e.colour = *colour;
+            body(&e)
+        }
+    }
 }
 
 /// Stops holding the overlay sync this client sent, and hands the overlay
@@ -3778,5 +3926,50 @@ mod tests {
             matches!(r, Err(mxr_result_t::MXR_ERR_INVALID_ARGUMENT)),
             "png"
         );
+    }
+
+    /// A setting received goes to C as the entry `mxr_send_osd_sync()` reads
+    /// back as the same setting, so a caller can hold the sync it took.
+    #[test]
+    fn a_setting_handed_to_c_reads_back_as_itself() {
+        let entries = [
+            OsdSyncEntry {
+                size: OsdSyncSize::SMALL,
+                layers: 0x2010,
+                set: 0x01FF,
+                value: OsdSyncValue::Caption(OsdCaption {
+                    font: "Sans".to_owned(),
+                    size: 0x0124,
+                    x: -0x0203,
+                    y: 0x0405,
+                    wrap: -2,
+                    align: OsdCaptionAlign::RIGHT,
+                    format: OsdCaptionFormat::MARKDOWN,
+                    colour: 0x00A1_B2C3,
+                    text: "No signal".to_owned(),
+                }),
+            },
+            OsdSyncEntry {
+                size: OsdSyncSize::LARGE,
+                layers: 1,
+                set: 7,
+                value: OsdSyncValue::Logo(OsdLogo {
+                    logo: 3,
+                    x: -5,
+                    y: 6,
+                }),
+            },
+            OsdSyncEntry {
+                size: OsdSyncSize::LARGE,
+                layers: 4,
+                set: 1,
+                value: OsdSyncValue::Background(0x0012_3456),
+            },
+        ];
+        for entry in entries {
+            // SAFETY: the entry's strings live for the call.
+            let back = with_osd_entry(&entry, |e| unsafe { osd_entry(e) });
+            assert_eq!(back.ok(), Some(entry));
+        }
     }
 }

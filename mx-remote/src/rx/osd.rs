@@ -3,6 +3,8 @@
 
 //! Overlay sync, as a watcher sees it.
 
+use std::time::Duration;
+
 use crate::event::Event;
 use crate::state::State;
 use crate::types::OSD_SYNC_RECORDS_MAX;
@@ -24,6 +26,10 @@ use super::Rx;
 /// The most settings a sync may announce; a unit drops one announcing more.
 const SYNC_RECORDS_MAX: u16 = OSD_SYNC_RECORDS_MAX as u16;
 
+/// How long after this client asked for a sync of its own one naming it is
+/// taken from any device: a unit's request goes unanswered after as long.
+const OSD_SYNC_ASK_WINDOW: Duration = Duration::from_secs(10);
+
 /// Reads an overlay sync frame of any kind.
 ///
 /// A frame is dropped where a unit would drop it: shorter than its kind, or
@@ -33,6 +39,10 @@ const SYNC_RECORDS_MAX: u16 = OSD_SYNC_RECORDS_MAX as u16;
 /// as its target, and is read only when it does. One asking for a new sync,
 /// or naming this client as the source, is also queued for the runtime,
 /// which answers it while this client holds a sync.
+///
+/// A client taking syncs ([`crate::Config::osd_sync`]) also reads a sync
+/// naming it from any device for 10 s after it asked for one, and a setting
+/// naming it from the source of a sync it asked the settings of.
 ///
 /// A unit answers for its own output only, so the message it reports is read
 /// only when it names itself. A request for a message, or a write of one,
@@ -46,7 +56,7 @@ pub(super) fn osd_sync(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let seq = u16_at(p, 2);
     let target = uid_at(p, 4);
     match p[1] {
-        osd_kind::SYNC if is_management(state, sender) => {
+        osd_kind::SYNC if is_management(state, sender) || asked_sync(state, rx, target) => {
             if let Some(sync) = sync(p, seq, target) {
                 if let Some(device) = state.device_mut(sender) {
                     device.set_osd_sync(sync, ev);
@@ -56,7 +66,9 @@ pub(super) fn osd_sync(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         osd_kind::REQUEST if p.len() >= OSD_REQUEST_SIZE => {
             request(state, sender, p, seq, target, ev);
         }
-        osd_kind::SETTING if is_management(state, sender) => {
+        osd_kind::SETTING
+            if is_management(state, sender) || asked_settings(state, sender, seq, target) =>
+        {
             if let Some(setting) = setting(p, seq, target) {
                 ev.push(Event::OsdSyncSettingReceived {
                     device: sender,
@@ -136,6 +148,20 @@ fn request(
         device: sender,
         request,
     });
+}
+
+/// Whether a sync naming this client answers its own request for one.
+fn asked_sync(state: &State, rx: &Rx<'_>, target: DeviceUid) -> bool {
+    target == state.uid
+        && state
+            .osd_sync_asked
+            .is_some_and(|at| rx.timestamp.saturating_duration_since(at) < OSD_SYNC_ASK_WINDOW)
+}
+
+/// Whether a setting naming this client is of a sync it asked `sender`, its
+/// source, the settings of.
+fn asked_settings(state: &State, sender: DeviceUid, seq: u16, target: DeviceUid) -> bool {
+    target == state.uid && state.osd_settings_asked.contains(&(sender, seq))
 }
 
 /// Whether units take an overlay sync from `uid`: it announces

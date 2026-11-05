@@ -53,6 +53,12 @@ pub(crate) struct State {
     /// Overlay sync requests this client may be the one to answer: those
     /// asking for a new sync, and those naming this client as the source.
     pub(crate) osd_requests: Vec<OsdSyncRequest>,
+    /// When this client last asked for an overlay sync of its own (seq 0):
+    /// a sync naming it is taken from any device for 10 s after.
+    pub(crate) osd_sync_asked: Option<Instant>,
+    /// The syncs this client last asked settings of, as their source and
+    /// seq, newest last: their settings are taken from that source.
+    pub(crate) osd_settings_asked: VecDeque<(DeviceUid, u16)>,
     /// The kept settings of each unit, by that unit, as a device last sent
     /// them whole.
     pub(crate) mesh_configs: HashMap<DeviceUid, MeshConfig>,
@@ -112,6 +118,8 @@ impl State {
             hello_requested: false,
             state_requests: Vec::new(),
             osd_requests: Vec::new(),
+            osd_sync_asked: None,
+            osd_settings_asked: VecDeque::new(),
             mesh_configs: HashMap::new(),
             mesh_bays: HashMap::new(),
             mesh_config_transfers: HashMap::new(),

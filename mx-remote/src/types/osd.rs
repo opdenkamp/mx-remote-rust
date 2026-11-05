@@ -54,6 +54,30 @@ pub struct OsdSync {
     pub slots: Option<[OsdSyncSlot; OSD_SYNC_SLOTS]>,
 }
 
+impl OsdSync {
+    /// Where a unit fetches the logo of slot `slot`, 1 to 4, of this sync
+    /// sent from `sender`, the sender's address
+    /// ([`DeviceInfo::address`](crate::DeviceInfo::address)): `source_ip`, or
+    /// `sender` when it is unspecified, at `http_port`, or 80 when it is
+    /// zero. `None` for a slot outside 1 to 4.
+    pub fn logo_url(&self, sender: Ipv4Addr, slot: u8) -> Option<String> {
+        if !(1..=OSD_SYNC_SLOTS as u8).contains(&slot) {
+            return None;
+        }
+        let host = if self.source_ip.is_unspecified() {
+            sender
+        } else {
+            self.source_ip
+        };
+        let port = if self.http_port == 0 {
+            80
+        } else {
+            self.http_port
+        };
+        Some(format!("http://{host}:{port}/osd-sync/slot{slot}.png"))
+    }
+}
+
 /// A unit asking for a sync, or for settings of one it is taking, or
 /// management asking for a new sync for a unit.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -170,6 +194,11 @@ pub struct OsdSyncReport {
 /// The most settings one sync carries.
 pub const OSD_SYNC_RECORDS_MAX: usize = 128;
 
+/// How many syncs this client reads the settings of, the ones it asked
+/// about last ([`Remote::request_osd_settings`](crate::Remote::request_osd_settings)):
+/// a unit takes one sync at a time, and a source answers only its latest.
+pub const OSD_SETTINGS_ASKED: usize = 8;
+
 /// The longest caption font name, in bytes.
 pub const OSD_SYNC_FONT_MAX: usize = 31;
 
@@ -201,6 +230,19 @@ pub struct OsdSyncEntry {
     pub set: u16,
     /// What it sets.
     pub value: OsdSyncValue,
+}
+
+impl From<OsdSyncSetting> for OsdSyncEntry {
+    /// The setting as this client sends it on, holding the sync it took
+    /// ([`Remote::send_osd_sync`](crate::Remote::send_osd_sync)).
+    fn from(setting: OsdSyncSetting) -> Self {
+        Self {
+            size: setting.size,
+            layers: setting.layers,
+            set: setting.set,
+            value: setting.value,
+        }
+    }
 }
 
 /// The logo image for one slot.

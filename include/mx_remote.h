@@ -2288,6 +2288,12 @@
 #define MXR_OSD_SYNC_REASON_LEN 65
 
 /**
+ * How many syncs `mxr_request_osd_settings()` reads the settings of, the
+ * ones asked about last.
+ */
+#define MXR_OSD_SETTINGS_ASKED 8
+
+/**
  * Bytes in `mxr_osd_message_t.text`, its NUL included.
  */
 #define MXR_OSD_MESSAGE_TEXT_LEN 256
@@ -3987,6 +3993,14 @@ typedef struct {
    * `mxr_set_controller_hello()` changes it.
    */
   bool dedicated_controller;
+  /**
+   * Take overlay syncs as a unit does: the hello announces
+   * `MXR_FEATURE_OSD_SYNC`, for which a source sends this client a sync of
+   * its own. `mxr_request_osd_sync()` and `mxr_request_osd_settings()` ask
+   * for a sync and its settings, which arrive at `on_device_update` (read
+   * with `mxr_osd_sync()`) and `on_osd_sync_setting_received`.
+   */
+  bool osd_sync;
 } mxr_config_t;
 
 /**
@@ -4550,6 +4564,40 @@ typedef void (*mxr_mesh_operation_cb)(void *userdata,
                                       const mxr_mesh_operation_t *operation);
 
 /**
+ * One setting of an overlay sync, sent to the unit `target` names.
+ */
+typedef struct {
+  /**
+   * The sync it belongs to, numbered by its source.
+   */
+  uint16_t seq;
+  /**
+   * The unit it is for.
+   */
+  mxr_uid_t target;
+  /**
+   * Its place in the sync, below `records`.
+   */
+  uint16_t index;
+  /**
+   * How many settings the sync has.
+   */
+  uint16_t records;
+  /**
+   * The setting, as `mxr_send_osd_sync()` takes it, its strings borrowed
+   * for the call.
+   */
+  mxr_osd_sync_entry_t entry;
+} mxr_osd_sync_setting_t;
+
+/**
+ * Names a device and a setting of an overlay sync it sent.
+ */
+typedef void (*mxr_osd_sync_setting_cb)(void *userdata,
+                                        mxr_uid_t device,
+                                        const mxr_osd_sync_setting_t *setting);
+
+/**
  * What to call when something happens.
  *
  * Zero the whole struct and fill in only what is wanted: a null member drops
@@ -4919,6 +4967,12 @@ typedef struct {
    * longer listed, and a hello from it later registers it as a new device.
    */
   mxr_device_cb on_device_unregistered;
+  /**
+   * The device sent one setting of an overlay sync: management to any
+   * unit, or the source of a sync this client asks the settings of
+   * (`mxr_request_osd_settings()`) to this client.
+   */
+  mxr_osd_sync_setting_cb on_osd_sync_setting_received;
 } mxr_callbacks_t;
 
 /**
@@ -7911,6 +7965,23 @@ mxr_result_t mxr_send_osd_sync(const mxr_remote_t *remote,
                                uint16_t *seq);
 
 /**
+ * Keeps an overlay sync in place as `mxr_send_osd_sync()` does, serving its
+ * images and answering units' requests for its settings, without having any
+ * unit copy it now: a mesh controller holding the sync its units already took
+ * from another source, to send a unit that joins with `mxr_resend_osd_sync()`.
+ * Refused as `mxr_send_osd_sync()` is.
+ *
+ * # Safety
+ *
+ * As `mxr_send_osd_sync()`, without `seq`.
+ */
+mxr_result_t mxr_keep_osd_sync(const mxr_remote_t *remote,
+                               uint8_t what,
+                               const mxr_osd_sync_entry_t *entries,
+                               size_t count,
+                               const mxr_osd_sync_image_t *images);
+
+/**
  * Has one unit copy the overlay sync this client holds again, writing the
  * new sync's number to `seq` when it is not null. As `mxr_send_osd_sync()`.
  *
@@ -7922,6 +7993,40 @@ mxr_result_t mxr_send_osd_sync(const mxr_remote_t *remote,
  * null or writable.
  */
 mxr_result_t mxr_resend_osd_sync(const mxr_remote_t *remote, mxr_uid_t device, uint16_t *seq);
+
+/**
+ * Asks for an overlay sync of this client's own, copying `what`
+ * (`MXR_OSD_SYNC_WHAT_*`), as a unit does: the controller answers with a sync
+ * naming this client, read with `mxr_osd_sync()` on its sender. For 10 s
+ * after, a sync naming this client is read from any device.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_osd_sync(const mxr_remote_t *remote, uint8_t what);
+
+/**
+ * Asks `source` for the settings of its sync `seq` named in `missing`, `count`
+ * indexes each below 128, as a unit taking that sync does. Each arrives at
+ * `on_osd_sync_setting_received`, for the last `MXR_OSD_SETTINGS_ASKED` syncs
+ * asked about. A source whose latest sync is another answers with a new sync
+ * copying `what`.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for an index of 128 or more,
+ * `MXR_ERR_UNKNOWN_DEVICE` for a source not heard.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `missing`
+ * is null with `count` zero or points at `count` indexes.
+ */
+mxr_result_t mxr_request_osd_settings(const mxr_remote_t *remote,
+                                      mxr_uid_t source,
+                                      uint16_t seq,
+                                      uint8_t what,
+                                      const uint16_t *missing,
+                                      size_t count);
 
 /**
  * Stops holding the overlay sync this client sent, and hands the overlay

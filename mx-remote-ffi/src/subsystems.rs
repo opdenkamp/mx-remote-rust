@@ -1970,6 +1970,10 @@ pub const MXR_OSD_SYNC_SLOTS: usize = 4;
 pub const MXR_OSD_SYNC_REASON_LEN: usize = 65;
 
 const _: () = assert!(MXR_OSD_SYNC_SLOTS == OSD_SYNC_SLOTS);
+/// How many syncs `mxr_request_osd_settings()` reads the settings of, the
+/// ones asked about last.
+pub const MXR_OSD_SETTINGS_ASKED: usize = 8;
+const _: () = assert!(MXR_OSD_SETTINGS_ASKED == mx_remote::OSD_SETTINGS_ASKED);
 
 /// One logo slot, as an overlay sync describes it.
 #[repr(C)]

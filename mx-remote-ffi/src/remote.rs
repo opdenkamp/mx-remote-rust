@@ -96,6 +96,12 @@ pub struct mxr_config_t {
     /// its hello to every unit, at most every 10 s, and at once when
     /// `mxr_set_controller_hello()` changes it.
     pub dedicated_controller: bool,
+    /// Take overlay syncs as a unit does: the hello announces
+    /// `MXR_FEATURE_OSD_SYNC`, for which a source sends this client a sync of
+    /// its own. `mxr_request_osd_sync()` and `mxr_request_osd_settings()` ask
+    /// for a sync and its settings, which arrive at `on_device_update` (read
+    /// with `mxr_osd_sync()`) and `on_osd_sync_setting_received`.
+    pub osd_sync: bool,
 }
 
 /// Reads an address argument, where null means "not set".
@@ -164,6 +170,7 @@ unsafe fn to_config(c: &mxr_config_t) -> Result<Config, mxr_result_t> {
     config.mesh_device = c.mesh_device;
     config.capture_hello_mac = c.capture_hello_mac;
     config.dedicated_controller = c.dedicated_controller;
+    config.osd_sync = c.osd_sync;
     Ok(config)
 }
 

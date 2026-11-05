@@ -20,11 +20,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::types::{
     OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncRequest, OsdSyncSlot, OsdSyncValue,
-    OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX, OSD_SYNC_IMAGE_WIDTH_MAX,
-    OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
+    OSD_SETTINGS_ASKED, OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX,
+    OSD_SYNC_IMAGE_WIDTH_MAX, OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS,
+    OSD_SYNC_TEXT_MAX,
 };
 use crate::wire::{
-    build_osd_setting, build_osd_sync, crc32, op, Addressee, DeviceFeature, DeviceUid, OsdSyncWhat,
+    build_osd_request, build_osd_setting, build_osd_sync, crc32, op, Addressee, DeviceFeature,
+    DeviceUid, OsdSyncWhat,
 };
 
 use super::control::ControlError;
@@ -281,7 +283,24 @@ impl Remote {
             .inspect_err(|_| self.clear_osd_sync())
     }
 
-    fn hold_osd_sync(&self, content: OsdSyncContent) -> Result<u16, ControlError> {
+    /// Keeps `content` in place as [`Remote::send_osd_sync`] does, serving
+    /// its images and answering units' requests for its settings, without
+    /// having any unit copy it now: a mesh controller holding the sync its
+    /// units already took from another source, to send a unit that joins
+    /// with [`Remote::resend_osd_sync`]. Refused as `send_osd_sync` is.
+    pub fn keep_osd_sync(&self, content: OsdSyncContent) -> Result<(), ControlError> {
+        validate(&content)?;
+        let was_held = self
+            .store_osd_sync(content)
+            .inspect_err(|_| self.clear_osd_sync())?;
+        if !was_held {
+            self.shared.announce();
+        }
+        Ok(())
+    }
+
+    /// Holds `content` and serves its images. Whether a sync was held before.
+    fn store_osd_sync(&self, content: OsdSyncContent) -> Result<bool, ControlError> {
         let images = content.images.as_ref();
         let mut what =
             OsdSyncWhat::from_bits(content.what.bits() & !OsdSyncWhat::LOGO_SLOTS.bits());
@@ -295,21 +314,28 @@ impl Remote {
                 percent: images[i].percent,
             })
         });
-        let (was_held, sync) = {
+        let mut osd = lock(&self.shared.osd);
+        let http_port = match images {
+            Some(images) => serve(&mut osd.server, self.shared.logo_port, images)?,
+            None => 0,
+        };
+        let was_held = osd.held.is_some();
+        osd.held = Some(Held {
+            what,
+            entries: content.entries.into(),
+            slots,
+            http_port,
+            seqs: VecDeque::new(),
+        });
+        Ok(was_held)
+    }
+
+    fn hold_osd_sync(&self, content: OsdSyncContent) -> Result<u16, ControlError> {
+        let was_held = self.store_osd_sync(content)?;
+        let sync = {
             let mut osd = lock(&self.shared.osd);
-            let http_port = match images {
-                Some(images) => serve(&mut osd.server, self.shared.logo_port, images)?,
-                None => 0,
-            };
-            let was_held = osd.held.is_some();
-            osd.held = Some(Held {
-                what,
-                entries: content.entries.into(),
-                slots,
-                http_port,
-                seqs: VecDeque::new(),
-            });
-            (was_held, osd.sync_frame(DeviceUid::ZERO, what))
+            let what = osd.held.as_ref().map(|h| h.what);
+            what.and_then(|what| osd.sync_frame(DeviceUid::ZERO, what))
         };
         let (seq, frame) = sync.ok_or(ControlError::InvalidRequest("no overlay sync is held"))?;
         // Announced first, so the controller has stood back by the time a
@@ -349,6 +375,75 @@ impl Remote {
         };
         self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
         Ok(seq)
+    }
+
+    /// Asks for an overlay sync of this client's own, copying `what`, as a
+    /// unit does once it can take one: the controller, or a management
+    /// application standing in for it, answers with a sync naming this
+    /// client, which arrives at
+    /// [`crate::EventHandler::on_osd_sync_changed`] under its sender. For
+    /// 10 s after, a sync naming this client is read from any device, as the
+    /// one answering may be a controller its units no longer follow.
+    ///
+    /// The request goes to every unit, as a unit's does; only the controller
+    /// acts on it. A controller without a decoder runs no overlays and
+    /// answers nothing.
+    pub fn request_osd_sync(&self, what: OsdSyncWhat) -> Result<(), ControlError> {
+        let me = self.shared.uid;
+        let frame = build_osd_request(0, me, what, &[0; 16], DeviceUid::ZERO);
+        self.shared.mutate(|state, _| {
+            state.osd_sync_asked = Some(Instant::now());
+        });
+        self.shared
+            .send(&Addressee::Broadcast, op::V2IP_OSD_SYNC, &frame)?;
+        Ok(())
+    }
+
+    /// Asks `source` for settings `missing`, each below the sync's `records`,
+    /// of its sync `seq`, as a unit taking that sync does. The source answers
+    /// each one with a setting naming this client, which arrives at
+    /// [`crate::EventHandler::on_osd_sync_setting_received`] under `source`,
+    /// and is read for the last [`OSD_SETTINGS_ASKED`] syncs asked about.
+    ///
+    /// A source sends at most a few settings at a time and drops nothing it
+    /// was asked for, but a frame can be lost: a unit asks again for those
+    /// still missing a second after the last one came. One whose `seq` is no
+    /// longer its latest answers with a new sync copying `what`; a `what` of
+    /// none asks for nothing new.
+    ///
+    /// Refused for a setting index of [`OSD_SYNC_RECORDS_MAX`] or more, and
+    /// for a source this client has not heard.
+    pub fn request_osd_settings(
+        &self,
+        source: DeviceUid,
+        seq: u16,
+        what: OsdSyncWhat,
+        missing: &[u16],
+    ) -> Result<(), ControlError> {
+        let mut bits = [0u8; 16];
+        for &index in missing {
+            if usize::from(index) >= OSD_SYNC_RECORDS_MAX {
+                return Err(ControlError::InvalidRequest(
+                    "an overlay setting index below 128",
+                ));
+            }
+            bits[usize::from(index / 8)] |= 1 << (index % 8);
+        }
+        let to = self
+            .shared
+            .addressee(source)
+            .ok_or(ControlError::UnknownDevice(source))?;
+        let frame = build_osd_request(seq, self.shared.uid, what, &bits, source);
+        self.shared.mutate(|state, _| {
+            let asked = &mut state.osd_settings_asked;
+            asked.retain(|&a| a != (source, seq));
+            if asked.len() == OSD_SETTINGS_ASKED {
+                asked.pop_front();
+            }
+            asked.push_back((source, seq));
+        });
+        self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
+        Ok(())
     }
 
     /// Stops holding the sync this client sent, and hands the overlay sync

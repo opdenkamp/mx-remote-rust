@@ -103,6 +103,24 @@ pub(crate) fn build_osd_sync(
     p
 }
 
+/// Builds a request from `target`, the unit asking: with `seq` 0 for a new
+/// sync copying `what`, `missing` and `source` zero; with `seq` set for the
+/// settings of that sync that `missing` names, bit `i` (byte `i / 8`, bit
+/// `i % 8`) standing for setting `i`, of the sync `source` sent.
+pub(crate) fn build_osd_request(
+    seq: u16,
+    target: DeviceUid,
+    what: OsdSyncWhat,
+    missing: &[u8; 16],
+    source: DeviceUid,
+) -> Vec<u8> {
+    let mut p = header(osd_kind::REQUEST, seq, target, OSD_REQUEST_SIZE);
+    p.extend_from_slice(&[what.bits(), 0]);
+    p.extend_from_slice(missing);
+    p.extend_from_slice(source.as_bytes());
+    p
+}
+
 /// Builds setting `index` of a sync of `records`, for the unit `target`.
 ///
 /// A caption's font and text are written as given, so the caller keeps the
@@ -351,6 +369,55 @@ mod tests {
 
     /// The check value every CRC-32 catalogue gives for this variant, which
     /// predates this code.
+    #[test]
+    fn a_request_for_settings_puts_each_field_at_its_offset() {
+        let (target, source) = (uid_n(7), uid_n(9));
+        let missing: [u8; 16] = core::array::from_fn(|i| 0x80 | i as u8);
+        let p = build_osd_request(
+            0xA1B2,
+            target,
+            OsdSyncWhat::from_bits(0x0B),
+            &missing,
+            source,
+        );
+        assert_eq!(p.len(), OSD_REQUEST_SIZE);
+        assert_eq!(&p[..2], &[2, 1]);
+        assert_eq!(u16_at(&p, 2), 0xA1B2);
+        assert_eq!(&p[4..20], target.as_bytes());
+        assert_eq!(&p[20..22], &[0x0B, 0]);
+        assert_eq!(&p[22..38], &missing);
+        assert_eq!(&p[38..54], source.as_bytes());
+    }
+
+    /// The whole frame, written out from `osd_sync_request` in modules.md:
+    /// a unit asking for a sync of itself copying captions and logo slots.
+    #[test]
+    fn a_request_for_a_sync_is_byte_exact() {
+        let target = DeviceUid::from_array(core::array::from_fn(|i| 0x10 + i as u8));
+        let p = build_osd_request(
+            0,
+            target,
+            OsdSyncWhat::from_bits(0x09),
+            &[0; 16],
+            DeviceUid::ZERO,
+        );
+        let hex = p.iter().fold(String::new(), |mut out, b| {
+            use core::fmt::Write as _;
+            let _ = write!(out, "{b:02x}");
+            out
+        });
+        let want = [
+            "0201",                             // version 2, REQUEST
+            "0000",                             // seq 0: a new sync
+            "101112131415161718191a1b1c1d1e1f", // target, the asking unit
+            "0900",                             // what: captions and logo slots, then reserved
+            "00000000000000000000000000000000", // missing, unread with seq 0
+            "00000000000000000000000000000000", // source, none with seq 0
+        ]
+        .concat();
+        assert_eq!(hex, want);
+    }
+
     #[test]
     fn the_crc_is_the_zlib_one() {
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);

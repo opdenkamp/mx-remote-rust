@@ -198,6 +198,19 @@ pub struct Config {
     /// knows it as a dedicated controller once it has had one, and then takes
     /// the controller role from none while one it follows is online.
     pub dedicated_controller: bool,
+    /// Take overlay syncs (0x53) as a unit does: the hello announces
+    /// [`OSD_SYNC`](DeviceFeature::OSD_SYNC), for which a source sends this
+    /// client a sync of its own, as to any unit that takes one. Without
+    /// [`MANAGER`](DeviceFeature::MANAGER) next to it, as on a
+    /// [`Config::mesh_device`], that marks a unit copying overlays, not a
+    /// manager answering requests for them.
+    ///
+    /// [`Remote::request_osd_sync`] and [`Remote::request_osd_settings`] ask
+    /// for a sync and for its settings; the sync arrives at
+    /// [`crate::EventHandler::on_osd_sync_changed`], each setting at
+    /// [`crate::EventHandler::on_osd_sync_setting_received`]. Fetching the
+    /// logos is the caller's, from [`OsdSync::logo_url`](crate::OsdSync::logo_url).
+    pub osd_sync: bool,
 }
 
 impl Default for Config {
@@ -218,6 +231,7 @@ impl Default for Config {
             mesh_device: false,
             capture_hello_mac: false,
             dedicated_controller: false,
+            osd_sync: false,
         }
     }
 }
@@ -231,6 +245,8 @@ struct Shared {
     mesh_device: bool,
     capture_hello_mac: bool,
     dedicated_controller: bool,
+    /// The hello announces [`DeviceFeature::OSD_SYNC`] whatever is held.
+    osd_sync: bool,
     /// The `CONTROLLER_STATE` hello a dedicated controller sends, and when it
     /// last went out, `None` since the sockets opened.
     controller_hello: Mutex<(ControllerHello, Option<Instant>)>,
@@ -336,6 +352,7 @@ impl Remote {
                 mesh_device: config.mesh_device,
                 capture_hello_mac: config.capture_hello_mac,
                 dedicated_controller: config.dedicated_controller,
+                osd_sync: config.osd_sync,
                 controller_hello: Mutex::new((ControllerHello::default(), None)),
                 mesh_controller: Mutex::new(DeviceUid::ZERO),
                 mesh_bays_mapped: AtomicBool::new(false),
@@ -1086,7 +1103,8 @@ impl Shared {
     ///
     /// While it holds an overlay sync it also announces itself as the mesh's
     /// overlay sync manager, which is what has the controller leave units'
-    /// requests for a new sync to it.
+    /// requests for a new sync to it. With [`Config::osd_sync`] it announces
+    /// [`DeviceFeature::OSD_SYNC`] always, as a unit taking syncs does.
     ///
     /// It announces the mesh controller role as a unit does: only while it is
     /// its own controller and the caller has bays mapped.
@@ -1097,7 +1115,7 @@ impl Shared {
         } else {
             DeviceFeature::MANAGER
         };
-        if lock(&self.osd).holds() {
+        if self.osd_sync || lock(&self.osd).holds() {
             features |= DeviceFeature::OSD_SYNC;
         }
         if self.multicast_fault.load(Ordering::SeqCst) {

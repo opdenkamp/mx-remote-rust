@@ -41,6 +41,7 @@ fn client(name: &CStr, uid: &CStr) -> *mut mxr_remote_t {
         mesh_device: false,
         capture_hello_mac: false,
         dedicated_controller: false,
+        osd_sync: false,
     };
     // SAFETY: every pointer in the config is a live NUL-terminated string, and
     // a null callback table asks for no callbacks.
@@ -402,6 +403,7 @@ fn a_configuration_that_cannot_be_read_yields_no_client() {
         mesh_device: false,
         capture_hello_mac: false,
         dedicated_controller: false,
+        osd_sync: false,
     };
     // SAFETY: every non-null pointer in the config is a live NUL-terminated
     // string, and a null callback table asks for no callbacks.

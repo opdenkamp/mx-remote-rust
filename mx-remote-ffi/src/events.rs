@@ -28,11 +28,13 @@ use mx_remote::{
     ActionTransmitRequest, ArcStatus, AudioChangeSource, AudioClip, BayNameChange, BayUid,
     DeviceUid, EdidProfileChange, EdidRecord, EdidRequest, EventHandler, FactoryResetRequest,
     IrCapture, IrMeta, IrTransmitRequest, KeyTransmitRequest, LinkFeature, MeshControllerReport,
-    MeshOperation, MultiviewerCommand, PowerStatus, RcAction, RcKey, RebootRequest,
-    SetRouteRequest, V2ipBlacklistChange, V2ipPowerSaveRequest, VideoWallCommand, VolumeMuteStatus,
+    MeshOperation, MultiviewerCommand, OsdSyncEntry, OsdSyncSetting, PowerStatus, RcAction, RcKey,
+    RebootRequest, SetRouteRequest, V2ipBlacklistChange, V2ipPowerSaveRequest, VideoWallCommand,
+    VolumeMuteStatus,
 };
 
 use crate::abi::{bay_or_zero, guard, mxr_bay_uid_t, mxr_tribool_t, mxr_uid_t};
+use crate::control::{mxr_osd_sync_entry_t, with_osd_entry};
 use crate::info::{mxr_arc_status_t, mxr_power_status_t};
 
 // ---- callback signatures ----
@@ -122,6 +124,23 @@ pub struct mxr_set_route_request_t {
     pub no_power_on: bool,
     /// Set when the request routes audio only.
     pub audio_only: bool,
+}
+
+/// One setting of an overlay sync, sent to the unit `target` names.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct mxr_osd_sync_setting_t {
+    /// The sync it belongs to, numbered by its source.
+    pub seq: u16,
+    /// The unit it is for.
+    pub target: mxr_uid_t,
+    /// Its place in the sync, below `records`.
+    pub index: u16,
+    /// How many settings the sync has.
+    pub records: u16,
+    /// The setting, as `mxr_send_osd_sync()` takes it, its strings borrowed
+    /// for the call.
+    pub entry: mxr_osd_sync_entry_t,
 }
 
 /// Asks one device for its EDID.
@@ -384,6 +403,10 @@ pub type mxr_set_route_cb = Option<
         device: mxr_uid_t,
         request: *const mxr_set_route_request_t,
     ),
+>;
+/// Names a device and a setting of an overlay sync it sent.
+pub type mxr_osd_sync_setting_cb = Option<
+    extern "C" fn(userdata: *mut c_void, device: mxr_uid_t, setting: *const mxr_osd_sync_setting_t),
 >;
 /// Carries a request for a device's EDID.
 pub type mxr_edid_request_cb = Option<
@@ -693,6 +716,10 @@ pub struct mxr_callbacks_t {
     /// from it for three times the silence that takes it offline. It is no
     /// longer listed, and a hello from it later registers it as a new device.
     pub on_device_unregistered: mxr_device_cb,
+    /// The device sent one setting of an overlay sync: management to any
+    /// unit, or the source of a sync this client asks the settings of
+    /// (`mxr_request_osd_settings()`) to this client.
+    pub on_osd_sync_setting_received: mxr_osd_sync_setting_cb,
 }
 
 /// The caller's cookie, which this library carries and never reads.
@@ -930,6 +957,20 @@ impl EventHandler for Bridge {
                 audio_only: request.audio_only,
             };
             forward!(self.on_set_route_requested(device.into(), &payload));
+        });
+    }
+
+    fn on_osd_sync_setting_received(&self, device: DeviceUid, setting: OsdSyncSetting) {
+        let entry = OsdSyncEntry::from(setting.clone());
+        with_osd_entry(&entry, |entry| {
+            let payload = mxr_osd_sync_setting_t {
+                seq: setting.seq,
+                target: setting.target.into(),
+                index: setting.index,
+                records: setting.records,
+                entry: *entry,
+            };
+            forward!(self.on_osd_sync_setting_received(device.into(), &payload));
         });
     }
 

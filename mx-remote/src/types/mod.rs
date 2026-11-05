@@ -43,8 +43,9 @@ pub use network::{
 pub use osd::{
     OsdCaption, OsdLogo, OsdMessage, OsdSync, OsdSyncContent, OsdSyncEntry, OsdSyncImage,
     OsdSyncReport, OsdSyncRequest, OsdSyncSetting, OsdSyncSlot, OsdSyncValue, OSD_MESSAGE_TEXT_MAX,
-    OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX, OSD_SYNC_IMAGE_WIDTH_MAX,
-    OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
+    OSD_SETTINGS_ASKED, OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX,
+    OSD_SYNC_IMAGE_WIDTH_MAX, OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS,
+    OSD_SYNC_TEXT_MAX,
 };
 pub use status::{
     ArcStatus, BayAudioDetails, BayContentField, BayMirrorStatus, BaySignalDetails,

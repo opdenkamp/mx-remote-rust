@@ -441,3 +441,96 @@ fn only_a_units_own_whole_message_is_kept() {
         assert_eq!(message_of(&h, source), None, "{what} was kept");
     }
 }
+
+// ---- taking a sync as a unit (`Config::osd_sync`) ----
+
+/// The sync a unit that is not management sends this client, which asked
+/// for one of its own at `asked`, as a OneIP controller units no longer
+/// follow answers it.
+fn answered_at(asked: std::time::Duration) -> (Harness, DeviceUid) {
+    let (mut h, _, unit) = mesh();
+    let now = std::time::Instant::now();
+    h.state.osd_sync_asked = Some(now - asked);
+    let me = h.state.uid;
+    h.feed_full(
+        unit,
+        op::V2IP_OSD_SYNC,
+        crate::wire::PROTOCOL_VERSION,
+        &sync_frame(9, me, 0x0F, 2),
+        now,
+    );
+    (h, unit)
+}
+
+#[test]
+fn a_sync_naming_this_client_is_read_from_anyone_for_10_s_after_it_asked() {
+    let (h, unit) = answered_at(std::time::Duration::from_secs(9));
+    assert_eq!(sync_events(&h), 1);
+    let sync = h.state.device(unit).and_then(|d| d.osd_sync.clone());
+    assert_eq!(sync.map(|s| (s.seq, s.target)), Some((9, h.state.uid)));
+
+    let (h, _) = answered_at(std::time::Duration::from_secs(10));
+    assert_eq!(sync_events(&h), 0, "asked too long ago");
+}
+
+#[test]
+fn a_sync_from_anyone_naming_another_unit_or_every_unit_is_not_read_for_asking() {
+    let (mut h, _, unit) = mesh();
+    h.state.osd_sync_asked = Some(std::time::Instant::now());
+    h.feed_as(unit, op::V2IP_OSD_SYNC, &sync_frame(9, uid_n(170), 1, 1));
+    h.feed_as(
+        unit,
+        op::V2IP_OSD_SYNC,
+        &sync_frame(9, DeviceUid::ZERO, 1, 1),
+    );
+    assert_eq!(sync_events(&h), 0);
+    let me = h.state.uid;
+    h.state.osd_sync_asked = None;
+    h.feed_as(unit, op::V2IP_OSD_SYNC, &sync_frame(9, me, 1, 1));
+    assert_eq!(sync_events(&h), 0, "never asked");
+}
+
+#[test]
+fn a_setting_naming_this_client_is_read_from_the_source_it_asked() {
+    let (mut h, _, unit) = mesh();
+    let me = h.state.uid;
+    // setting_frame's seq.
+    h.state.osd_settings_asked.push_back((unit, 0x0304));
+    h.feed_as(
+        unit,
+        op::V2IP_OSD_SYNC,
+        &setting_frame(me, 2, &[1, 2, 3, 0]),
+    );
+    let seen = settings(&h);
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].value, OsdSyncValue::Background(0x0003_0201));
+    let entry = crate::types::OsdSyncEntry::from(seen[0].clone());
+    assert_eq!(
+        (entry.size, entry.layers, entry.set, entry.value),
+        (
+            OsdSyncSize::SMALL,
+            0x0105,
+            0x01FF,
+            OsdSyncValue::Background(0x0003_0201)
+        ),
+        "sent on as it came"
+    );
+}
+
+#[test]
+fn a_setting_of_a_sync_this_client_did_not_ask_about_is_not_read() {
+    let (mut h, _, unit) = mesh();
+    let me = h.state.uid;
+    h.state.osd_settings_asked.push_back((unit, 0x0304));
+    let mut other_seq = setting_frame(me, 2, &[0; 4]);
+    other_seq[2] = 5;
+    let cases: [(&str, DeviceUid, Vec<u8>); 3] = [
+        ("another seq", unit, other_seq),
+        ("another unit", unit, setting_frame(uid_n(170), 2, &[0; 4])),
+        ("another sender", uid_n(162), setting_frame(me, 2, &[0; 4])),
+    ];
+    for (why, sender, p) in cases {
+        h.feed_as(sender, op::V2IP_OSD_SYNC, &p);
+        assert!(settings(&h).is_empty(), "{why}: the setting was read");
+    }
+}

@@ -393,6 +393,36 @@ fn a_resend_goes_to_one_unit_under_a_new_number() {
 }
 
 #[test]
+fn kept_content_goes_to_no_unit_until_one_is_sent_it() {
+    let m = mesh();
+    m.remote.keep_osd_sync(content(2)).expect("kept");
+    assert!(m.sent().is_empty(), "no unit is sent a sync");
+    let seq = m.remote.resend_osd_sync(m.a).expect("sent");
+    let sent = m.sent();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(u16_at(&sent[0], 2), seq);
+    assert_eq!(target(&sent[0]), m.a);
+    assert_eq!(u16_at(&sent[0], 28), 2);
+    m.tap.clear();
+    m.request(m.a, seq, 0x05, &[0, 1], m.uid());
+    while m.remote.shared.osd_pass() > 0 {}
+    assert_eq!(m.sent().len(), 2, "its settings are answered");
+}
+
+#[test]
+fn kept_content_a_unit_would_refuse_is_refused() {
+    let m = mesh();
+    let mut bad = content(1);
+    bad.entries.clear();
+    bad.what = OsdSyncWhat::from_bits(0);
+    assert!(m.remote.keep_osd_sync(bad).is_err());
+    assert!(matches!(
+        m.remote.resend_osd_sync(m.a),
+        Err(ControlError::InvalidRequest(_))
+    ));
+}
+
+#[test]
 fn the_number_skips_zero() {
     let m = mesh();
     lock(&m.remote.shared.osd).next_seq = u16::MAX;
@@ -712,4 +742,124 @@ fn a_message_a_unit_would_refuse_is_not_sent() {
         Err(ControlError::UnknownDevice(_))
     ));
     assert!(m.sent().is_empty());
+}
+
+// ---- taking a sync as a unit ----
+
+#[test]
+fn a_request_for_a_sync_of_its_own_goes_to_every_unit() {
+    let m = mesh();
+    m.remote
+        .request_osd_sync(OsdSyncWhat::from_bits(0x0F))
+        .expect("sent");
+    let sent = m.sent();
+    assert_eq!(sent.len(), 1);
+    let p = &sent[0];
+    assert_eq!(p.len(), 54);
+    assert_eq!(&p[..4], &[2, 1, 0, 0], "a REQUEST with seq 0");
+    assert_eq!(target(p), m.uid());
+    assert_eq!(p[20], 0x0F);
+    assert!(p[22..54].iter().all(|&b| b == 0), "no settings, no source");
+    assert!(m.remote.shared.read(|s| s.osd_sync_asked.is_some()));
+}
+
+#[test]
+fn a_request_for_settings_names_the_missing_ones_and_the_source() {
+    let m = mesh();
+    m.remote
+        .request_osd_settings(m.a, 0x1234, OsdSyncWhat::from_bits(0x0F), &[0, 9, 127])
+        .expect("sent");
+    let sent = m.sent();
+    assert_eq!(sent.len(), 1);
+    let p = &sent[0];
+    assert_eq!(p.len(), 54);
+    assert_eq!(&p[..2], &[2, 1]);
+    assert_eq!(u16_at(p, 2), 0x1234);
+    assert_eq!(target(p), m.uid(), "the asking unit");
+    let mut bits = [0u8; 16];
+    bits[0] = 0x01;
+    bits[1] = 0x02;
+    bits[15] = 0x80;
+    assert_eq!(&p[22..38], &bits);
+    assert_eq!(&p[38..54], m.a.as_bytes());
+    let asked = m.remote.shared.read(|s| s.osd_settings_asked.clone());
+    assert_eq!(asked, [(m.a, 0x1234)]);
+}
+
+#[test]
+fn only_the_last_syncs_asked_about_are_remembered() {
+    let m = mesh();
+    for seq in 1..=(crate::types::OSD_SETTINGS_ASKED as u16 + 2) {
+        m.remote
+            .request_osd_settings(m.a, seq, OsdSyncWhat::CAPTIONS, &[0])
+            .expect("sent");
+    }
+    m.remote
+        .request_osd_settings(m.a, 5, OsdSyncWhat::CAPTIONS, &[0])
+        .expect("sent");
+    let asked = m.remote.shared.read(|s| s.osd_settings_asked.clone());
+    assert_eq!(asked.len(), crate::types::OSD_SETTINGS_ASKED);
+    assert_eq!(asked.front(), Some(&(m.a, 3)), "1 and 2 dropped");
+    assert_eq!(asked.back(), Some(&(m.a, 5)), "asked again, newest");
+}
+
+#[test]
+fn a_request_for_settings_past_the_most_or_of_an_unknown_source_is_refused() {
+    let m = mesh();
+    assert!(matches!(
+        m.remote
+            .request_osd_settings(m.a, 1, OsdSyncWhat::CAPTIONS, &[128]),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    assert!(matches!(
+        m.remote
+            .request_osd_settings(uid_n(0x40), 1, OsdSyncWhat::CAPTIONS, &[0]),
+        Err(ControlError::UnknownDevice(_))
+    ));
+    assert!(m.sent().is_empty());
+}
+
+#[test]
+fn a_client_taking_syncs_announces_it_in_every_hello() {
+    let remote = Remote::new(
+        crate::Config {
+            uid: Some(uid_n(0xFD)),
+            mesh_device: true,
+            osd_sync: true,
+            ..crate::Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    let features = remote.shared.features();
+    assert!(features.has(DeviceFeature::OSD_SYNC));
+    assert!(!features.has(DeviceFeature::MANAGER));
+}
+
+#[test]
+fn a_sync_s_logos_are_fetched_from_its_source() {
+    let sync = |source_ip, http_port| crate::types::OsdSync {
+        seq: 1,
+        target: DeviceUid::ZERO,
+        what: OsdSyncWhat::LOGO_SLOTS,
+        http_port,
+        source_ip,
+        records: 0,
+        slots: None,
+    };
+    let sender = Ipv4Addr::new(10, 66, 0, 7);
+    assert_eq!(
+        sync(Ipv4Addr::UNSPECIFIED, 0)
+            .logo_url(sender, 1)
+            .as_deref(),
+        Some("http://10.66.0.7:80/osd-sync/slot1.png")
+    );
+    assert_eq!(
+        sync(Ipv4Addr::new(10, 66, 0, 2), 8080)
+            .logo_url(sender, 4)
+            .as_deref(),
+        Some("http://10.66.0.2:8080/osd-sync/slot4.png")
+    );
+    assert_eq!(sync(Ipv4Addr::UNSPECIFIED, 0).logo_url(sender, 0), None);
+    assert_eq!(sync(Ipv4Addr::UNSPECIFIED, 0).logo_url(sender, 5), None);
 }
