@@ -857,3 +857,37 @@ fn a_released_unit_takes_commands_from_anyone() {
         "an audio command"
     );
 }
+
+/// A membership report flags lost settings in bit 0 of its parameter's first
+/// word, and the flag alone changing is news: a controller adds a member
+/// back on it rather than drop it for naming no master.
+#[test]
+fn a_mesh_report_flags_lost_settings() {
+    let mut h = Harness::new(6);
+    h.hello(
+        0x2F,
+        "ONEIP",
+        "MR0002",
+        DeviceFeature::V2IP_SINK | DeviceFeature::MESH,
+    );
+    let report = |lost: bool| {
+        let mut mesh = vec![0u8; 40];
+        mesh[0] = 0xFF;
+        // The word's other bits, which name nothing yet, are left set.
+        mesh[20..24].copy_from_slice(&(0xFFFF_FFFEu32 | u32::from(lost)).to_le_bytes());
+        mesh
+    };
+    let fired = |h: &Harness| h.saw(|e| matches!(e, Event::MeshMasterChanged { .. }));
+
+    h.feed(op::MESH_OPERATION, &report(false));
+    assert!(!h.device().mesh_membership_lost, "bits other than 0 read");
+    h.events.clear();
+    h.feed(op::MESH_OPERATION, &report(true));
+    assert!(h.device().mesh_membership_lost);
+    assert!(h.device().mesh_master.is_zero());
+    assert!(fired(&h), "the flag alone changing went unreported");
+    h.events.clear();
+    h.feed(op::MESH_OPERATION, &report(false));
+    assert!(!h.device().mesh_membership_lost);
+    assert!(fired(&h));
+}

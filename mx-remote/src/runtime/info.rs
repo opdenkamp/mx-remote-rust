@@ -121,6 +121,10 @@ pub struct DeviceInfo {
     /// The mesh master this device follows, or the zero uid when it is in no
     /// mesh.
     pub mesh_master: DeviceUid,
+    /// The device's last membership report flags that it lost its settings,
+    /// and its membership possibly with them: a controller that has it as a
+    /// member adds it back rather than drop it for naming no master.
+    pub mesh_membership_lost: bool,
     /// What the device last announced about itself as a mesh controller,
     /// `None` until it has.
     pub mesh_controller_report: Option<MeshControllerReport>,
@@ -164,6 +168,7 @@ impl DeviceInfo {
             config_initialised: device.config_initialised(),
             temperatures: device.temperatures.clone(),
             mesh_master: device.mesh_master,
+            mesh_membership_lost: device.mesh_membership_lost,
             mesh_controller_report: device.mesh_controller_report,
             hdbt_outputs: device.hdbt_outputs(),
             setup_done: device.setup_done,

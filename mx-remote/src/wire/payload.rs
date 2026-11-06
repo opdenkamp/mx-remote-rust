@@ -111,8 +111,8 @@ pub(crate) fn build_set_volume(target: DeviceUid, port: u16, volume: VolumeMuteS
     p
 }
 
-/// Builds the `V2IP_AUDIO` (0x43) command header: a `u16` sub-opcode, two pad
-/// bytes and the target uid.
+/// Builds the `V2IP_AUDIO` (0x43) command header: a `u16` sub-opcode, the
+/// `u16` flags, which are zero on every command, and the target uid.
 pub(crate) fn audio_cmd_header(sub_opcode: u16, target: DeviceUid) -> Vec<u8> {
     let mut h = Vec::with_capacity(20);
     h.extend_from_slice(&sub_opcode.to_le_bytes());

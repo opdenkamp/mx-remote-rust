@@ -1520,6 +1520,16 @@ fn a_multicast_fault_is_announced_as_it_appears() {
         FROM,
         Some(Path::Broadcast),
     );
+    // Past the grace a peer first heard has before it counts.
+    {
+        let mut state = lock(&remote.shared.state);
+        let device = state.device_mut(peer).expect("the peer was registered");
+        device.first_seen = device
+            .first_seen
+            .checked_sub(Duration::from_secs(61))
+            .expect("a clock this young");
+        state.endpoints_opened = None;
+    }
     tap.clear();
     remote.shared.process_datagram_on(
         &hello_datagram(peer, "Peer", "MF0002"),

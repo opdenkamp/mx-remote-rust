@@ -209,6 +209,8 @@ pub(crate) struct Device {
     pub(crate) mesh_master: DeviceUid,
     /// Whether `mesh_master` came from a report rather than the default.
     mesh_master_reported: bool,
+    /// Whether the last membership report flagged lost settings.
+    pub(crate) mesh_membership_lost: bool,
     pub(crate) mesh_controller_report: Option<MeshControllerReport>,
     pub(crate) network: BTreeMap<u16, NetworkPortStatus>,
     pub(crate) sys_status: Option<(u16, String)>,
@@ -290,6 +292,7 @@ impl Device {
             firmware: BTreeMap::new(),
             mesh_master: DeviceUid::ZERO,
             mesh_master_reported: false,
+            mesh_membership_lost: false,
             mesh_controller_report: None,
             network: BTreeMap::new(),
             sys_status: None,
@@ -718,7 +721,11 @@ impl Device {
         bay.features = cfg.features;
         bay.mode = cfg.modenum;
         bay.status_mask = cfg.status;
-        bay.set_user_name(cfg.user_name.clone(), ev);
+        // A device that lost its settings names the bay by its default, so
+        // the name held stays until the bit clears.
+        if is_new || !cfg.status.has(crate::wire::BayStatus::SETTINGS_LOST) {
+            bay.set_user_name(cfg.user_name.clone(), ev);
+        }
         if bay.mbay_id.is_none() {
             bay.mbay_id = Some(cfg.bay);
         }
@@ -1063,12 +1070,18 @@ impl Device {
         self.mesh_master_reported.then_some(self.mesh_master)
     }
 
-    pub(crate) fn set_mesh_master(&mut self, master: DeviceUid, ev: &mut Vec<Event>) {
-        if self.mesh_master_reported && self.mesh_master == master {
+    /// Takes a membership report: the master it names, and whether it flags
+    /// lost settings. A change to either is reported.
+    pub(crate) fn set_mesh_master(&mut self, master: DeviceUid, lost: bool, ev: &mut Vec<Event>) {
+        if self.mesh_master_reported
+            && self.mesh_master == master
+            && self.mesh_membership_lost == lost
+        {
             return;
         }
         self.mesh_master_reported = true;
         self.mesh_master = master;
+        self.mesh_membership_lost = lost;
         ev.push(Event::MeshMasterChanged {
             device: self.uid,
             master,

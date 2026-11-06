@@ -1546,3 +1546,40 @@ fn bay_content_is_cleaned_as_a_unit_cleans_it() {
     let expected: Vec<(&str, &str)> = expected.iter().map(|(k, v)| (*k, v.as_str())).collect();
     assert_eq!(content_of(&h, 1), pairs(&expected));
 }
+
+/// A device that lost its settings reports its bays' default names and
+/// hidden flags; the ones held stay until the bit clears, while a bay first
+/// heard then takes what it is sent.
+#[test]
+fn a_bay_keeps_its_name_and_hidden_flag_while_settings_are_lost() {
+    let mut h = Harness::new(145);
+    h.hello(0x2F, "FF88", "HD0006", DeviceFeature::VIDEO_ROUTING);
+    let cfg = |port: u8, name: &str, status: BayStatus| {
+        bay_config_rec(port, 0, 0, "Input 1", name, status, BayFeatures::HDMI_IN)
+    };
+    h.feed(op::SYS_BAY_CONFIG, &cfg(1, "Apple TV", BayStatus::HIDDEN));
+    assert_eq!(h.bay(1).user_name(), "Apple TV");
+    assert_eq!(h.bay(1).hidden, Some(true));
+
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &cfg(1, "Input 1", BayStatus::SETTINGS_LOST),
+    );
+    assert_eq!(h.bay(1).user_name(), "Apple TV", "a default name taken");
+    assert_eq!(h.bay(1).hidden, Some(true), "a default hidden flag taken");
+    let mut st = poisoned(32);
+    st[0..2].copy_from_slice(&1u16.to_le_bytes());
+    st[20..24].copy_from_slice(&BayStatus::SETTINGS_LOST.bits().to_le_bytes());
+    h.feed(op::BAY_STATUS, &st);
+    assert_eq!(h.bay(1).hidden, Some(true), "a status word's default taken");
+
+    h.feed(
+        op::SYS_BAY_CONFIG,
+        &cfg(2, "Blu-ray", BayStatus::SETTINGS_LOST),
+    );
+    assert_eq!(h.bay(2).user_name(), "Blu-ray", "a new bay took no name");
+
+    h.feed(op::SYS_BAY_CONFIG, &cfg(1, "Input 1", BayStatus::NONE));
+    assert_eq!(h.bay(1).user_name(), "Input 1", "the bit cleared");
+    assert_eq!(h.bay(1).hidden, Some(false));
+}

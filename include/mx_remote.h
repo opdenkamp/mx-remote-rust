@@ -373,6 +373,13 @@
 #define MXR_BAY_STATUS_AUTO_NAME (1 << 24)
 
 /**
+ * The device lost its settings, so the bay's name and hidden flag are its
+ * defaults: the library keeps the ones it already holds until the bit
+ * clears. A device that predates this bit never sets it.
+ */
+#define MXR_BAY_STATUS_SETTINGS_LOST (1 << 25)
+
+/**
  * Accepts audio.
  */
 #define MXR_AUDIO_INPUT (1 << 0)
@@ -3476,6 +3483,11 @@ typedef struct {
    * sent a `CONTROLLER_STATE` hello, which `mxr_controller_hello()` reads.
    */
   bool dedicated_controller;
+  /**
+   * The device's last membership report says it lost its settings, its
+   * membership possibly with them; its controller adds it back.
+   */
+  bool mesh_membership_lost;
 } mxr_device_info_t;
 
 /**
@@ -3820,6 +3832,10 @@ typedef struct {
    * The crc32 of those bytes.
    */
   uint32_t crc32;
+  /**
+   * The unit lost its settings and announces defaults.
+   */
+  bool lost;
 } mxr_mesh_config_digest_t;
 
 /**
@@ -3835,6 +3851,10 @@ typedef struct {
    * They are a copy `holder` keeps of the unit, not its own.
    */
   bool copy;
+  /**
+   * The unit lost its settings, and these are its defaults.
+   */
+  bool lost;
   /**
    * How many settings there are.
    */

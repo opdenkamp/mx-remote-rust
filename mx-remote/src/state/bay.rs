@@ -532,7 +532,11 @@ impl Bay {
             };
         }
         flag!(faulty, FAULT, FaultyChanged { faulty });
-        flag!(hidden, HIDDEN, HiddenChanged { hidden });
+        // A device that lost its settings reports its default, which would
+        // undo the flag a user set; the one held stays until the bit clears.
+        if !(data.has(BayStatus::SETTINGS_LOST) && self.hidden.is_some()) {
+            flag!(hidden, HIDDEN, HiddenChanged { hidden });
+        }
         flag!(zone_powered, POWERED, ZonePoweredChanged { powered });
         flag!(
             hdbt_connected,

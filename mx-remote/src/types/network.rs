@@ -196,6 +196,14 @@ impl MeshOperation {
         )
     }
 
+    /// Whether a membership report flags that its sender lost its settings,
+    /// and its membership possibly with them: bit 0 of the parameter's
+    /// first 32-bit word. Senders that predate the flag leave it clear.
+    pub fn membership_lost(&self) -> bool {
+        let b = self.param.as_bytes();
+        u32::from_le_bytes([b[0], b[1], b[2], b[3]]) & 1 != 0
+    }
+
     /// The priority a controller report carries. Units read the word as 16
     /// bits.
     pub fn priority(&self) -> u16 {

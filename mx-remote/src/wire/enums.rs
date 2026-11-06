@@ -805,6 +805,10 @@ bitmask! {
         /// EDID - rather than set by a user. A device that predates this bit
         /// never sets it, so a clear bit does not prove a user set the name.
         AUTO_NAME = 1 << 24;
+        /// The device lost its settings, so the bay's name and hidden flag
+        /// are its defaults: a receiver keeps the ones it already has until
+        /// the bit clears. A device that predates this bit never sets it.
+        SETTINGS_LOST = 1 << 25;
     }
 }
 

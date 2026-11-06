@@ -204,8 +204,10 @@ events! {
         /// endpoint's status changed.
         AudioEndpointsChanged => on_audio_endpoints_changed(endpoints: AudioEndpoints);
         /// The device reported its mesh master for the first time, or a
-        /// different one. A first report naming none fires too, which is what
-        /// tells a device in no mesh from one that has not reported yet.
+        /// different one, or flagged lost settings differently
+        /// ([`DeviceInfo::mesh_membership_lost`](crate::DeviceInfo::mesh_membership_lost)).
+        /// A first report naming none fires too, which is what tells a device
+        /// in no mesh from one that has not reported yet.
         MeshMasterChanged => on_mesh_master_changed(master: DeviceUid);
         /// The device announced itself as a mesh controller differently.
         MeshControllerReportChanged => on_mesh_controller_report_changed(report: MeshControllerReport);

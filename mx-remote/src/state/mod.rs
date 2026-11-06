@@ -34,6 +34,12 @@ pub(crate) use device::{Device, HelloInfo, MeshBayChange, SdpPages, CONFIG_GRACE
 pub(crate) use links::{BayLink, BayLinks};
 use tree::Tree;
 
+/// How long a peer is heard before it counts towards a multicast fault, from
+/// when it is first heard and, for every peer, from when this client opens
+/// its endpoints: a peer's broadcast copies can arrive before its first
+/// multicast frame, or before the switch forwards the group to this client.
+pub(crate) const MCAST_FAULT_GRACE: Duration = Duration::from_secs(60);
+
 /// Every device this client has heard from, and the links between their bays.
 #[derive(Debug)]
 pub(crate) struct State {
@@ -84,6 +90,9 @@ pub(crate) struct State {
     /// `CONTROLLER_STATE` requests the pulls raised, to send, as their
     /// addressee and payload.
     pub(crate) controller_asks: Vec<(DeviceUid, Vec<u8>)>,
+    /// When this client last opened its endpoints, which starts every peer's
+    /// [`MCAST_FAULT_GRACE`] again.
+    pub(crate) endpoints_opened: Option<Instant>,
     /// Where each registered device, this client included, sits.
     tree: Tree,
     /// The source address of the last hello captured from each sender below
@@ -141,6 +150,7 @@ impl State {
             controller_state_requests: Vec::new(),
             controller_pulls: Vec::new(),
             controller_asks: Vec::new(),
+            endpoints_opened: None,
             tree: Tree::new(uid),
             hello_sources: HashMap::new(),
             recent: VecDeque::with_capacity(DUPLICATE_RING),
@@ -179,10 +189,14 @@ impl State {
     }
 
     /// Whether this client's own multicast fails: a peer, not about to
-    /// reboot, is heard by broadcast but not by multicast.
+    /// reboot and past its [`MCAST_FAULT_GRACE`], is heard by broadcast but
+    /// not by multicast.
     pub(crate) fn multicast_fault(&self, now: Instant) -> bool {
+        let opened = self.endpoints_opened;
         self.peers().any(|d| {
-            !d.hello.features.has(DeviceFeature::STATUS_REBOOT)
+            let since = opened.map_or(d.first_seen, |at| at.max(d.first_seen));
+            now.saturating_duration_since(since) >= MCAST_FAULT_GRACE
+                && !d.hello.features.has(DeviceFeature::STATUS_REBOOT)
                 && d.broadcast_only(now)
                 && d.heard_broadcast_lately(now)
         })

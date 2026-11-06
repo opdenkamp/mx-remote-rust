@@ -1112,7 +1112,7 @@ pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
     match operation.kind {
         MeshOperationKind::REPORT_MEMBERSHIP => {
             if let Some(device) = state.device_mut(sender) {
-                device.set_mesh_master(target, ev);
+                device.set_mesh_master(target, operation.membership_lost(), ev);
             }
         }
         MeshOperationKind::REPORT_CONTROLLER => {

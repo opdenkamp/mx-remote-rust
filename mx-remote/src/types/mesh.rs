@@ -92,6 +92,10 @@ pub struct MeshConfigDigest {
     pub length: u16,
     /// The crc32 of those bytes.
     pub crc32: u32,
+    /// The unit lost its settings and announces defaults: a controller that
+    /// keeps a record of it restores that record, whatever the length and
+    /// crc32 say. Never set by a unit that predates the flag.
+    pub lost: bool,
 }
 
 /// A unit's kept settings, as a device sent them.
@@ -105,6 +109,10 @@ pub struct MeshConfig {
     /// controller keeps one of every member, and a member one of its
     /// controller.
     pub copy: bool,
+    /// The unit lost its settings, and these are its defaults: a controller
+    /// that keeps a record of it drops them. Only ever set on a unit's own
+    /// settings, never on a copy.
+    pub lost: bool,
     /// The settings, in the order they were sent.
     pub settings: Vec<MeshSetting>,
 }

@@ -124,6 +124,8 @@ pub struct mxr_mesh_config_digest_t {
     pub length: u16,
     /// The crc32 of those bytes.
     pub crc32: u32,
+    /// The unit lost its settings and announces defaults.
+    pub lost: bool,
 }
 
 /// Who sent a unit's kept settings; `mxr_mesh_config_settings()` reads the
@@ -135,6 +137,8 @@ pub struct mxr_mesh_config_t {
     pub holder: mxr_uid_t,
     /// They are a copy `holder` keeps of the unit, not its own.
     pub copy: bool,
+    /// The unit lost its settings, and these are its defaults.
+    pub lost: bool,
     /// How many settings there are.
     pub count: usize,
 }
@@ -364,6 +368,7 @@ pub unsafe extern "C" fn mxr_mesh_config_digest(
             .map(|d| mxr_mesh_config_digest_t {
                 length: d.length,
                 crc32: d.crc32,
+                lost: d.lost,
             });
         // SAFETY: the caller guarantees a writable struct or null.
         unsafe { crate::subsystems::fill(r, uid, out, "kept settings digest", value) }
@@ -398,6 +403,7 @@ pub unsafe extern "C" fn mxr_mesh_config(
                     *out = mxr_mesh_config_t {
                         holder: c.holder.into(),
                         copy: c.copy,
+                        lost: c.lost,
                         count: c.settings.len(),
                     }
                 };

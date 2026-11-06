@@ -158,3 +158,26 @@ fn a_silent_peer_still_counts_for_broadcast() {
     assert!(h.state.needs_broadcast(later), "a silent peer was left out");
     assert!(h.state.multicast_fault(later), "a silent peer was left out");
 }
+
+/// A peer counts towards a multicast fault only after its 60 s grace, from
+/// when it is first heard and, for every peer, from when this client opens
+/// its endpoints: its broadcast copies can arrive before its multicast.
+#[test]
+fn a_peer_counts_towards_a_fault_after_its_grace() {
+    let mut h = Harness::new(64);
+    let t0 = Instant::now();
+    let first = hello(h.sender, "PG0001", DeviceFeature::MESH);
+    process_frame_on(&mut h.state, &first, None, Some(Path::Broadcast), t0);
+    let t = t0 + Duration::from_secs(59);
+    process_frame_on(&mut h.state, &first, None, Some(Path::Broadcast), t);
+    assert!(h.state.needs_broadcast(t));
+    assert!(!h.state.multicast_fault(t), "a peer in its grace");
+    assert!(h.state.multicast_fault(t0 + Duration::from_secs(60)));
+
+    h.state.endpoints_opened = Some(t0 + Duration::from_secs(70));
+    assert!(
+        !h.state.multicast_fault(t0 + Duration::from_secs(129)),
+        "opening the endpoints did not start the grace again"
+    );
+    assert!(h.state.multicast_fault(t0 + Duration::from_secs(130)));
+}

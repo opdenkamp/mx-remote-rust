@@ -77,6 +77,11 @@ pub(crate) mod config_kind {
 /// the unit named, not its own.
 pub(crate) const MESH_CONFIG_FLAG_COPY: u8 = 1 << 0;
 
+/// The flag at byte 2 of a hello, or of a dump of the sender's own settings:
+/// the sender lost its settings and holds defaults. A controller that keeps
+/// a record of it sends that record back as a set.
+pub(crate) const MESH_CONFIG_FLAG_LOST: u8 = 1 << 1;
+
 /// The most settings bytes one frame carries.
 pub(crate) const MESH_CONFIG_FRAME_MAX: usize = 1024;
 

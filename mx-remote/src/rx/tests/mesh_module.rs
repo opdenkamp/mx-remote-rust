@@ -230,6 +230,7 @@ fn a_hello_is_read_only_about_its_sender() {
     let digest = MeshConfigDigest {
         length: 0x0602,
         crc32: 0x8899_AABB,
+        lost: false,
     };
     assert_eq!(h.device().mesh_config_digest, Some(digest));
     assert!(
@@ -301,6 +302,7 @@ fn settings_are_taken_once_every_frame_has_arrived() {
         subject: uid_n(7),
         holder: h.sender,
         copy: true,
+        lost: false,
         settings: list,
     };
     assert_eq!(h.state.mesh_configs.get(&uid_n(7)), Some(&expected));
@@ -574,4 +576,44 @@ fn a_controller_hello_marks_a_dedicated_controller() {
     assert!(
         h.saw(|e| matches!(e, Event::ControllerHelloChanged { hello, .. } if *hello == expected))
     );
+}
+
+/// A hello, or a dump of the sender's own settings, flags lost settings in
+/// bit 1; a copy another unit keeps is never its subject's lost settings.
+#[test]
+fn lost_settings_are_flagged_on_a_hello_and_an_own_dump() {
+    let mut h = Harness::new(0x31);
+    mesh_unit(&mut h);
+    h.feed(
+        op::MESH_CONFIG,
+        &config_header(0, 2, 0, 0x0602, 0x8899_AABB, h.sender),
+    );
+    assert_eq!(
+        h.device().mesh_config_digest,
+        Some(MeshConfigDigest {
+            length: 0x0602,
+            crc32: 0x8899_AABB,
+            lost: true,
+        })
+    );
+    h.feed(
+        op::MESH_CONFIG,
+        &config_header(0, 1, 0, 0x0602, 0x8899_AABB, h.sender),
+    );
+    assert!(
+        !h.device().mesh_config_digest.expect("a hello").lost,
+        "COPY read as LOST"
+    );
+
+    let (_, bytes) = settings();
+    let crc = crate::wire::crc32(&bytes);
+    for frame in pages(2, 2, h.sender, &bytes, crc) {
+        h.feed(op::MESH_CONFIG, &frame);
+    }
+    assert!(h.state.mesh_configs[&h.sender].lost, "an own dump");
+    for frame in pages(2, 3, uid_n(7), &bytes, crc) {
+        h.feed(op::MESH_CONFIG, &frame);
+    }
+    let copy = &h.state.mesh_configs[&uid_n(7)];
+    assert!(copy.copy && !copy.lost, "a copy was taken as lost");
 }

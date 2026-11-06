@@ -251,6 +251,11 @@ pub const MXR_BAY_STATUS_ENCODER_ERROR: u32 = 1 << 21;
 /// so a clear bit does not prove a user set the name.
 pub const MXR_BAY_STATUS_AUTO_NAME: u32 = 1 << 24;
 
+/// The device lost its settings, so the bay's name and hidden flag are its
+/// defaults: the library keeps the ones it already holds until the bit
+/// clears. A device that predates this bit never sets it.
+pub const MXR_BAY_STATUS_SETTINGS_LOST: u32 = 1 << 25;
+
 // ---- what an audio endpoint can do, in `mxr_audio_endpoint_t::features` ----
 
 /// Accepts audio.

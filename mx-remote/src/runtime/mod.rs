@@ -396,6 +396,7 @@ impl Remote {
         };
         let conn = lock(&self.shared.network).open()?;
         lock(&self.shared.tx).set_conn(Some(conn));
+        lock(&self.shared.state).endpoints_opened = Some(Instant::now());
         // The first hello on new sockets goes to both endpoints.
         *lock(&self.shared.hello_on_broadcast) = None;
         lock(&self.shared.own_controller).sent = None;
@@ -874,6 +875,7 @@ impl Remote {
         // client on the socket it had rather than on none.
         let conn = network.open()?;
         lock(&self.shared.tx).set_conn(Some(conn));
+        lock(&self.shared.state).endpoints_opened = Some(Instant::now());
         // The first hello on new sockets goes to both endpoints.
         *lock(&self.shared.hello_on_broadcast) = None;
         lock(&self.shared.own_controller).sent = None;

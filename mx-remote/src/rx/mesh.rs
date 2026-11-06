@@ -16,9 +16,9 @@ use crate::wire::{
     config_kind, cstr, decode_controller_hello, decode_mesh_bays, decode_mesh_settings,
     replace_kind, state_kind, DeviceFeature, DeviceUid, MeshReplaceResult, StateHeader,
     CONTROLLER_STATE_HEADER_SIZE, MESH_BAYS_ENTRY_SIZE, MESH_CONFIG_FLAG_COPY,
-    MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION, MESH_REPLACE_FLAG_CONTROLLER,
-    MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT, MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE,
-    MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
+    MESH_CONFIG_FLAG_LOST, MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION,
+    MESH_REPLACE_FLAG_CONTROLLER, MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT,
+    MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE, MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
 };
 
 use super::handlers::{u16_at, u32_at, uid_at};
@@ -137,6 +137,7 @@ pub(super) fn mesh_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             let digest = MeshConfigDigest {
                 length: u16_at(p, 6),
                 crc32: u32_at(p, 8),
+                lost: p[2] & MESH_CONFIG_FLAG_LOST != 0,
             };
             if let Some(device) = state.device_mut(sender) {
                 device.set_mesh_config_digest(digest, ev);
@@ -231,10 +232,12 @@ fn settings_frame(
     };
     match kind {
         config_kind::DUMP => {
+            let copy = flags & MESH_CONFIG_FLAG_COPY != 0;
             let config = MeshConfig {
                 subject,
                 holder: sender,
-                copy: flags & MESH_CONFIG_FLAG_COPY != 0,
+                copy,
+                lost: !copy && subject == sender && flags & MESH_CONFIG_FLAG_LOST != 0,
                 settings,
             };
             state.mesh_configs.insert(subject, config.clone());

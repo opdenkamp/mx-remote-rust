@@ -283,6 +283,9 @@ pub struct mxr_device_info_t {
     /// The device is a dedicated mesh controller, such as a router: it has
     /// sent a `CONTROLLER_STATE` hello, which `mxr_controller_hello()` reads.
     pub dedicated_controller: bool,
+    /// The device's last membership report says it lost its settings, its
+    /// membership possibly with them; its controller adds it back.
+    pub mesh_membership_lost: bool,
 }
 
 /// What a bay is, and what is connected to it.
@@ -594,6 +597,7 @@ impl mxr_device_info_t {
             mac: info.mac.unwrap_or_default().0,
             igmp_querier: [0; MXR_IP_STRING_LEN],
             dedicated_controller: info.dedicated_controller,
+            mesh_membership_lost: info.mesh_membership_lost,
         };
         if let Some(querier) = info.igmp_querier {
             put_str(&mut out.igmp_querier, &querier.to_string());
