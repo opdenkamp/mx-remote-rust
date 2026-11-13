@@ -18,6 +18,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use std::net::Ipv4Addr;
+
 use crate::types::{
     OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncReport, OsdSyncRequest, OsdSyncSlot,
     OsdSyncValue, OSD_SETTINGS_ASKED, OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX,
@@ -252,6 +254,29 @@ impl Shared {
         drop(server);
         held
     }
+
+    /// Has a running image server listen on `address`, on the port it has.
+    ///
+    /// When it cannot, the server is stopped and the error returned; the next
+    /// sync with images starts a new one.
+    pub(super) fn move_logo_server(&self, address: Ipv4Addr) -> std::io::Result<()> {
+        let Some(server) = lock(&self.osd).server.take() else {
+            return Ok(());
+        };
+        // Moved outside the lock, as the old server's thread is joined.
+        let server = if server.address() == address {
+            server
+        } else {
+            server.moved_to(address)?
+        };
+        let mut osd = lock(&self.osd);
+        // A sync stored meanwhile started a server of its own, on the new
+        // address since the network was changed first.
+        if osd.server.is_none() {
+            osd.server = Some(server);
+        }
+        Ok(())
+    }
 }
 
 impl Remote {
@@ -314,9 +339,10 @@ impl Remote {
                 percent: images[i].percent,
             })
         });
+        let address = lock(&self.shared.network).listen_address();
         let mut osd = lock(&self.shared.osd);
         let http_port = match images {
-            Some(images) => serve(&mut osd.server, self.shared.logo_port, images)?,
+            Some(images) => serve(&mut osd.server, address, self.shared.logo_port, images)?,
             None => 0,
         };
         let was_held = osd.held.is_some();
@@ -478,16 +504,17 @@ impl Remote {
     }
 }
 
-/// Starts the image server if it is not running, and serves `images`,
-/// returning its port.
+/// Starts the image server on `address` if it is not running, and serves
+/// `images`, returning its port.
 fn serve(
     server: &mut Option<LogoServer>,
+    address: Ipv4Addr,
     port: Option<u16>,
     images: &[OsdSyncImage; OSD_SYNC_SLOTS],
 ) -> Result<u16, ControlError> {
     let running = match server.take() {
         Some(running) => running,
-        None => LogoServer::start(port.unwrap_or(0))
+        None => LogoServer::start(address, port.unwrap_or(0))
             .map_err(|e| ControlError::Send(crate::wire::SendError::Io(e)))?,
     };
     let images: Images = core::array::from_fn(|i| Arc::from(images[i].png.as_slice()));

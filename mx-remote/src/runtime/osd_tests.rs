@@ -904,3 +904,43 @@ fn a_sync_s_logos_are_fetched_from_its_source() {
     assert_eq!(sync(Ipv4Addr::UNSPECIFIED, 0).logo_url(sender, 0), None);
     assert_eq!(sync(Ipv4Addr::UNSPECIFIED, 0).logo_url(sender, 5), None);
 }
+
+/// The images are served on the selected interface's address alone, and
+/// follow it to another on the same port.
+#[test]
+fn images_are_served_on_the_selected_address_alone() {
+    let Some(other) = crate::wire::valid_addresses().into_iter().next() else {
+        eprintln!("skipped: the host has no interface besides loopback");
+        return;
+    };
+    let m = mesh();
+    {
+        // A scratch endpoint of its own, for update_config to reopen.
+        let mut network = lock(&m.remote.shared.network);
+        network.target_ip = Some(Ipv4Addr::LOCALHOST);
+        network.port = Some(SERVED_ADDRESS_PORT);
+    }
+    let mut c = content(1);
+    c.images = Some(images());
+    m.remote.send_osd_sync(c).expect("sent");
+    let port = u16_at(&m.sent().remove(0), 22);
+    let served = |ip: Ipv4Addr| TcpStream::connect((ip, port)).is_ok();
+    assert!(
+        served(Ipv4Addr::LOCALHOST) && served(other),
+        "not on every address"
+    );
+
+    m.remote.update_config(Some(other)).expect("moved");
+    assert!(served(other), "not served on {other}");
+    assert!(!served(Ipv4Addr::LOCALHOST), "served on loopback");
+
+    m.remote
+        .update_config(Some(Ipv4Addr::LOCALHOST))
+        .expect("moved");
+    assert!(served(Ipv4Addr::LOCALHOST), "not served on loopback");
+    assert!(!served(other), "served on {other}");
+}
+
+/// The port [`images_are_served_on_the_selected_address_alone`] reopens its
+/// endpoint on, which no other test sends to.
+const SERVED_ADDRESS_PORT: u16 = 18822;

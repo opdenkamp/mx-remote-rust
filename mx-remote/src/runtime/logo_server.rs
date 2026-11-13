@@ -32,6 +32,7 @@ pub(super) type Images = [Arc<[u8]>; OSD_SYNC_SLOTS];
 
 /// A running server. Dropping it stops the thread and waits for it.
 pub(super) struct LogoServer {
+    address: Ipv4Addr,
     port: u16,
     images: Arc<Mutex<Images>>,
     stop: Arc<AtomicBool>,
@@ -39,14 +40,15 @@ pub(super) struct LogoServer {
 }
 
 impl LogoServer {
-    /// Listens on `port` on every interface, or on a free port when it is
-    /// zero.
+    /// Listens on `address` and `port`, or on a free port when it is zero.
     ///
-    /// Every interface rather than the one the client talks on: a unit
-    /// fetches from the address the sync came from, which is whichever
-    /// address the host sent it with.
-    pub(super) fn start(port: u16) -> io::Result<Self> {
-        let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))?;
+    /// A unit fetches from the address the sync came from, which is the
+    /// selected interface's address when one is selected, so listening there
+    /// alone keeps every other network away from the images.
+    /// [`Ipv4Addr::UNSPECIFIED`] listens on every interface, for a client
+    /// with no interface selected, or one selected that has no address.
+    pub(super) fn start(address: Ipv4Addr, port: u16) -> io::Result<Self> {
+        let listener = TcpListener::bind((address, port))?;
         // Polled rather than parked in accept, so dropping the server does
         // not have to wait for a unit to connect.
         listener.set_nonblocking(true)?;
@@ -62,6 +64,7 @@ impl LogoServer {
                 .spawn(move || accept_loop(&listener, &images, &stop))?
         };
         Ok(Self {
+            address,
             port,
             images,
             stop,
@@ -72,6 +75,25 @@ impl LogoServer {
     /// The port it listens on.
     pub(super) fn port(&self) -> u16 {
         self.port
+    }
+
+    /// The address it listens on.
+    pub(super) fn address(&self) -> Ipv4Addr {
+        self.address
+    }
+
+    /// The same images on the same port, listening on `address` instead.
+    ///
+    /// The port is kept because the sync units hold names it. This server is
+    /// stopped first, since a listener on every address holds the port
+    /// against one on a single address.
+    pub(super) fn moved_to(self, address: Ipv4Addr) -> io::Result<Self> {
+        let port = self.port;
+        let images = lock(&self.images).clone();
+        drop(self);
+        let moved = Self::start(address, port)?;
+        moved.set_images(images);
+        Ok(moved)
     }
 
     /// Replaces the images being served.
@@ -180,7 +202,7 @@ mod tests {
 
     #[test]
     fn a_slot_is_served_whole_with_its_length() {
-        let server = LogoServer::start(0).expect("start");
+        let server = LogoServer::start(Ipv4Addr::UNSPECIFIED, 0).expect("start");
         let png: Vec<u8> = (0..70_000u32).map(|i| (i * 7) as u8).collect();
         server.set_images([
             Arc::from(&b""[..]),
@@ -199,7 +221,7 @@ mod tests {
 
     #[test]
     fn an_empty_or_unknown_slot_is_not_found() {
-        let server = LogoServer::start(0).expect("start");
+        let server = LogoServer::start(Ipv4Addr::UNSPECIFIED, 0).expect("start");
         server.set_images([
             Arc::from(&b""[..]),
             Arc::from(&b"two"[..]),

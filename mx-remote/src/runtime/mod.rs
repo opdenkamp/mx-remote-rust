@@ -177,6 +177,9 @@ pub struct Config {
     pub uid_path: Option<PathBuf>,
     /// The TCP port units fetch an overlay sync's logo images from. Unset
     /// picks a free one when the first sync with images is sent.
+    ///
+    /// It listens on the selected interface's address, or on every address
+    /// when none is selected or the selected one has none.
     pub logo_port: Option<u16>,
     /// Announce this client as a mesh device rather than a management
     /// application.
@@ -310,6 +313,17 @@ impl Network {
             Some(ip) => Plan::One(ip, self.port.unwrap_or(MULTICAST_PORT)),
             None => Plan::Both,
         }
+    }
+
+    /// The address the overlay sync image server listens on: the selected
+    /// interface's, or every address when none is selected or the selected
+    /// one has none.
+    fn listen_address(&self) -> Ipv4Addr {
+        match &self.interface {
+            Some(name) => crate::wire::address_of(name),
+            None => self.local_ip,
+        }
+        .unwrap_or(Ipv4Addr::UNSPECIFIED)
     }
 
     fn open(&self) -> io::Result<Conn> {
@@ -868,6 +882,10 @@ impl Remote {
 
     /// Changes the interface by address while running, reopening the sockets
     /// when it differs from the one in use. `None` lets the host choose again.
+    ///
+    /// An overlay sync's image server moves to the new address on the port it
+    /// has. When it cannot, it stops, this returns the error with the new
+    /// sockets in use, and the next sync with images starts it again.
     pub fn update_config(&self, local_ip: Option<Ipv4Addr>) -> io::Result<()> {
         let network = {
             let mut network = lock(&self.shared.network);
@@ -887,7 +905,7 @@ impl Remote {
         lock(&self.shared.own_controller).sent = None;
         self.shared.announce();
         let _ = self.shared.discover();
-        Ok(())
+        self.shared.move_logo_server(network.listen_address())
     }
 
     /// Asks every device on the network to announce itself.
