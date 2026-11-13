@@ -211,7 +211,8 @@ inline std::string last_error() { return std::string(mxr_last_error()); }
     X(on_ir_transmit_requested, mxr_ir_transmit_request_t) \
     X(on_blacklist_changed, mxr_blacklist_change_t) \
     X(on_video_wall_command, mxr_video_wall_command_t) \
-    X(on_mesh_operation_received, mxr_mesh_operation_t)
+    X(on_mesh_operation_received, mxr_mesh_operation_t) \
+    X(on_osd_sync_setting_received, mxr_osd_sync_setting_t)
 
 #define MXR_EVENTS_BAY_PAYLOAD(X) \
     X(on_ir_captured, mxr_ir_capture_t)
@@ -305,6 +306,16 @@ public:
     /// the link that went, and mean what they do on `on_bay_linked`.
     virtual void on_bay_unlinked(BayUid /*bay*/, const char * /*linked_serial*/,
                                  const char * /*bay_name*/) {}
+    /// A part of the device's state that `mxr_pull_controller_part()` asked for
+    /// arrived whole, its crc32 matching. `bytes` is borrowed for the call.
+    virtual void on_controller_part_received(Uid /*device*/, uint8_t /*part*/,
+                                             uint32_t /*generation*/,
+                                             const uint8_t * /*bytes*/, size_t /*len*/) {}
+    /// A pull of a part of the device's state ended without it: the device no
+    /// longer holds that generation, sent a part other than the one asked
+    /// for, went offline, or sent nothing through ten asks in a row.
+    virtual void on_controller_part_failed(Uid /*device*/, uint8_t /*part*/,
+                                           uint32_t /*generation*/) {}
 };
 
 namespace detail {
@@ -412,6 +423,15 @@ inline void mxr_cxx_on_bay_unlinked(void *ud, mxr_bay_uid_t b, const char *seria
                                     const char *name) {
     handler_of(ud)->on_bay_unlinked(BayUid(b), serial, name);
 }
+inline void mxr_cxx_on_controller_part_received(void *ud, mxr_uid_t d, uint8_t part,
+                                                uint32_t generation, const uint8_t *bytes,
+                                                size_t len) {
+    handler_of(ud)->on_controller_part_received(Uid(d), part, generation, bytes, len);
+}
+inline void mxr_cxx_on_controller_part_failed(void *ud, mxr_uid_t d, uint8_t part,
+                                              uint32_t generation) {
+    handler_of(ud)->on_controller_part_failed(Uid(d), part, generation);
+}
 
 } // extern "C"
 
@@ -467,6 +487,8 @@ inline const mxr_callbacks_t &callbacks() {
         t.on_arc_changed = &mxr_cxx_on_arc_changed;
         t.on_bay_linked = &mxr_cxx_on_bay_linked;
         t.on_bay_unlinked = &mxr_cxx_on_bay_unlinked;
+        t.on_controller_part_received = &mxr_cxx_on_controller_part_received;
+        t.on_controller_part_failed = &mxr_cxx_on_controller_part_failed;
         return t;
     }();
     return table;
@@ -491,8 +513,9 @@ const size_t event_count = 0
     MXR_EVENTS_DEVICE_PAYLOAD(MXR_COUNT_TWO)
     MXR_EVENTS_BAY_PAYLOAD(MXR_COUNT_TWO)
     /* on_system_status_changed, on_volume_changed, on_power_changed,
-     * on_arc_changed, on_bay_linked, on_bay_unlinked. */
-    + 6;
+     * on_arc_changed, on_bay_linked, on_bay_unlinked,
+     * on_controller_part_received, on_controller_part_failed. */
+    + 8;
 #undef MXR_COUNT_ONE
 #undef MXR_COUNT_TWO
 
