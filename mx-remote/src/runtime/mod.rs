@@ -268,6 +268,8 @@ struct Shared {
     /// Whether the caller has mesh bays mapped, without which a controller
     /// does not announce the role.
     mesh_bays_mapped: AtomicBool,
+    /// Whether this client's own setup is completed.
+    setup_completed: AtomicBool,
     handler: Arc<dyn EventHandler>,
     state: Mutex<State>,
     tx: Mutex<Tx>,
@@ -380,6 +382,7 @@ impl Remote {
                 own_controller: Mutex::default(),
                 mesh_controller: Mutex::new(DeviceUid::ZERO),
                 mesh_bays_mapped: AtomicBool::new(false),
+                setup_completed: AtomicBool::new(false),
                 handler,
                 state: Mutex::new(State::new(uid)),
                 tx: Mutex::new(Tx::default()),
@@ -533,6 +536,24 @@ impl Remote {
     pub fn set_mesh_bays_mapped(&self, mapped: bool) {
         let before = self.shared.features();
         self.shared.mesh_bays_mapped.store(mapped, Ordering::SeqCst);
+        if self.shared.features() != before {
+            self.shared.announce();
+        }
+    }
+
+    /// Sets whether this client's own setup is completed, which its hello
+    /// announces as [`DeviceFeature::SETUP_COMPLETED`], as a unit's does. A
+    /// change is announced at once.
+    ///
+    /// On a mesh controller it is what a member that missed
+    /// [`Remote::set_mesh_setup_completed`], being offline at the time or
+    /// replaced since, catches up from. A controller marking its mesh's setup
+    /// completed sets both.
+    pub fn set_setup_completed(&self, completed: bool) {
+        let before = self.shared.features();
+        self.shared
+            .setup_completed
+            .store(completed, Ordering::SeqCst);
         if self.shared.features() != before {
             self.shared.announce();
         }
@@ -1162,6 +1183,9 @@ impl Shared {
         }
         if self.multicast_fault.load(Ordering::SeqCst) {
             features |= DeviceFeature::STATUS_MCAST_FAULT;
+        }
+        if self.setup_completed.load(Ordering::SeqCst) {
+            features |= DeviceFeature::SETUP_COMPLETED;
         }
         let controller = *lock(&self.mesh_controller);
         if !controller.is_zero() {

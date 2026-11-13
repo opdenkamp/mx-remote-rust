@@ -419,6 +419,31 @@ pub unsafe extern "C" fn mxr_remote_set_mesh_bays_mapped(
     })
 }
 
+/// Sets whether this client's own setup is completed, which its hello
+/// announces as `MXR_FEATURE_SETUP_COMPLETED`, as a unit's does. A change is
+/// announced at once.
+///
+/// On a mesh controller it is what a member that missed
+/// `mxr_set_mesh_setup_completed()`, being offline at the time or replaced
+/// since, catches up from. A controller marking its mesh's setup completed
+/// sets both.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_remote_set_setup_completed(
+    remote: *const mxr_remote_t,
+    completed: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        r.remote.set_setup_completed(completed);
+        mxr_result_t::MXR_OK
+    })
+}
+
 /// Writes the features this client announces in its hello as of now, as
 /// `MXR_FEATURE_*` bits: what a peer lists it with.
 ///

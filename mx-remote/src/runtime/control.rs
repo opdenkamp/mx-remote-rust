@@ -1622,7 +1622,8 @@ impl Remote {
     /// Marks the setup of every unit that hears it completed, or not.
     ///
     /// A unit takes it only from its mesh controller or a management
-    /// application, and shows it in its next announcement.
+    /// application, and shows it in its next announcement. This client's own
+    /// flag is [`Remote::set_setup_completed`]'s.
     pub fn set_mesh_setup_completed(&self, completed: bool) -> Result<(), ControlError> {
         self.shared.send(
             &Addressee::Broadcast,

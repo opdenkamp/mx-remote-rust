@@ -1272,6 +1272,35 @@ impl EventHandler for Linking {
     }
 }
 
+/// Marking this client's setup completed, or not, announces it at once in
+/// the hello's SETUP_COMPLETED bit; marking it as it already is announces
+/// nothing.
+#[test]
+fn the_setup_flag_is_announced_at_once() {
+    let (remote, tap) = client(246);
+    let hello_bits = || {
+        let frames = tap.frames();
+        tap.clear();
+        assert_eq!(frames.len(), 1, "one hello");
+        let bits = frames[0]
+            .get(HEADER_LEN + 50..HEADER_LEN + 54)
+            .and_then(|b| <[u8; 4]>::try_from(b).ok())
+            .map(u32::from_le_bytes)
+            .expect("a hello carries its features");
+        DeviceFeature::from_bits(bits)
+    };
+    assert!(!remote.features().has(DeviceFeature::SETUP_COMPLETED));
+
+    remote.set_setup_completed(true);
+    assert!(hello_bits().has(DeviceFeature::SETUP_COMPLETED));
+    assert!(remote.features().has(DeviceFeature::SETUP_COMPLETED));
+    remote.set_setup_completed(true);
+    assert!(tap.frames().is_empty(), "announced without a change");
+
+    remote.set_setup_completed(false);
+    assert!(!hello_bits().has(DeviceFeature::SETUP_COMPLETED));
+}
+
 /// The features this client reports announcing are those its hello carries,
 /// whatever role, overlay sync or multicast fault it is announcing.
 #[test]
