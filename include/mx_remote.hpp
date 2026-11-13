@@ -925,6 +925,13 @@ public:
     mxr_result_t remote_update_config(const char *local_ip) const {
         return mxr_remote_update_config(h_, local_ip);
     }
+    mxr_result_t set_announce_interfaces(const std::vector<std::string> &names) const {
+        std::vector<const char *> raw;
+        raw.reserve(names.size());
+        for (const std::string &name : names)
+            raw.push_back(name.c_str());
+        return mxr_remote_set_announce_interfaces(h_, raw.data(), raw.size());
+    }
     mxr_result_t discover() const {
         return mxr_discover(h_);
     }

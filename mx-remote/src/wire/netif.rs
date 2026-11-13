@@ -124,3 +124,12 @@ pub(crate) fn index_holding(address: Ipv4Addr) -> io::Result<u32> {
             )
         })
 }
+
+/// The name of the interface holding `address`.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn name_holding(address: Ipv4Addr) -> Option<String> {
+    interfaces()
+        .into_iter()
+        .find(|i| i.address == address)
+        .map(|i| i.name)
+}

@@ -1618,3 +1618,22 @@ fn the_hello_is_due_on_broadcast_30_seconds_after_the_last() {
     ));
     assert!(super::hello_due_on_broadcast(Some(last), edge));
 }
+
+/// The hello on an interface only announced on leaves out exactly the
+/// features that invite a unit there to act on this client, and keeps the
+/// rest, mesh membership included.
+#[test]
+fn an_announced_only_hello_leaves_out_what_invites_action() {
+    let kept = DeviceFeature::CONFIG_INITIALISED
+        | DeviceFeature::MESH
+        | DeviceFeature::MESH_MEMBER
+        | DeviceFeature::SETUP_COMPLETED
+        | DeviceFeature::STATUS_MCAST_FAULT;
+    for invites in [
+        DeviceFeature::MANAGER,
+        DeviceFeature::MESH_MASTER,
+        DeviceFeature::OSD_SYNC,
+    ] {
+        assert_eq!(announced_only(kept | invites), kept, "{invites} is kept");
+    }
+}

@@ -865,6 +865,55 @@ pub unsafe extern "C" fn mxr_remote_update_config(
     })
 }
 
+/// Replaces the interfaces, by name, this client only announces itself on,
+/// announcing on them at once when running. `count` zero, with `names` null
+/// or not, announces on none.
+///
+/// Each hello, and the `CONTROLLER_STATE` hello of a `dedicated_controller`,
+/// goes there to both endpoints a unit has, from a socket that is never read;
+/// nothing arriving there is taken. The hello there leaves out
+/// `MXR_FEATURE_MANAGER`, `MXR_FEATURE_MESH_MASTER` and
+/// `MXR_FEATURE_OSD_SYNC`, which invite a unit to act on this client. Each
+/// interface is followed at its current address and skipped while it has
+/// none.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle, and `names` is null or points at
+/// `count` NUL-terminated strings.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_remote_set_announce_interfaces(
+    remote: *const mxr_remote_t,
+    names: *const *const c_char,
+    count: usize,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        let names: &[*const c_char] = match (names.is_null(), count) {
+            (_, 0) => &[],
+            (true, _) => {
+                return fail(
+                    mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+                    "names is null with a count above zero",
+                )
+            }
+            // SAFETY: the caller guarantees count pointers at names.
+            (false, _) => unsafe { std::slice::from_raw_parts(names, count) },
+        };
+        let mut interfaces = Vec::with_capacity(names.len());
+        for &name in names {
+            // SAFETY: the caller guarantees NUL-terminated strings.
+            match unsafe { req_str(name) } {
+                Ok(name) => interfaces.push(name.to_owned()),
+                Err(code) => return code,
+            }
+        }
+        r.remote.set_announce_interfaces(interfaces);
+        mxr_result_t::MXR_OK
+    })
+}
+
 /// Asks every device on the network to announce itself.
 ///
 /// # Safety

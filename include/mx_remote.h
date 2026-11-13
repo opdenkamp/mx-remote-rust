@@ -8883,6 +8883,28 @@ mxr_result_t mxr_bay_by_stream_ip(const mxr_remote_t *remote,
 mxr_result_t mxr_remote_update_config(const mxr_remote_t *remote, const char *local_ip);
 
 /**
+ * Replaces the interfaces, by name, this client only announces itself on,
+ * announcing on them at once when running. `count` zero, with `names` null
+ * or not, announces on none.
+ *
+ * Each hello, and the `CONTROLLER_STATE` hello of a `dedicated_controller`,
+ * goes there to both endpoints a unit has, from a socket that is never read;
+ * nothing arriving there is taken. The hello there leaves out
+ * `MXR_FEATURE_MANAGER`, `MXR_FEATURE_MESH_MASTER` and
+ * `MXR_FEATURE_OSD_SYNC`, which invite a unit to act on this client. Each
+ * interface is followed at its current address and skipped while it has
+ * none.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `names` is null or points at
+ * `count` NUL-terminated strings.
+ */
+mxr_result_t mxr_remote_set_announce_interfaces(const mxr_remote_t *remote,
+                                                const char *const *names,
+                                                size_t count);
+
+/**
  * Asks every device on the network to announce itself.
  *
  * # Safety

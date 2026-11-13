@@ -1,7 +1,7 @@
 // Author: Lars Op den Kamp (lars@opdenkamp-it.nl)
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
-//! The UDP sockets, and the only write to them.
+//! The UDP sockets, and the only writes to them.
 //!
 //! Each endpoint is one socket serving both directions: bound to its port and
 //! either joined to the discovery group or enabled for broadcast, so what this
@@ -315,10 +315,12 @@ impl Conn {
     /// Writes a frame to the wire, by the endpoints [`Endpoints`] names: the
     /// group is the first endpoint, and broadcast the second.
     ///
-    /// The only call to the sockets in this library. Every frame reaches it
-    /// through [`Tx::send`](super::tx::Tx::send), which is what makes the
-    /// protocol-floor check unskippable; a second write anywhere would bypass
-    /// that gate rather than merely duplicate this function.
+    /// The only write to the protocol endpoints in this library. Every frame
+    /// reaches it through [`Tx::send`](super::tx::Tx::send), which is what
+    /// makes the protocol-floor check unskippable; a second write anywhere
+    /// would bypass that gate rather than merely duplicate this function.
+    /// [`Announcer::send`] writes to sockets of its own, addressed to no
+    /// device and so behind no floor.
     ///
     /// With one endpoint bound, every frame goes by it.
     pub(super) fn send(&self, data: &[u8], endpoints: Endpoints) -> io::Result<usize> {
@@ -412,6 +414,77 @@ impl Conn {
     }
 }
 
+/// Where an [`Announcer`] sends a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reach {
+    /// This address, a group or a unicast target.
+    To(SocketAddrV4),
+    /// The directed broadcast address of the interface's current address,
+    /// on this port.
+    SubnetBroadcast(u16),
+}
+
+/// A send-only socket on an interface other than the selected one, which
+/// announces this client there and takes nothing in.
+///
+/// It follows the interface's current address: it rebinds when the address
+/// changes, and sends nothing while the interface has none. It is bound to
+/// an ephemeral port and never read, so nothing arriving on that interface
+/// reaches the registry: the endpoints on the protocol ports drop it, being
+/// confined to the selected interface.
+#[derive(Debug)]
+pub(crate) struct Announcer {
+    interface: String,
+    bound: Option<(Ipv4Addr, UdpSocket)>,
+}
+
+impl Announcer {
+    pub(crate) fn new(interface: String) -> Self {
+        Self {
+            interface,
+            bound: None,
+        }
+    }
+
+    /// The socket for `address`, rebound when the interface's address has
+    /// changed since the last send.
+    fn socket_for(&mut self, address: Ipv4Addr) -> io::Result<&UdpSocket> {
+        if self.bound.as_ref().map(|(at, _)| *at) != Some(address) {
+            self.bound = None;
+            let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+            socket.bind(&SockAddr::from(SocketAddrV4::new(address, 0)))?;
+            socket.set_broadcast(true)?;
+            socket.set_multicast_if_v4(&address)?;
+            socket.set_multicast_ttl_v4(MULTICAST_TTL)?;
+            self.bound = Some((address, socket.into()));
+        }
+        match &self.bound {
+            Some((_, socket)) => Ok(socket),
+            None => unreachable!("bound just above"),
+        }
+    }
+
+    /// Writes a frame to every place in `reach`, by this interface. Nothing,
+    /// and `Ok(0)`, while the interface has no address.
+    pub(super) fn send(&mut self, data: &[u8], reach: &[Reach]) -> io::Result<usize> {
+        let Some(address) = netif::address_of(&self.interface) else {
+            self.bound = None;
+            return Ok(0);
+        };
+        let broadcast = netif::broadcast_address(Some(address))?;
+        let socket = self.socket_for(address)?;
+        let mut sent = 0;
+        for r in reach {
+            let to = match *r {
+                Reach::To(to) => to,
+                Reach::SubnetBroadcast(port) => SocketAddrV4::new(broadcast, port),
+            };
+            sent = socket.send_to(data, to)?;
+        }
+        Ok(sent)
+    }
+}
+
 /// Pins the socket to one interface, for an interface that has no address to
 /// select it by.
 ///
@@ -464,5 +537,15 @@ mod tests {
             assert_eq!(to([255, 255, 255, 255]), Path::Broadcast);
             assert_eq!(path_to(None, endpoint), endpoint);
         }
+    }
+
+    /// An interface with no address is sent nothing, and that is no error:
+    /// it is how an interface waiting on DHCP looks.
+    #[test]
+    fn an_interface_without_an_address_is_skipped() {
+        let mut announcer = Announcer::new("mxr-absent0".to_owned());
+        let reach = [Reach::To(SocketAddrV4::new(MULTICAST_IP, MULTICAST_PORT))];
+        assert_eq!(announcer.send(b"ping", &reach).ok(), Some(0));
+        assert!(announcer.bound.is_none());
     }
 }

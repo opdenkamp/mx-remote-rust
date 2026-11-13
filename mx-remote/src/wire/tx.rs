@@ -6,7 +6,7 @@
 use std::fmt;
 use std::io;
 
-use super::conn::{Conn, Path};
+use super::conn::{Announcer, Conn, Path, Reach};
 use super::frame::build_frame;
 use super::opcode::{op, stamp_for, Opcode};
 use super::uid::DeviceUid;
@@ -206,6 +206,9 @@ pub(crate) type TxTap = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
 #[derive(Default)]
 pub(crate) struct Tx {
     conn: Option<std::sync::Arc<Conn>>,
+    /// The interfaces this client only announces itself on, and where there.
+    announcers: Vec<Announcer>,
+    reach: Vec<Reach>,
     /// Captures each frame that passes the gate. Frames are assembled inside
     /// the method that sends them and cannot be reached any other way, so this
     /// is how a test reads back what would go on the wire.
@@ -232,6 +235,34 @@ impl Tx {
     /// something else underneath it.
     pub(crate) fn conn(&self) -> Option<std::sync::Arc<Conn>> {
         self.conn.clone()
+    }
+
+    /// Replaces the interfaces this client only announces itself on, and
+    /// where a frame goes on each.
+    pub(crate) fn set_announcers(&mut self, announcers: Vec<Announcer>, reach: Vec<Reach>) {
+        self.announcers = announcers;
+        self.reach = reach;
+    }
+
+    /// Writes a frame to every interface this client only announces itself
+    /// on, returning how many took it. One that cannot does not stop the
+    /// others.
+    ///
+    /// For the hellos alone, which address no device and expect no answer.
+    pub(crate) fn announce(&mut self, uid: DeviceUid, opcode: Opcode, payload: &[u8]) -> usize {
+        if self.announcers.is_empty() {
+            return 0;
+        }
+        let Some(need) = stamp_for(opcode) else {
+            return 0;
+        };
+        let frame = build_frame(uid, opcode, need, payload);
+        let reach = &self.reach;
+        self.announcers
+            .iter_mut()
+            .map(|a| a.send(&frame, reach))
+            .filter(|sent| matches!(sent, Ok(n) if *n > 0))
+            .count()
     }
 
     #[cfg(test)]

@@ -2325,3 +2325,30 @@ fn the_mesh_module_calls_check_their_arguments_first() {
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };
 }
+
+/// Naming the interfaces only announced on refuses a list it cannot read,
+/// and takes an empty one, null or not.
+#[test]
+fn the_announce_interfaces_are_checked() {
+    let remote = client(c"abi-announce", c"00000028.00000000.00000000.000000af");
+    let uplink = c"mxr-absent0".as_ptr();
+    // SAFETY: a null handle is what is under test.
+    let rc = unsafe { mxr_remote_set_announce_interfaces(ptr::null(), &uplink, 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle; a null list of one is what is under test.
+    let rc = unsafe { mxr_remote_set_announce_interfaces(remote, ptr::null(), 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    let missing: *const c_char = ptr::null();
+    // SAFETY: a live handle; a null name is what is under test.
+    let rc = unsafe { mxr_remote_set_announce_interfaces(remote, &missing, 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle and one NUL-terminated name.
+    let rc = unsafe { mxr_remote_set_announce_interfaces(remote, &uplink, 1) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+    // SAFETY: a live handle and no names.
+    let rc = unsafe { mxr_remote_set_announce_interfaces(remote, ptr::null(), 0) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}

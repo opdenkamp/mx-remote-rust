@@ -25,7 +25,7 @@ mod tests;
 mod socket;
 
 use std::io;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -37,9 +37,9 @@ use crate::rx::{hello_source, process_frame_on};
 use crate::state::{Device, State, CONFIG_GRACE};
 use crate::types::*;
 use crate::wire::{
-    build_controller_hello, build_hello, op, Addressee, BayUid, Capture, Conn, DeviceFeature,
-    DeviceUid, FirmwareType, Opcode, Path, SendError, Tx, V2ipFpgaFeature, MULTICAST_PORT,
-    PROTOCOL_VERSION, VERSION,
+    build_controller_hello, build_hello, op, Addressee, Announcer, BayUid, Capture, Conn,
+    DeviceFeature, DeviceUid, FirmwareType, Opcode, Path, Reach, SendError, Tx, V2ipFpgaFeature,
+    MULTICAST_IP, MULTICAST_PORT, PROTOCOL_VERSION, VERSION,
 };
 
 pub use control::ControlError;
@@ -84,6 +84,24 @@ fn hello_due_on_broadcast(last: Option<Instant>, now: Instant) -> bool {
     last.map_or(true, |last| {
         now.saturating_duration_since(last) >= HELLO_BROADCAST
     })
+}
+
+/// The features of the hello on an interface this client only announces
+/// itself on ([`Config::announce_interfaces`]): this client's own, less each
+/// that invites a unit there to act on it.
+///
+/// - [`MANAGER`](DeviceFeature::MANAGER): a unit takes a promotion to
+///   controller from a manager, as from its own controller.
+/// - [`MESH_MASTER`](DeviceFeature::MESH_MASTER): a unit joining a mesh joins
+///   the sender of a hello with it.
+/// - [`OSD_SYNC`](DeviceFeature::OSD_SYNC): a source sends its overlay syncs
+///   to every device with it, in whatever mesh.
+///
+/// [`MESH_MEMBER`](DeviceFeature::MESH_MEMBER) stays: without it a unit takes
+/// this client for a unit free to join its mesh.
+fn announced_only(features: DeviceFeature) -> DeviceFeature {
+    let invites = DeviceFeature::MANAGER | DeviceFeature::MESH_MASTER | DeviceFeature::OSD_SYNC;
+    DeviceFeature::from_bits(features.bits() & !invites.bits())
 }
 
 /// Shortest gap between two discovers to every device.
@@ -158,6 +176,20 @@ pub struct Config {
     /// An interface with no address of its own - a tagged VLAN - can only be
     /// named this way, and only on Linux.
     pub interface: Option<String>,
+    /// Interfaces, by name, this client only announces itself on: each hello,
+    /// and the `CONTROLLER_STATE` hello of a [`Config::dedicated_controller`],
+    /// goes there to both endpoints a unit has, from a socket that is never
+    /// read. Nothing arriving there is taken.
+    ///
+    /// The hello there leaves out what invites a unit to act on this client:
+    /// [`MANAGER`](DeviceFeature::MANAGER),
+    /// [`MESH_MASTER`](DeviceFeature::MESH_MASTER) and
+    /// [`OSD_SYNC`](DeviceFeature::OSD_SYNC).
+    ///
+    /// Each follows its interface's current address and is skipped while it
+    /// has none. Naming the selected interface sends each hello there twice.
+    /// [`Remote::set_announce_interfaces`] changes them while running.
+    pub announce_interfaces: Vec<String>,
     /// The name this client advertises. Unset means `MXR Rust`.
     pub name: Option<String>,
     /// The serial number this client advertises, at most 15 bytes. Unset
@@ -245,6 +277,7 @@ impl Default for Config {
             capture_hello_mac: false,
             dedicated_controller: false,
             osd_sync: false,
+            announce_interfaces: Vec::new(),
         }
     }
 }
@@ -296,6 +329,7 @@ struct Network {
     port: Option<u16>,
     local_ip: Option<Ipv4Addr>,
     interface: Option<String>,
+    announce_interfaces: Vec<String>,
 }
 
 /// Which endpoints a client opens.
@@ -326,6 +360,28 @@ impl Network {
             None => self.local_ip,
         }
         .unwrap_or(Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// A send-only socket on each interface this client only announces itself
+    /// on, and where a frame goes there: the endpoints [`Self::open`] opens.
+    fn announcers(&self) -> (Vec<Announcer>, Vec<Reach>) {
+        let reach = match self.plan() {
+            Plan::One(ip, port) if ip.is_multicast() => {
+                vec![Reach::To(SocketAddrV4::new(ip, port))]
+            }
+            Plan::One(_, port) => vec![Reach::SubnetBroadcast(port)],
+            Plan::Both => vec![
+                Reach::To(SocketAddrV4::new(MULTICAST_IP, MULTICAST_PORT)),
+                Reach::SubnetBroadcast(crate::wire::BROADCAST_PORT),
+            ],
+        };
+        let announcers = self
+            .announce_interfaces
+            .iter()
+            .cloned()
+            .map(Announcer::new)
+            .collect();
+        (announcers, reach)
     }
 
     fn open(&self) -> io::Result<Conn> {
@@ -392,6 +448,7 @@ impl Remote {
                     port: config.port,
                     local_ip: config.local_ip,
                     interface: config.interface,
+                    announce_interfaces: config.announce_interfaces,
                 }),
                 osd: Mutex::new(OsdSender::new()),
                 osd_queued: Condvar::new(),
@@ -417,8 +474,15 @@ impl Remote {
         } else {
             None
         };
-        let conn = lock(&self.shared.network).open()?;
-        lock(&self.shared.tx).set_conn(Some(conn));
+        let (conn, (announcers, reach)) = {
+            let network = lock(&self.shared.network);
+            (network.open()?, network.announcers())
+        };
+        {
+            let mut tx = lock(&self.shared.tx);
+            tx.set_conn(Some(conn));
+            tx.set_announcers(announcers, reach);
+        }
         lock(&self.shared.state).endpoints_opened = Some(Instant::now());
         // The first hello on new sockets goes to both endpoints.
         *lock(&self.shared.hello_on_broadcast) = None;
@@ -443,7 +507,9 @@ impl Remote {
         // Only once no thread can still be reading from it: a descriptor
         // released while another thread is parked on it can be reissued to
         // something else before that thread returns.
-        lock(&self.shared.tx).set_conn(None);
+        let mut tx = lock(&self.shared.tx);
+        tx.set_conn(None);
+        tx.set_announcers(Vec::new(), Vec::new());
     }
 
     fn spawn_workers(&self, capture: Option<Capture>) -> io::Result<()> {
@@ -927,6 +993,28 @@ impl Remote {
         self.shared.move_logo_server(network.listen_address())
     }
 
+    /// Replaces [`Config::announce_interfaces`], announcing on the new ones
+    /// at once when running.
+    pub fn set_announce_interfaces(&self, interfaces: Vec<String>) {
+        let (announcers, reach) = {
+            let mut network = lock(&self.shared.network);
+            network.announce_interfaces = interfaces;
+            network.announcers()
+        };
+        let running = {
+            let mut tx = lock(&self.shared.tx);
+            let running = tx.conn().is_some();
+            if running {
+                tx.set_announcers(announcers, reach);
+            }
+            running
+        };
+        if running {
+            lock(&self.shared.own_controller).sent = None;
+            self.shared.announce();
+        }
+    }
+
     /// Asks every device on the network to announce itself.
     pub fn discover(&self) -> Result<(), SendError> {
         self.shared.discover()
@@ -1126,6 +1214,14 @@ impl Shared {
         if on_broadcast {
             *lock(&self.hello_on_broadcast) = Some(now);
         }
+        let only_announced = build_hello(
+            PROTOCOL_VERSION,
+            &self.name,
+            &self.serial,
+            &self.version,
+            announced_only(self.features()).bits(),
+        );
+        lock(&self.tx).announce(self.uid, op::SYS_HELLO, &only_announced);
         match sent {
             Ok(n) if n > 0 => lock(&self.schedule).announced(now),
             _ => {}
@@ -1154,6 +1250,7 @@ impl Shared {
             build_controller_hello(&own.hello())
         };
         let _ = self.send(&Addressee::Broadcast, op::CONTROLLER_STATE, &payload);
+        lock(&self.tx).announce(self.uid, op::CONTROLLER_STATE, &payload);
     }
 
     /// The features this client announces as of now.

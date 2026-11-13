@@ -53,7 +53,7 @@ pub use uid::{BayUid, DeviceUid, UidParseError};
 pub(crate) use bayconfig::{parse_bay_config, BayConfig, BAY_CONFIG_SIZE};
 #[cfg(target_os = "linux")]
 pub(crate) use conn::arrived_on;
-pub(crate) use conn::{Conn, Path};
+pub(crate) use conn::{Announcer, Conn, Path, Reach};
 pub(crate) use controller::*;
 pub(crate) use frame::HEADER_LEN;
 pub(crate) use frame::{cstr, Frame, DEVICE_NAME_LEN, FW_VERSION_LEN};
@@ -70,7 +70,7 @@ pub(crate) use uid::UID_LEN;
 // from a release build rather than carried there behind an allow.
 // Read only by the socket tests, which are Linux-only.
 #[cfg(all(test, target_os = "linux"))]
-pub(crate) use netif::default_local_ip;
+pub(crate) use netif::{default_local_ip, name_holding};
 #[cfg(test)]
 pub(crate) use opcode::protocol_for;
 #[cfg(test)]

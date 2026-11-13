@@ -74,6 +74,15 @@ const PATHS: Scratch = Scratch {
 /// group.
 const ARRIVAL_PORT: u16 = 18820;
 
+const ANNOUNCED_ONLY: Scratch = Scratch {
+    group: Ipv4Addr::new(239, 255, 77, 92),
+    port: 18823,
+};
+const ANNOUNCED_LATER: Scratch = Scratch {
+    group: Ipv4Addr::new(239, 255, 77, 91),
+    port: 18824,
+};
+
 /// How long a test waits for a datagram it expects to arrive.
 const DELIVERY: Duration = Duration::from_secs(2);
 
@@ -502,4 +511,137 @@ fn a_datagram_on_another_interface_is_dropped() {
         !arrives(Some(other)),
         "taken from {other}'s interface by way of lo"
     );
+}
+
+/// An interface this client only announces itself on gets the hello, less
+/// the features that invite a unit to act on it, and the `CONTROLLER_STATE`
+/// hello, both from a socket of its own rather than the endpoint on the
+/// protocol port.
+///
+/// The announced interface is the one the endpoint is on too, so the same
+/// listener hears both, told apart by the port they come from.
+#[test]
+fn an_interface_only_announced_on_gets_the_hellos_alone() {
+    let Some(probe) = Probe::open(ANNOUNCED_ONLY) else {
+        return skipped("the probe cannot be pinned to a multicast interface");
+    };
+    if !probe.host_loops_back() {
+        return skipped("no multicast loopback delivery");
+    }
+    let Some(interface) = crate::wire::default_local_ip()
+        .ok()
+        .and_then(crate::wire::name_holding)
+    else {
+        return skipped("the probe's interface has no name");
+    };
+
+    let remote = Remote::new(
+        Config {
+            uid: Some(uid_n(211)),
+            target_ip: Some(ANNOUNCED_ONLY.group),
+            port: Some(ANNOUNCED_ONLY.port),
+            osd_sync: true,
+            dedicated_controller: true,
+            announce_interfaces: vec![interface],
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    remote
+        .start()
+        .expect("the client could not open its socket");
+
+    let features_of = |frame: &[u8]| {
+        frame
+            .get(HEADER_LEN + 50..HEADER_LEN + 54)
+            .and_then(|b| <[u8; 4]>::try_from(b).ok())
+            .map(|b| DeviceFeature::from_bits(u32::from_le_bytes(b)))
+    };
+    let mut endpoint_hello = None;
+    let mut announced_hello = None;
+    let mut announced_controller = false;
+    let mut buf = vec![0u8; 2048];
+    let deadline = Instant::now() + DELIVERY;
+    while Instant::now() < deadline
+        && !(endpoint_hello.is_some() && announced_hello.is_some() && announced_controller)
+    {
+        let Ok((n, from)) = probe.listener.recv_from(&mut buf) else {
+            break;
+        };
+        let frame = &buf[..n];
+        let by_endpoint = from.port() == ANNOUNCED_ONLY.port;
+        match opcode_of(frame) {
+            Some(o) if o == op::SYS_HELLO.0 && by_endpoint => endpoint_hello = features_of(frame),
+            Some(o) if o == op::SYS_HELLO.0 => announced_hello = features_of(frame),
+            Some(o) if o == op::CONTROLLER_STATE.0 && !by_endpoint => announced_controller = true,
+            _ => {}
+        }
+    }
+    remote.close();
+
+    let endpoint = endpoint_hello.expect("the endpoint's own hello arrived");
+    assert!(
+        endpoint.has(DeviceFeature::OSD_SYNC) && endpoint.has(DeviceFeature::MANAGER),
+        "the endpoint's hello carries what is left out elsewhere: {endpoint}"
+    );
+    let announced = announced_hello.expect("no hello from the announcing socket");
+    assert!(
+        !announced.has(DeviceFeature::OSD_SYNC) && !announced.has(DeviceFeature::MANAGER),
+        "the announced hello invites units to act on this client: {announced}"
+    );
+    assert!(
+        announced.has(DeviceFeature::CONFIG_INITIALISED),
+        "the announced hello lost what it should keep: {announced}"
+    );
+    assert!(
+        announced_controller,
+        "no CONTROLLER_STATE hello from the announcing socket"
+    );
+}
+
+/// Interfaces named while running are announced on at once.
+#[test]
+fn an_interface_named_while_running_is_announced_on() {
+    let Some(probe) = Probe::open(ANNOUNCED_LATER) else {
+        return skipped("the probe cannot be pinned to a multicast interface");
+    };
+    if !probe.host_loops_back() {
+        return skipped("no multicast loopback delivery");
+    }
+    let Some(interface) = crate::wire::default_local_ip()
+        .ok()
+        .and_then(crate::wire::name_holding)
+    else {
+        return skipped("the probe's interface has no name");
+    };
+
+    let remote = Remote::new(
+        Config {
+            uid: Some(uid_n(212)),
+            target_ip: Some(ANNOUNCED_LATER.group),
+            port: Some(ANNOUNCED_LATER.port),
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    remote
+        .start()
+        .expect("the client could not open its socket");
+    remote.set_announce_interfaces(vec![interface]);
+
+    let mut buf = vec![0u8; 2048];
+    let mut announced = false;
+    let deadline = Instant::now() + DELIVERY;
+    while Instant::now() < deadline && !announced {
+        let Ok((n, from)) = probe.listener.recv_from(&mut buf) else {
+            break;
+        };
+        announced =
+            from.port() != ANNOUNCED_LATER.port && opcode_of(&buf[..n]) == Some(op::SYS_HELLO.0);
+    }
+    remote.close();
+
+    assert!(announced, "no hello from the announcing socket");
 }
