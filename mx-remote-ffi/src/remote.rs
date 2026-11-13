@@ -423,10 +423,8 @@ pub unsafe extern "C" fn mxr_remote_set_mesh_bays_mapped(
 /// announces as `MXR_FEATURE_SETUP_COMPLETED`, as a unit's does. A change is
 /// announced at once.
 ///
-/// On a mesh controller it is what a member that missed
-/// `mxr_set_mesh_setup_completed()`, being offline at the time or replaced
-/// since, catches up from. A controller marking its mesh's setup completed
-/// sets both.
+/// It marks only this client. `mxr_set_mesh_setup_completed()` marks the
+/// units that hear it.
 ///
 /// # Safety
 ///

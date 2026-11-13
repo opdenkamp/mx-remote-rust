@@ -545,10 +545,8 @@ impl Remote {
     /// announces as [`DeviceFeature::SETUP_COMPLETED`], as a unit's does. A
     /// change is announced at once.
     ///
-    /// On a mesh controller it is what a member that missed
-    /// [`Remote::set_mesh_setup_completed`], being offline at the time or
-    /// replaced since, catches up from. A controller marking its mesh's setup
-    /// completed sets both.
+    /// It marks only this client. [`Remote::set_mesh_setup_completed`] marks
+    /// the units that hear it.
     pub fn set_setup_completed(&self, completed: bool) {
         let before = self.shared.features();
         self.shared
