@@ -7114,6 +7114,39 @@ fn kept_settings_sent_of_another_unit_are_a_copy() {
     );
 }
 
+/// One member's setup is marked by a 0x57 SETUP naming it, the mark in the
+/// length field, sent only to a unit at 0x33 and only to one heard from.
+#[test]
+fn a_member_s_setup_is_marked_by_a_frame_naming_it() {
+    let f = Fixture::new();
+    f.connect();
+    let (new, old) = (uid_n(0x31), uid_n(0x32));
+    mesh_unit(&f, new, 0x33);
+    mesh_unit(&f, old, 0x32);
+    for (completed, mark) in [(true, 1u8), (false, 0)] {
+        f.tap.clear();
+        f.remote
+            .set_member_setup_completed(new, completed)
+            .expect("sent");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        assert_eq!(&frame[20..22], &[0x57, 0x00], "the opcode");
+        assert_eq!(&frame[2..4], &0x33u16.to_le_bytes(), "the stamp");
+        let p = &frame[HEADER_LEN..];
+        assert_eq!(p.len(), 32, "the header alone");
+        assert_eq!(
+            &p[..16],
+            &[1, 9, 0, 0, 0, 0, mark, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "completed {completed}"
+        );
+        assert_eq!(&p[16..], new.as_bytes(), "the member");
+    }
+    assert!(refused(&f.remote.set_member_setup_completed(old, true)));
+    assert!(matches!(
+        f.remote.set_member_setup_completed(uid_n(0x33), true),
+        Err(ControlError::UnknownDevice(_))
+    ));
+}
+
 #[test]
 fn a_numbering_is_asked_of_a_unit_at_0x33() {
     let f = Fixture::new();

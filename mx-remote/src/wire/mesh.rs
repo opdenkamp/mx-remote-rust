@@ -71,6 +71,7 @@ pub(crate) mod config_kind {
     pub(crate) const SET: u8 = 3;
     pub(crate) const BAYS_REQUEST: u8 = 4;
     pub(crate) const BAYS: u8 = 5;
+    pub(crate) const SETUP: u8 = 9;
 }
 
 /// The flag at byte 2 of a dump: the settings are a copy the sender keeps of
@@ -262,6 +263,12 @@ pub(crate) const MESH_BAYS_PER_FRAME: usize = 42;
 
 /// The mode byte of an input entry; an output's is 0.
 const MESH_BAYS_INPUT: u8 = 1;
+
+/// Builds a `MESH_CONFIG` setup frame, which marks member `member`'s setup
+/// completed or not: the header alone, the mark in the length field.
+pub(crate) fn build_mesh_setup(member: DeviceUid, completed: bool) -> Vec<u8> {
+    config_header(config_kind::SETUP, 0, 0, u16::from(completed), 0, member)
+}
 
 /// Builds a `MESH_CONFIG` bays request for the numbering of controller
 /// `subject`: the header alone.

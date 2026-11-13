@@ -591,6 +591,41 @@ impl From<&MeshBay> for mxr_mesh_bay_t {
     }
 }
 
+/// Marks the setup of mesh member `member` alone completed, or not, as its
+/// controller does: `mxr_set_mesh_setup_completed()` marks every unit that
+/// hears it, as its frame names no unit.
+///
+/// A member takes it only from its own controller, and only one whose mesh
+/// module knows it; any other unit drops it unread. Nothing reports it taken
+/// except the member's next hello, which carries
+/// `MXR_FEATURE_SETUP_COMPLETED` as marked.
+///
+/// A controller marking its mesh's setup completed marks the members of that
+/// moment, and sends this to one that missed it: offline at the time, or
+/// still booting without its controller known or its module loaded, so it is
+/// sent again until the hello shows it. A replacement takes the mark of the
+/// unit it replaced. A member added later is marked only with its own setup.
+/// Which members carry a mark is the caller's to keep.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_set_member_setup_completed(
+    remote: *const mxr_remote_t,
+    member: mxr_uid_t,
+    completed: bool,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(
+            r.remote
+                .set_member_setup_completed(member.into(), completed),
+        )
+    })
+}
+
 /// Asks `holder` for the numbering of controller `subject`: which unit owns
 /// each of its bays. A controller answers for itself; a member with the copy
 /// it keeps of its controller's, also once that controller is offline.

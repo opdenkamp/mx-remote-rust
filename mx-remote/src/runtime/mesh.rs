@@ -27,9 +27,9 @@ use crate::types::{
 use crate::wire::{
     build_mesh_bays_pages, build_mesh_bays_request, build_mesh_config_hello,
     build_mesh_config_pages, build_mesh_config_request, build_mesh_replace_query,
-    build_mesh_replace_target, build_mesh_replace_units, config_kind, encode_mesh_bays,
-    encode_mesh_settings, op, replace_kind, Addressee, DeviceFeature, DeviceUid, MeshReplaceResult,
-    MESH_CONFIG_FLAG_COPY,
+    build_mesh_replace_target, build_mesh_replace_units, build_mesh_setup, config_kind,
+    encode_mesh_bays, encode_mesh_settings, op, replace_kind, Addressee, DeviceFeature, DeviceUid,
+    MeshReplaceResult, MESH_CONFIG_FLAG_COPY,
 };
 
 use super::control::{device_of, Command, ControlError};
@@ -355,6 +355,39 @@ impl Remote {
                     .map(|p| Command::new(addressee.clone(), op::MESH_CONFIG, p))
                     .collect(),
             )
+        })
+    }
+
+    // ---- one member's setup ----
+
+    /// Marks the setup of mesh member `member` alone completed, or not, as
+    /// its controller does: [`Remote::set_mesh_setup_completed`] marks every
+    /// unit that hears it, as its frame names no unit.
+    ///
+    /// A member takes it only from its own controller, and only one whose
+    /// mesh module knows it; any other unit drops it unread. Nothing reports
+    /// it taken except the member's next hello, which carries
+    /// [`DeviceFeature::SETUP_COMPLETED`] as marked.
+    ///
+    /// A controller marking its mesh's setup completed marks the members of
+    /// that moment, and sends this to one that missed it: offline at the
+    /// time, or still booting without its controller known or its module
+    /// loaded, so it is sent again until the hello shows it. A replacement
+    /// takes the mark of the unit it replaced. A member added later is
+    /// marked only with its own setup. Which members carry a mark is the
+    /// caller's to keep.
+    pub fn set_member_setup_completed(
+        &self,
+        member: DeviceUid,
+        completed: bool,
+    ) -> Result<(), ControlError> {
+        self.shared.command(move |state| {
+            let d = device_of(state, member)?;
+            Ok(Command::new(
+                Addressee::direct(d, d.heard_path(Instant::now())),
+                op::MESH_CONFIG,
+                build_mesh_setup(member, completed),
+            ))
         })
     }
 
