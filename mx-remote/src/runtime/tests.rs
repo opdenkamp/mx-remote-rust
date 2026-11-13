@@ -1353,6 +1353,39 @@ fn a_hello_is_captured_with_its_source_address() {
     assert_eq!(seen(&remote), None, "kept for a forgotten device");
 }
 
+/// A hello captured on an interface other than the one the endpoints take
+/// datagrams from is left alone, and one on that interface is read.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_hello_captured_on_another_interface_is_ignored() {
+    let (remote, _) = client(247);
+    let peer = uid_n(248);
+    let mac = [0x02, 0x1A, 0x2B, 0x3C, 0x4D, 0x5F];
+    let conn = Conn::open(
+        Ipv4Addr::LOCALHOST,
+        CAPTURE_SCRATCH_PORT,
+        Some(Ipv4Addr::LOCALHOST),
+        None,
+    )
+    .expect("a loopback socket could not be opened");
+    let lo = conn.arrival().expect("loopback is selected");
+    lock(&remote.shared.tx).set_conn(Some(conn));
+    let hello = hello_datagram(peer, "Peer", "MA0002");
+    let frame = crate::testing::ethernet(mac, CAPTURE_SCRATCH_PORT, &hello);
+    remote.shared.process_datagram(&hello, FROM);
+    let seen = |remote: &Remote| remote.device(peer).expect("registered").mac;
+
+    remote.shared.note_link_frame(&frame, lo + 1);
+    assert_eq!(seen(&remote), None, "taken from another interface");
+    remote.shared.note_link_frame(&frame, lo);
+    assert_eq!(seen(&remote), Some(MacAddress(mac)));
+}
+
+/// The port [`a_hello_captured_on_another_interface_is_ignored`] binds,
+/// which no other test sends to.
+#[cfg(target_os = "linux")]
+const CAPTURE_SCRATCH_PORT: u16 = 18821;
+
 /// A client asked to capture what it cannot fails to start, and opens no
 /// endpoint first.
 #[cfg(not(target_os = "linux"))]

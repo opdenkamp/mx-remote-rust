@@ -101,7 +101,8 @@ pub(crate) struct Capture {
 impl Capture {
     /// Opens a packet socket taking every IPv4 frame on every interface.
     ///
-    /// It reads, and never sends. Each read waits at most as long as a UDP
+    /// Each frame comes with the interface it was taken on, so a client with
+    /// one selected can drop the rest. It reads, and never sends. Each read waits at most as long as a UDP
     /// endpoint's does, so the reading thread can notice it is shutting down.
     pub(crate) fn open() -> io::Result<Self> {
         use socket2::{Domain, Protocol, Socket, Type};
@@ -112,20 +113,29 @@ impl Capture {
         Ok(Self { socket })
     }
 
-    /// Waits for one frame. `Ok(None)` is the timeout expiring.
-    pub(crate) fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<&'a [u8]>> {
-        use std::io::Read;
-        match (&self.socket).read(buf) {
-            Ok(n) => Ok(buf.get(..n)),
-            Err(e)
+    /// Waits for one frame, and reports the index of the interface it was
+    /// taken on. `Ok(None)` is the timeout expiring.
+    pub(crate) fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<(&'a [u8], u32)>> {
+        use nix::sys::socket::{recvfrom, LinkAddr};
+        use std::os::fd::AsRawFd;
+        match recvfrom::<LinkAddr>(self.socket.as_raw_fd(), buf) {
+            Ok((n, from)) => {
+                let index = from
+                    .and_then(|a| u32::try_from(a.ifindex()).ok())
+                    .unwrap_or(0);
+                Ok(buf.get(..n).map(|frame| (frame, index)))
+            }
+            Err(e) => {
+                let e = io::Error::from(e);
                 if matches!(
                     e.kind(),
                     io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                Ok(None)
+                ) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
             }
-            Err(e) => Err(e),
         }
     }
 }
@@ -146,7 +156,7 @@ impl Capture {
     }
 
     /// Never called, since no capture opens.
-    pub(crate) fn recv<'a>(&self, _buf: &'a mut [u8]) -> io::Result<Option<&'a [u8]>> {
+    pub(crate) fn recv<'a>(&self, _buf: &'a mut [u8]) -> io::Result<Option<(&'a [u8], u32)>> {
         Ok(None)
     }
 }

@@ -145,9 +145,15 @@ pub struct Config {
     /// periodic broadcasts still arrive, so discovery looks healthy while
     /// every request this client sends leaves by the wrong NIC and is never
     /// answered.
+    ///
+    /// On Linux, a selected interface is the only one datagrams and
+    /// [`Config::capture_hello_mac`] frames are taken from, so a device
+    /// reachable only by another interface stays unknown. Elsewhere,
+    /// broadcasts on every interface still arrive. [`Remote::start`] fails
+    /// when no interface holds the address.
     pub local_ip: Option<Ipv4Addr>,
     /// Selects the interface by name, taking precedence over
-    /// [`Config::local_ip`].
+    /// [`Config::local_ip`], and confining what is taken as it does.
     ///
     /// An interface with no address of its own - a tagged VLAN - can only be
     /// named this way, and only on Linux.
@@ -975,12 +981,19 @@ impl Shared {
         }
     }
 
-    /// Takes one frame captured below the IP stack, against the ports this
-    /// client's endpoints are bound to.
-    fn note_link_frame(&self, frame: &[u8]) {
+    /// Takes one frame captured below the IP stack on interface `index`,
+    /// against the ports this client's endpoints are bound to, and only from
+    /// the interface they take datagrams from.
+    fn note_link_frame(&self, frame: &[u8], index: u32) {
         let Some(conn) = lock(&self.tx).conn() else {
             return;
         };
+        #[cfg(target_os = "linux")]
+        if !crate::wire::arrived_on(conn.arrival(), index) {
+            return;
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = index;
         let ports: Vec<u16> = std::iter::once(conn.target())
             .chain(conn.secondary_target())
             .map(|target| target.port())
@@ -994,7 +1007,7 @@ impl Shared {
         let mut buf = vec![0u8; RECV_BUFFER];
         while !self.closing.load(Ordering::SeqCst) {
             match capture.recv(&mut buf) {
-                Ok(Some(frame)) => self.note_link_frame(frame),
+                Ok(Some((frame, index))) => self.note_link_frame(frame, index),
                 Ok(None) => {}
                 Err(_) => break,
             }

@@ -70,6 +70,10 @@ const PATHS: Scratch = Scratch {
     port: 18818,
 };
 
+/// The port of the arrival test, which sends unicast only and so needs no
+/// group.
+const ARRIVAL_PORT: u16 = 18820;
+
 /// How long a test waits for a datagram it expects to arrive.
 const DELIVERY: Duration = Duration::from_secs(2);
 
@@ -454,4 +458,48 @@ fn a_datagram_s_path_is_where_it_was_sent() {
 
     assert!(probe.send(b"multicast"));
     assert_eq!(path_of(b"multicast"), Some(Path::Multicast));
+}
+
+/// A selected interface is the only one datagrams are taken from: one that
+/// arrived on another is dropped, though the socket is bound to every address.
+///
+/// The datagram goes to 127.0.0.1, so it arrives on `lo`. An endpoint on `lo`
+/// takes it, and one on the host's other interface does not; an endpoint on
+/// no interface in particular takes it first, which proves the host delivers
+/// it to that port at all.
+#[test]
+fn a_datagram_on_another_interface_is_dropped() {
+    let Ok(other) = crate::wire::default_local_ip() else {
+        return skipped("the host has no interface besides loopback");
+    };
+    let arrives = |local_ip: Option<Ipv4Addr>| {
+        let c = Conn::open(Ipv4Addr::LOCALHOST, ARRIVAL_PORT, local_ip, None)
+            .expect("the arrival port binds");
+        let sender = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback socket binds");
+        sender
+            .send_to(PING, (Ipv4Addr::LOCALHOST, ARRIVAL_PORT))
+            .expect("a loopback send goes");
+        let mut buf = vec![0u8; 2048];
+        let deadline = Instant::now() + DELIVERY;
+        while Instant::now() < deadline {
+            if let Ok(Some((data, _, _))) = c.recv(&mut buf) {
+                if data == PING {
+                    return true;
+                }
+            }
+        }
+        false
+    };
+
+    if !arrives(None) {
+        return skipped("the host does not deliver to the arrival port");
+    }
+    assert!(
+        arrives(Some(Ipv4Addr::LOCALHOST)),
+        "dropped on its own interface"
+    );
+    assert!(
+        !arrives(Some(other)),
+        "taken from {other}'s interface by way of lo"
+    );
 }

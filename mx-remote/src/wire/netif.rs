@@ -17,10 +17,17 @@ struct Interface {
 
 /// Every non-loopback IPv4 address the host has.
 fn interfaces() -> Vec<Interface> {
+    every_interface()
+        .into_iter()
+        .filter(|i| !i.address.is_loopback())
+        .collect()
+}
+
+/// Every IPv4 address the host has, loopback included.
+fn every_interface() -> Vec<Interface> {
     if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
-        .filter(|i| !i.is_loopback())
         .filter_map(|i| match i.addr {
             if_addrs::IfAddr::V4(ref v4) => Some(Interface {
                 name: i.name.clone(),
@@ -101,4 +108,19 @@ pub(crate) fn address_of(name: &str) -> Option<Ipv4Addr> {
         .into_iter()
         .find(|i| i.name == name)
         .map(|i| i.address)
+}
+
+/// The kernel index of the interface holding `address`, loopback included.
+#[cfg(target_os = "linux")]
+pub(crate) fn index_holding(address: Ipv4Addr) -> io::Result<u32> {
+    every_interface()
+        .into_iter()
+        .find(|i| i.address == address)
+        .and_then(|i| i.index)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("no interface holds {address}"),
+            )
+        })
 }

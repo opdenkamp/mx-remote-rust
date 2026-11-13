@@ -51,6 +51,8 @@ pub use tx::SendError;
 pub use uid::{BayUid, DeviceUid, UidParseError};
 
 pub(crate) use bayconfig::{parse_bay_config, BayConfig, BAY_CONFIG_SIZE};
+#[cfg(target_os = "linux")]
+pub(crate) use conn::arrived_on;
 pub(crate) use conn::{Conn, Path};
 pub(crate) use controller::*;
 pub(crate) use frame::HEADER_LEN;

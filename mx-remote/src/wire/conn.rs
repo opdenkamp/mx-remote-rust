@@ -60,6 +60,10 @@ struct Endpoint {
     socket: UdpSocket,
     target: SocketAddrV4,
     path: Path,
+    /// The index of the one interface a datagram is taken from, `None` for
+    /// any. Always `None` off Linux, where nothing reads it.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    arrival: Option<u32>,
 }
 
 /// The bound endpoints: the one frames go to first, and in dual mode the
@@ -91,8 +95,43 @@ fn egress_for(local_ip: Option<Ipv4Addr>, interface: Option<&str>) -> io::Result
     })
 }
 
+/// The index of the interface the caller selected, by name or by address,
+/// which is the only one datagrams are taken from. `None` when neither is
+/// given, and off Linux, where nothing reports the interface a datagram
+/// arrived on.
+///
+/// The socket is bound to every address, so without this a multi-homed host
+/// hands it every broadcast and group frame on every other interface too.
+/// Filtering on the arrival interface needs no privilege, where
+/// `SO_BINDTODEVICE` needs `CAP_NET_RAW` on kernels before 5.7.
+#[cfg(target_os = "linux")]
+fn arrival_for(local_ip: Option<Ipv4Addr>, interface: Option<&str>) -> io::Result<Option<u32>> {
+    match (interface, local_ip) {
+        (Some(name), _) => netif::index_of(name).map(Some),
+        (None, Some(ip)) => netif::index_holding(ip).map(Some),
+        (None, None) => Ok(None),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn arrival_for(_local_ip: Option<Ipv4Addr>, _interface: Option<&str>) -> io::Result<Option<u32>> {
+    Ok(None)
+}
+
+/// Whether a datagram that arrived on interface `index` is taken by an
+/// endpoint taking only `arrival`.
+#[cfg(target_os = "linux")]
+pub(crate) fn arrived_on(arrival: Option<u32>, index: u32) -> bool {
+    arrival.map_or(true, |want| want == index)
+}
+
 impl Endpoint {
-    fn open(target: Ipv4Addr, port: u16, egress: &Egress) -> io::Result<Self> {
+    fn open(
+        target: Ipv4Addr,
+        port: u16,
+        egress: &Egress,
+        arrival: Option<u32>,
+    ) -> io::Result<Self> {
         let multicast = target.is_multicast();
         let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         // Every client on the host must get its own copy of each datagram.
@@ -139,6 +178,7 @@ impl Endpoint {
             } else {
                 Path::Broadcast
             },
+            arrival,
         })
     }
 
@@ -159,6 +199,9 @@ impl Endpoint {
 
     /// Waits for a datagram, and reports the path it came by, judged by the
     /// address it was sent to as `IP_PKTINFO` gives it.
+    ///
+    /// A datagram that arrived on an interface other than the selected one is
+    /// dropped, and reported as `Ok(None)` as a timeout is.
     #[cfg(target_os = "linux")]
     fn recv<'a>(&self, buf: &'a mut [u8]) -> io::Result<Option<Received<'a>>> {
         use nix::sys::socket::{recvmsg, ControlMessageOwned, MsgFlags, SockaddrIn};
@@ -166,22 +209,23 @@ impl Endpoint {
 
         let mut control = nix::cmsg_space!(nix::libc::in_pktinfo);
         let mut iov = [io::IoSliceMut::new(buf)];
-        let (n, from, destination) = match recvmsg::<SockaddrIn>(
+        let (n, from, info) = match recvmsg::<SockaddrIn>(
             self.socket.as_raw_fd(),
             &mut iov,
             Some(&mut control),
             MsgFlags::empty(),
         ) {
             Ok(msg) => {
-                let destination = msg.cmsgs().ok().and_then(|mut c| {
+                let info = msg.cmsgs().ok().and_then(|mut c| {
                     c.find_map(|m| match m {
-                        ControlMessageOwned::Ipv4PacketInfo(info) => {
-                            Some(Ipv4Addr::from(u32::from_be(info.ipi_addr.s_addr)))
-                        }
+                        ControlMessageOwned::Ipv4PacketInfo(info) => Some((
+                            Ipv4Addr::from(u32::from_be(info.ipi_addr.s_addr)),
+                            u32::try_from(info.ipi_ifindex).unwrap_or(0),
+                        )),
                         _ => None,
                     })
                 });
-                (msg.bytes, msg.address.map(|a| a.ip()), destination)
+                (msg.bytes, msg.address.map(|a| a.ip()), info)
             }
             Err(e) => {
                 let e = io::Error::from(e);
@@ -191,6 +235,12 @@ impl Endpoint {
         let Some(from) = from else {
             return Ok(None);
         };
+        // A selected interface takes nothing whose arrival is unknown.
+        let arrived = info.map_or(0, |(_, index)| index);
+        if !arrived_on(self.arrival, arrived) {
+            return Ok(None);
+        }
+        let destination = info.map(|(ip, _)| ip);
         Ok(buf
             .get(..n)
             .map(|data| (data, from, path_to(destination, self.path))))
@@ -221,8 +271,9 @@ impl Conn {
     ///
     /// `interface` selects the interface by name and takes precedence over
     /// `local_ip`, which selects it by address; when neither is given the host
-    /// picks. The interface decides both which NIC frames leave by and which
-    /// one they are accepted on, and getting it wrong is one-sided: periodic
+    /// picks, and on Linux datagrams are taken from every interface. The
+    /// interface decides both which NIC frames leave by and which one they
+    /// are accepted on, and getting it wrong is one-sided: periodic
     /// broadcasts still arrive, so discovery looks healthy while every request
     /// this client sends leaves by the wrong NIC and is never answered.
     pub(crate) fn open(
@@ -232,8 +283,9 @@ impl Conn {
         interface: Option<&str>,
     ) -> io::Result<Self> {
         let egress = egress_for(local_ip, interface)?;
+        let arrival = arrival_for(local_ip, interface)?;
         Ok(Self {
-            primary: Endpoint::open(target, port, &egress)?,
+            primary: Endpoint::open(target, port, &egress, arrival)?,
             secondary: None,
         })
     }
@@ -248,9 +300,10 @@ impl Conn {
         interface: Option<&str>,
     ) -> io::Result<Self> {
         let egress = egress_for(local_ip, interface)?;
+        let arrival = arrival_for(local_ip, interface)?;
         Ok(Self {
-            primary: Endpoint::open(MULTICAST_IP, MULTICAST_PORT, &egress)?,
-            secondary: Some(Endpoint::open(broadcast, broadcast_port, &egress)?),
+            primary: Endpoint::open(MULTICAST_IP, MULTICAST_PORT, &egress, arrival)?,
+            secondary: Some(Endpoint::open(broadcast, broadcast_port, &egress, arrival)?),
         })
     }
 
@@ -301,6 +354,13 @@ impl Conn {
             Some(second) => second.recv(buf),
             None => Ok(None),
         }
+    }
+
+    /// The index of the one interface datagrams are taken from, `None` for
+    /// any.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn arrival(&self) -> Option<u32> {
+        self.primary.arrival
     }
 
     /// The path of the first endpoint and, when bound, the second.
