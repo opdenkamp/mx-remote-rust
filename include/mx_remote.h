@@ -2146,6 +2146,27 @@
 #define MXR_CONTROLLER_PARTS_MAX 5
 
 /**
+ * The most fields a port's metadata holds.
+ */
+#define MXR_PORT_METADATA_FIELDS_MAX 16
+
+/**
+ * The most bytes a port's metadata takes as it is carried: each field its
+ * key, a NUL, its value and a NUL.
+ */
+#define MXR_PORT_METADATA_MAX 1024
+
+/**
+ * Bytes in a key of `mxr_port_metadata_field_t`, its NUL included.
+ */
+#define MXR_PORT_METADATA_KEY_LEN 32
+
+/**
+ * Bytes in a value of `mxr_port_metadata_field_t`, its NUL included.
+ */
+#define MXR_PORT_METADATA_VALUE_LEN 256
+
+/**
  * Bytes an IPv4 address needs when written as text, the terminator included.
  */
 #define MXR_IP_STRING_LEN 16
@@ -3960,6 +3981,44 @@ typedef struct {
    */
   uint8_t part;
 } mxr_controller_part_data_t;
+
+/**
+ * One field of a port's metadata, such as `device_type` set to
+ * `Sony PlayStation 4`.
+ *
+ * A key is 1 to 31 characters of `A-Z`, `a-z`, `0-9`, `_` and `-`. A value
+ * is 1 to 255 bytes of UTF-8, with no control character, `"` or `\`.
+ */
+typedef struct {
+  /**
+   * The key, NUL-terminated.
+   */
+  char key[MXR_PORT_METADATA_KEY_LEN];
+  /**
+   * The value, NUL-terminated.
+   */
+  char value[MXR_PORT_METADATA_VALUE_LEN];
+} mxr_port_metadata_field_t;
+
+/**
+ * One field of the port metadata this client holds, with the port it is
+ * of: a unit's input or its output. A port's fields are consecutive rows,
+ * in order.
+ */
+typedef struct {
+  /**
+   * The unit.
+   */
+  mxr_uid_t unit;
+  /**
+   * The unit's input, or else its output.
+   */
+  bool input;
+  /**
+   * The field.
+   */
+  mxr_port_metadata_field_t field;
+} mxr_port_metadata_row_t;
 
 /**
  * How a client finds the network.
@@ -8602,6 +8661,104 @@ mxr_result_t mxr_pull_controller_part(const mxr_remote_t *remote,
                                       uint32_t generation,
                                       uint32_t length,
                                       uint32_t crc);
+
+/**
+ * Writes the metadata of a port, `unit`'s input or its output, as this
+ * client holds it, and returns how many fields it has: 0 when it holds
+ * none.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable [`mxr_port_metadata_field_t`].
+ */
+size_t mxr_port_metadata(const mxr_remote_t *remote,
+                         mxr_uid_t unit,
+                         bool input,
+                         mxr_port_metadata_field_t *out,
+                         size_t cap);
+
+/**
+ * Sets the metadata of a port, `unit`'s input or its output, as the API of
+ * the unit serving it does: `fields` in the order given, none removing the
+ * port's metadata. When that changes what this client holds, the
+ * generation goes up by one; as controller this client also sends the
+ * port's metadata to every unit at once and its index 1 s later, and its
+ * members take them. A unit in no mesh keeps it alone.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` while this client follows another unit as its
+ * controller, whose API it is, and for metadata no unit takes: more than
+ * `MXR_PORT_METADATA_FIELDS_MAX` fields or `MXR_PORT_METADATA_MAX` bytes,
+ * an invalid key or value, or a key set twice.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `fields`
+ * is null or points at `count` fields.
+ */
+mxr_result_t mxr_set_port_metadata(const mxr_remote_t *remote,
+                                   mxr_uid_t unit,
+                                   bool input,
+                                   const mxr_port_metadata_field_t *fields,
+                                   size_t count);
+
+/**
+ * Asks `holder` for the metadata of a port, `unit`'s input or its output.
+ * Every unit answers with what it holds, and the answer is taken from
+ * `holder` for 30 s; `mxr_port_metadata()` then reads it.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_request_port_metadata(const mxr_remote_t *remote,
+                                       mxr_uid_t holder,
+                                       mxr_uid_t unit,
+                                       bool input);
+
+/**
+ * The generation of the port metadata this client holds, 0 for a null
+ * handle: a controller raises it by one on every change, and a unit takes
+ * it from the index it last took whole. What a controller persists, with
+ * `mxr_port_metadata_rows()`.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+uint32_t mxr_port_metadata_generation(const mxr_remote_t *remote);
+
+/**
+ * Writes every field of the port metadata this client holds, port by port,
+ * and returns how many there are.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle, and `out` is null or points at `cap`
+ * writable [`mxr_port_metadata_row_t`].
+ */
+size_t mxr_port_metadata_rows(const mxr_remote_t *remote, mxr_port_metadata_row_t *out, size_t cap);
+
+/**
+ * Replaces all the port metadata this client holds with `rows` at
+ * `generation`, as a unit loads what it persisted; best before
+ * `mxr_remote_start()`. Consecutive rows of one port are its fields, in
+ * order. Nothing is reported or sent for it, but as controller this client
+ * sends its index within 1 s.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT`, holding what it held, for a port whose rows
+ * are not consecutive, or for a field `mxr_set_port_metadata()` refuses
+ * other than a key set twice.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`, and `rows` is
+ * null or points at `count` rows.
+ */
+mxr_result_t mxr_restore_port_metadata(const mxr_remote_t *remote,
+                                       uint32_t generation,
+                                       const mxr_port_metadata_row_t *rows,
+                                       size_t count);
 
 /**
  * Creates a client, without opening a socket yet.

@@ -248,6 +248,17 @@ events! {
         /// The device sent a controller's numbering whole, which
         /// [`Remote::mesh_bays`](crate::Remote::mesh_bays) also reads.
         MeshBaysReceived => on_mesh_bays_received(bays: MeshBays);
+        /// The port metadata this client holds changed: the device sent it,
+        /// or an index from it dropped a port it no longer names, or this
+        /// client set it itself. No fields means the port's was removed.
+        /// [`Remote::port_metadata`](crate::Remote::port_metadata) also reads
+        /// it.
+        PortMetadataChanged => on_port_metadata_changed(metadata: PortMetadata);
+        /// The generation of the port metadata this client holds changed:
+        /// it took the device's index whole, or set metadata itself. What a
+        /// controller persists, with
+        /// [`Remote::port_metadata_store`](crate::Remote::port_metadata_store).
+        PortMetadataGenerationChanged => on_port_metadata_generation_changed(generation: u32);
         /// The device sent a `CONTROLLER_STATE` hello other than its last: it
         /// is a dedicated controller, such as a router, which
         /// [`DeviceInfo::dedicated_controller`](crate::DeviceInfo::dedicated_controller)

@@ -151,3 +151,83 @@ pub struct MeshBays {
     /// bay naming none is left out.
     pub bays: Vec<MeshBay>,
 }
+
+/// The most fields a port's metadata holds.
+pub const PORT_METADATA_FIELDS_MAX: usize = 16;
+
+/// The most bytes a port's metadata takes, as it is carried: each field its
+/// key, a NUL, its value and a NUL.
+pub const PORT_METADATA_MAX: usize = 1024;
+
+/// The longest key of a port's metadata, in characters.
+pub const PORT_METADATA_KEY_MAX: usize = 31;
+
+/// The longest value of a port's metadata, in bytes of UTF-8.
+pub const PORT_METADATA_VALUE_MAX: usize = 255;
+
+/// A port of a mesh unit, as port metadata names it: the unit's input or its
+/// output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MeshPort {
+    /// The unit.
+    pub unit: DeviceUid,
+    /// The unit's input, or else its output.
+    pub input: bool,
+}
+
+impl MeshPort {
+    /// The input of `unit`.
+    pub fn input(unit: DeviceUid) -> Self {
+        Self { unit, input: true }
+    }
+
+    /// The output of `unit`.
+    pub fn output(unit: DeviceUid) -> Self {
+        Self { unit, input: false }
+    }
+}
+
+/// One field an installer recorded about the device on a port, such as
+/// `device_type` set to `Sony PlayStation 4`.
+///
+/// A key is 1 to [`PORT_METADATA_KEY_MAX`] characters of `A-Z`, `a-z`,
+/// `0-9`, `_` and `-`. A value is 1 to [`PORT_METADATA_VALUE_MAX`] bytes of
+/// UTF-8, with no control character, `"` or `\`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PortMetadataField {
+    /// The key.
+    pub key: String,
+    /// The value.
+    pub value: String,
+}
+
+impl PortMetadataField {
+    /// A field of `key` set to `value`.
+    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+}
+
+/// The metadata of one port, its fields in the order they were set. No
+/// fields means the port has none.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PortMetadata {
+    /// The port.
+    pub port: MeshPort,
+    /// The fields, in order; a key may repeat, as a unit carries it.
+    pub fields: Vec<PortMetadataField>,
+}
+
+/// All the port metadata this client holds, with the generation it holds it
+/// at: what a controller persists and restores.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PortMetadataStore {
+    /// The generation, which a controller raises by one on every change, and
+    /// a unit takes from the index it last took whole.
+    pub generation: u32,
+    /// Every port holding metadata, each with at least one field, by port.
+    pub ports: Vec<PortMetadata>,
+}

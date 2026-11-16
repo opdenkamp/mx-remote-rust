@@ -18,12 +18,13 @@ use crate::event::EventHandler;
 use crate::testing::{bay_config_rec, datagram, hello_payload, stream_rec, uid_n, vlan_block, Cfg};
 use crate::types::{
     ActionTransmitRequest, AmpZoneSettings, AudioChangeSource, AudioFeatures, BayNameChange,
-    EdidProfileChange, EdidRequest, KeyTransmitRequest, MeshOperation, StreamKind, UnitNetConfig,
-    V2ipAudioFormat, V2ipDownmix, V2ipDownmixStatus, V2ipDscpConfig, V2ipOutputMode,
-    V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipStreamSource, V2ipStreamSources, V2ipVlan,
-    SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE, SCALING_FLAG_MODE_VALID,
-    SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID, SCALING_FLAG_SKIP_420,
-    V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX, VOLUME_UNCHANGED,
+    EdidProfileChange, EdidRequest, KeyTransmitRequest, MeshOperation, MeshPort, PortMetadataField,
+    PortMetadataStore, StreamKind, UnitNetConfig, V2ipAudioFormat, V2ipDownmix, V2ipDownmixStatus,
+    V2ipDscpConfig, V2ipOutputMode, V2ipPtpMessages, V2ipRoute, V2ipRouteTarget, V2ipStreamSource,
+    V2ipStreamSources, V2ipVlan, SCALING_FLAG_AUTO_SCALING, SCALING_FLAG_MATCH_SOURCE,
+    SCALING_FLAG_MODE_VALID, SCALING_FLAG_OPTIONS2_VALID, SCALING_FLAG_OPTIONS_VALID,
+    SCALING_FLAG_SKIP_420, V2IP_MINUTES_PER_DAY, V2IP_PTP_DOMAIN_MAX, V2IP_VLAN_ID_MAX,
+    VOLUME_UNCHANGED,
 };
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
@@ -7245,4 +7246,76 @@ fn kept_settings_are_set_only_on_a_member_of_this_clients_mesh() {
     assert_eq!(&p[..4], &[1, 3, 0, 0]);
     assert_eq!(&p[16..32], member.as_bytes());
     assert_eq!(&p[32..], b"\x0aled.status\x011");
+}
+
+/// A port's metadata is asked of a unit at 0x33 with a 0x57 METADATA REQUEST
+/// naming it, and its answer is taken from that unit though it is no
+/// controller of this client's.
+#[test]
+fn port_metadata_is_asked_of_a_unit_and_its_answer_taken() {
+    let f = Fixture::new();
+    f.connect();
+    let (new, old) = (uid_n(0x31), uid_n(0x32));
+    mesh_unit(&f, new, 0x33);
+    mesh_unit(&f, old, 0x32);
+    let port = MeshPort::input(uid_n(0x40));
+    f.tap.clear();
+    f.remote.request_port_metadata(new, port).expect("sent");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &[0x57, 0x00], "the opcode");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..16], &[1, 8, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(&p[16..], port.unit.as_bytes());
+    assert!(refused(&f.remote.request_port_metadata(old, port)));
+    let body = b"device_type\0PS4\0";
+    let mut answer = vec![1, 6, 4, 0, 0, 0, body.len() as u8, 0];
+    answer.extend_from_slice(&crate::wire::crc32(body).to_le_bytes());
+    answer.extend_from_slice(&[0; 4]);
+    answer.extend_from_slice(port.unit.as_bytes());
+    answer.extend_from_slice(body);
+    f.feed(old, op::MESH_CONFIG, &answer);
+    assert_eq!(
+        f.remote.port_metadata(port),
+        None,
+        "taken from a unit not asked"
+    );
+    f.feed(new, op::MESH_CONFIG, &answer);
+    assert_eq!(
+        f.remote.port_metadata(port),
+        Some(vec![PortMetadataField::new("device_type", "PS4")])
+    );
+}
+
+/// The controller's API sends a changed port's metadata to every unit, and
+/// a member's API refuses, its controller's being the one.
+#[test]
+fn port_metadata_set_as_controller_goes_to_every_unit() {
+    let f = Fixture::new();
+    f.connect();
+    let port = MeshPort::output(uid_n(0x40));
+    let fields = vec![PortMetadataField::new("logo", "http://x/l.png")];
+    f.remote.set_mesh_controller(uid_n(0x31));
+    assert!(matches!(
+        f.remote.set_port_metadata(port, fields.clone()),
+        Err(ControlError::InvalidRequest(_))
+    ));
+    f.remote.set_mesh_controller(f.remote.uid());
+    f.tap.clear();
+    f.remote
+        .set_port_metadata(port, fields.clone())
+        .expect("set");
+    let frame = f.tap.frames().pop().expect("nothing reached the gate");
+    assert_eq!(&frame[20..22], &[0x57, 0x00], "the opcode");
+    let p = &frame[HEADER_LEN..];
+    assert_eq!(&p[..3], &[1, 6, 0]);
+    assert_eq!(&p[16..32], port.unit.as_bytes());
+    assert_eq!(&p[32..], b"logo\0http://x/l.png\0");
+    assert_eq!(f.remote.port_metadata(port), Some(fields));
+    assert_eq!(f.remote.port_metadata_store().generation, 1);
+    let restored = PortMetadataStore {
+        generation: 40,
+        ports: Vec::new(),
+    };
+    f.remote.restore_port_metadata(&restored).expect("restored");
+    assert_eq!(f.remote.port_metadata_store(), restored);
 }

@@ -2352,3 +2352,92 @@ fn the_announce_interfaces_are_checked() {
     // SAFETY: created above and not yet freed.
     unsafe { mxr_remote_free(remote) };
 }
+
+/// A metadata field of `key` valued `value`, each NUL-terminated.
+fn metadata_field(key: &[u8], value: &[u8]) -> mxr_port_metadata_field_t {
+    let mut f = mxr_port_metadata_field_t {
+        key: [0; MXR_PORT_METADATA_KEY_LEN],
+        value: [0; MXR_PORT_METADATA_VALUE_LEN],
+    };
+    for (slot, b) in f.key.iter_mut().zip(key) {
+        *slot = *b as c_char;
+    }
+    for (slot, b) in f.value.iter_mut().zip(value) {
+        *slot = *b as c_char;
+    }
+    f
+}
+
+/// Port metadata set by a client in no mesh is held, read back field by
+/// field and row by row, and restored from its rows; a caller's mistake is
+/// an argument error.
+#[test]
+fn port_metadata_round_trips_through_its_rows() {
+    let remote = client(c"abi-metadata", c"00000024.00000000.00000000.000000b2");
+    let unit = uid_n(9);
+    let fields = [
+        metadata_field(b"device_type", b"Sony PlayStation 4"),
+        metadata_field(b"logo", b"http://x/l.png"),
+    ];
+    // SAFETY: a live handle and two fields.
+    let rc = unsafe { mxr_set_port_metadata(remote, unit, true, fields.as_ptr(), 2) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+    // SAFETY: a live handle and room for 4.
+    let mut out = [metadata_field(b"", b""); 4];
+    let count = unsafe { mxr_port_metadata(remote, unit, true, out.as_mut_ptr(), out.len()) };
+    assert_eq!(count, 2);
+    assert_eq!(out[1].value[..4], fields[1].value[..4]);
+    // SAFETY: a live handle; the output, never set, holds nothing.
+    assert_eq!(
+        unsafe { mxr_port_metadata(remote, unit, false, ptr::null_mut(), 0) },
+        0
+    );
+    // SAFETY: a live handle.
+    assert_eq!(unsafe { mxr_port_metadata_generation(remote) }, 1);
+
+    let twice = [metadata_field(b"k", b"a"), metadata_field(b"k", b"b")];
+    // SAFETY: a live handle and two fields.
+    let rc = unsafe { mxr_set_port_metadata(remote, unit, false, twice.as_ptr(), 2) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "a key twice");
+    let bad = [metadata_field(b"a key", b"v")];
+    // SAFETY: a live handle and one field.
+    let rc = unsafe { mxr_set_port_metadata(remote, unit, false, bad.as_ptr(), 1) };
+    assert_eq!(
+        rc,
+        mxr_result_t::MXR_ERR_INVALID_ARGUMENT,
+        "a space in a key"
+    );
+
+    let blank = mxr_port_metadata_row_t {
+        unit,
+        input: false,
+        field: metadata_field(b"", b""),
+    };
+    let mut rows = [blank; 4];
+    // SAFETY: a live handle and room for 4.
+    let count = unsafe { mxr_port_metadata_rows(remote, rows.as_mut_ptr(), rows.len()) };
+    assert_eq!(count, 2);
+    assert!(rows[..2].iter().all(|r| r.input));
+    // SAFETY: a live handle and two rows.
+    let rc = unsafe { mxr_restore_port_metadata(remote, 7, rows.as_ptr(), 2) };
+    assert_eq!(rc, mxr_result_t::MXR_OK);
+    // SAFETY: a live handle.
+    assert_eq!(unsafe { mxr_port_metadata_generation(remote) }, 7);
+    let mut split = [rows[0], blank, rows[1]];
+    split[1].field = metadata_field(b"k", b"v");
+    // SAFETY: a live handle and three rows.
+    let rc = unsafe { mxr_restore_port_metadata(remote, 8, split.as_ptr(), 3) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT, "a port split");
+    // SAFETY: a live handle.
+    assert_eq!(unsafe { mxr_port_metadata_generation(remote) }, 7);
+
+    // SAFETY: a live handle; a null list of one is what is under test.
+    let rc = unsafe { mxr_set_port_metadata(remote, unit, true, ptr::null(), 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_request_port_metadata(remote, unit, unit, true) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+
+    // SAFETY: created above and not yet freed.
+    unsafe { mxr_remote_free(remote) };
+}

@@ -16,6 +16,7 @@ mod bay;
 mod controller;
 mod device;
 mod links;
+mod metadata;
 mod tree;
 
 use std::collections::hash_map::DefaultHasher;
@@ -32,6 +33,7 @@ use crate::wire::{BayFeatures, BayUid, DeviceFeature, DeviceUid, LinkFeature};
 pub(crate) use bay::Bay;
 pub(crate) use device::{Device, HelloInfo, MeshBayChange, SdpPages, CONFIG_GRACE};
 pub(crate) use links::{BayLink, BayLinks};
+pub(crate) use metadata::{Metadata, MetadataFrame, MetadataRefusal};
 use tree::Tree;
 
 /// How long a peer is heard before it counts towards a multicast fault, from
@@ -74,6 +76,8 @@ pub(crate) struct State {
     pub(crate) mesh_bays: HashMap<DeviceUid, MeshBays>,
     /// The settings each sender is still sending, by sender.
     pub(crate) mesh_config_transfers: HashMap<DeviceUid, MeshConfigTransfer>,
+    /// The port metadata this client holds, and the index it is taking.
+    pub(crate) metadata: Metadata,
     /// The lister and the unit of this client's last request to replace one,
     /// until it is answered.
     pub(crate) mesh_replace_pending: Option<(DeviceUid, DeviceUid)>,
@@ -144,6 +148,7 @@ impl State {
             mesh_configs: HashMap::new(),
             mesh_bays: HashMap::new(),
             mesh_config_transfers: HashMap::new(),
+            metadata: Metadata::default(),
             mesh_replace_pending: None,
             mesh_replace_queried: None,
             controller_state_allowed: None,

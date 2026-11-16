@@ -14,7 +14,10 @@
 //! this frame's bytes in the settings, the settings' length and crc32, and the
 //! unit the settings belong to at 16.
 
-use crate::types::{MeshBay, MeshReplaceUnit, MeshSetting};
+use crate::types::{
+    MeshBay, MeshPort, MeshReplaceUnit, MeshSetting, PortMetadataField, PORT_METADATA_FIELDS_MAX,
+    PORT_METADATA_KEY_MAX, PORT_METADATA_MAX, PORT_METADATA_VALUE_MAX,
+};
 
 use super::enums::{DeviceFeature, MeshReplaceResult};
 use super::payload::append_fixed_str;
@@ -71,6 +74,9 @@ pub(crate) mod config_kind {
     pub(crate) const SET: u8 = 3;
     pub(crate) const BAYS_REQUEST: u8 = 4;
     pub(crate) const BAYS: u8 = 5;
+    pub(crate) const METADATA: u8 = 6;
+    pub(crate) const METADATA_INDEX: u8 = 7;
+    pub(crate) const METADATA_REQUEST: u8 = 8;
     pub(crate) const SETUP: u8 = 9;
 }
 
@@ -82,6 +88,10 @@ pub(crate) const MESH_CONFIG_FLAG_COPY: u8 = 1 << 0;
 /// the sender lost its settings and holds defaults. A controller that keeps
 /// a record of it sends that record back as a set.
 pub(crate) const MESH_CONFIG_FLAG_LOST: u8 = 1 << 1;
+
+/// The flag at byte 2 of a port's metadata or a request for it: the port is
+/// the unit's input, and without it its output.
+pub(crate) const MESH_CONFIG_FLAG_INPUT: u8 = 1 << 2;
 
 /// The most settings bytes one frame carries.
 pub(crate) const MESH_CONFIG_FRAME_MAX: usize = 1024;
@@ -337,6 +347,209 @@ pub(crate) fn decode_mesh_bays(p: &[u8]) -> Option<Vec<MeshBay>> {
     )
 }
 
+/// Whether `key` is a key a unit takes for port metadata: 1 to
+/// [`PORT_METADATA_KEY_MAX`] characters of `A-Z`, `a-z`, `0-9`, `_` and `-`.
+pub(crate) fn valid_metadata_key(key: &str) -> bool {
+    (1..=PORT_METADATA_KEY_MAX).contains(&key.len())
+        && key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// Whether `value` is a value a unit takes for port metadata: 1 to
+/// [`PORT_METADATA_VALUE_MAX`] bytes of UTF-8, with no control character,
+/// `"` or `\`.
+pub(crate) fn valid_metadata_value(value: &str) -> bool {
+    (1..=PORT_METADATA_VALUE_MAX).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b >= 0x20 && b != 0x7F && b != b'"' && b != b'\\')
+}
+
+/// Encodes a port's metadata as a unit carries it: each field its key, a
+/// NUL, its value and a NUL, in the order given. Order counts, as the crc32
+/// is taken over these bytes; a repeated key is carried as it is.
+///
+/// `None` for an invalid key or value, more than
+/// [`PORT_METADATA_FIELDS_MAX`] fields, or more than [`PORT_METADATA_MAX`]
+/// bytes, none of which a unit takes.
+pub(crate) fn encode_port_metadata(fields: &[PortMetadataField]) -> Option<Vec<u8>> {
+    if fields.len() > PORT_METADATA_FIELDS_MAX {
+        return None;
+    }
+    let mut p = Vec::new();
+    for field in fields {
+        if !valid_metadata_key(&field.key) || !valid_metadata_value(&field.value) {
+            return None;
+        }
+        p.extend_from_slice(field.key.as_bytes());
+        p.push(0);
+        p.extend_from_slice(field.value.as_bytes());
+        p.push(0);
+    }
+    (p.len() <= PORT_METADATA_MAX).then_some(p)
+}
+
+/// Reads a port's metadata as a unit carries it, `None` for anything a unit
+/// would refuse: bytes not ending in a field's NUL, a key without a value,
+/// an invalid key or value, or more fields or bytes than a unit takes.
+pub(crate) fn decode_port_metadata(p: &[u8]) -> Option<Vec<PortMetadataField>> {
+    if p.len() > PORT_METADATA_MAX {
+        return None;
+    }
+    if p.is_empty() {
+        return Some(Vec::new());
+    }
+    let body = p.strip_suffix(&[0])?;
+    let mut parts = body.split(|&b| b == 0);
+    let mut fields = Vec::new();
+    while let Some(key) = parts.next() {
+        let value = parts.next()?;
+        let key = std::str::from_utf8(key).ok()?;
+        let value = std::str::from_utf8(value).ok()?;
+        if !valid_metadata_key(key) || !valid_metadata_value(value) {
+            return None;
+        }
+        fields.push(PortMetadataField::new(key, value));
+    }
+    (fields.len() <= PORT_METADATA_FIELDS_MAX).then_some(fields)
+}
+
+/// The flags naming a port's direction.
+fn port_flags(port: MeshPort) -> u8 {
+    if port.input {
+        MESH_CONFIG_FLAG_INPUT
+    } else {
+        0
+    }
+}
+
+/// Builds a `MESH_CONFIG` metadata frame: the header naming the port, with
+/// the length and crc32 of `encoded`, then `encoded` itself. Metadata of no
+/// fields, which removes the port's, has length and crc 0.
+///
+/// `encoded` comes from [`encode_port_metadata`], which bounds its length.
+pub(crate) fn build_port_metadata(port: MeshPort, encoded: &[u8]) -> Vec<u8> {
+    let crc = super::osd::crc32(encoded);
+    let mut p = config_header(
+        config_kind::METADATA,
+        port_flags(port),
+        0,
+        encoded.len() as u16,
+        crc,
+        port.unit,
+    );
+    p.extend_from_slice(encoded);
+    p
+}
+
+/// Builds a `MESH_CONFIG` metadata request for `port`: the header alone.
+pub(crate) fn build_port_metadata_request(port: MeshPort) -> Vec<u8> {
+    config_header(
+        config_kind::METADATA_REQUEST,
+        port_flags(port),
+        0,
+        0,
+        0,
+        port.unit,
+    )
+}
+
+/// Width of one metadata index entry: the unit, the mode, three reserved
+/// bytes and the crc32 of the port's metadata.
+pub(crate) const METADATA_INDEX_ENTRY_SIZE: usize = 24;
+
+/// The most entries one metadata index frame carries.
+pub(crate) const METADATA_INDEX_PER_FRAME: usize = 48;
+
+/// The width of the generation every metadata index frame's body opens with.
+pub(crate) const METADATA_INDEX_GENERATION_SIZE: usize = 4;
+
+/// The mode byte of an input's index entry; an output's is 0.
+const METADATA_INDEX_INPUT: u8 = 1;
+
+/// One entry of a metadata index: a port holding metadata, and the crc32 of
+/// that metadata as it is carried.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MetadataIndexEntry {
+    pub(crate) port: MeshPort,
+    pub(crate) crc: u32,
+}
+
+/// Builds the frames of a `MESH_CONFIG` metadata index from `sender`, in
+/// order: each the header, with the index of its first entry, the number of
+/// entries and the crc32 of them all, then the generation and at most
+/// [`METADATA_INDEX_PER_FRAME`] entries. An index of no ports is one frame of
+/// no entries, with crc 0.
+///
+/// `entries` holds at most `u16::MAX` entries, which the caller checks.
+pub(crate) fn build_metadata_index_pages(
+    sender: DeviceUid,
+    generation: u32,
+    entries: &[MetadataIndexEntry],
+) -> Vec<Vec<u8>> {
+    let mut encoded = Vec::with_capacity(entries.len() * METADATA_INDEX_ENTRY_SIZE);
+    for entry in entries {
+        encoded.extend_from_slice(entry.port.unit.as_bytes());
+        encoded.push(if entry.port.input {
+            METADATA_INDEX_INPUT
+        } else {
+            0
+        });
+        encoded.extend_from_slice(&[0; 3]);
+        encoded.extend_from_slice(&entry.crc.to_le_bytes());
+    }
+    let total = entries.len() as u16;
+    let crc = super::osd::crc32(&encoded);
+    let frame = |first: usize, chunk: &[u8]| {
+        let mut p = config_header(
+            config_kind::METADATA_INDEX,
+            0,
+            first as u16,
+            total,
+            crc,
+            sender,
+        );
+        p.extend_from_slice(&generation.to_le_bytes());
+        p.extend_from_slice(chunk);
+        p
+    };
+    if encoded.is_empty() {
+        return vec![frame(0, &[])];
+    }
+    encoded
+        .chunks(METADATA_INDEX_PER_FRAME * METADATA_INDEX_ENTRY_SIZE)
+        .enumerate()
+        .map(|(i, chunk)| frame(i * METADATA_INDEX_PER_FRAME, chunk))
+        .collect()
+}
+
+/// Reads the body of a metadata index frame: the generation, then its
+/// entries. `None` for a body that is not the generation and whole entries.
+pub(crate) fn decode_metadata_index(p: &[u8]) -> Option<(u32, Vec<MetadataIndexEntry>)> {
+    let g = p.get(..METADATA_INDEX_GENERATION_SIZE)?;
+    let generation = u32::from_le_bytes([g[0], g[1], g[2], g[3]]);
+    let rest = &p[METADATA_INDEX_GENERATION_SIZE..];
+    if rest.len() % METADATA_INDEX_ENTRY_SIZE != 0 {
+        return None;
+    }
+    let entries = rest
+        .chunks_exact(METADATA_INDEX_ENTRY_SIZE)
+        .map(|e| {
+            let mut uid = [0; 16];
+            uid.copy_from_slice(&e[..16]);
+            MetadataIndexEntry {
+                port: MeshPort {
+                    unit: DeviceUid::from_array(uid),
+                    input: e[16] == METADATA_INDEX_INPUT,
+                },
+                crc: u32::from_le_bytes([e[20], e[21], e[22], e[23]]),
+            }
+        })
+        .collect();
+    Some((generation, entries))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +661,106 @@ mod tests {
         let r = build_mesh_config_request(unit);
         assert_eq!(&r[..16], &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(&r[16..], unit.as_bytes());
+    }
+
+    #[test]
+    fn metadata_is_key_nul_value_nul_in_order() {
+        let fields = [
+            PortMetadataField::new("logo", "http://x"),
+            PortMetadataField::new("device_type", "PS4"),
+        ];
+        let encoded = encode_port_metadata(&fields).unwrap();
+        assert_eq!(encoded, b"logo\0http://x\0device_type\0PS4\0");
+        assert_eq!(decode_port_metadata(&encoded).unwrap(), fields);
+        assert_eq!(encode_port_metadata(&[]).unwrap(), b"");
+        let port = MeshPort::input(DeviceUid::from_array([0x5A; 16]));
+        let p = build_port_metadata(port, &encoded);
+        assert_eq!(
+            &p[..4],
+            &[1, config_kind::METADATA, MESH_CONFIG_FLAG_INPUT, 0]
+        );
+        assert_eq!(&p[4..6], &[0, 0]);
+        assert_eq!(&p[6..8], &(encoded.len() as u16).to_le_bytes());
+        assert_eq!(&p[8..12], &super::super::osd::crc32(&encoded).to_le_bytes());
+        assert_eq!(&p[32..], &encoded[..]);
+        let none = build_port_metadata(MeshPort::output(port.unit), &[]);
+        assert_eq!(&none[..12], &[1, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn metadata_a_unit_refuses_is_refused() {
+        let f = |k: &str, v: &str| vec![PortMetadataField::new(k, v)];
+        assert!(encode_port_metadata(&f(&"k".repeat(31), &"v".repeat(255))).is_some());
+        for (k, v) in [
+            ("", "v"),
+            (&"k".repeat(32)[..], "v"),
+            ("a.b", "v"),
+            ("k", ""),
+            ("k", &"v".repeat(256)[..]),
+            ("k", "a\"b"),
+            ("k", r"a\b"),
+            ("k", "a\nb"),
+            ("k", "a\x7Fb"),
+        ] {
+            assert!(encode_port_metadata(&f(k, v)).is_none(), "{k:?}={v:?}");
+        }
+        let many = vec![PortMetadataField::new("k", "v"); 17];
+        assert!(encode_port_metadata(&many).is_none());
+        assert!(encode_port_metadata(&many[..16]).is_some());
+        // 4 fields of 3 + 253 bytes are 1024, and one byte more is too many.
+        let wide = |n: usize| PortMetadataField::new("k", "v".repeat(n));
+        assert_eq!(
+            encode_port_metadata(&vec![wide(253); 4]).unwrap().len(),
+            1024
+        );
+        let mut over = vec![wide(253); 3];
+        over.push(wide(254));
+        assert!(encode_port_metadata(&over).is_none());
+        assert_eq!(decode_port_metadata(b"k\0v"), None);
+        assert_eq!(decode_port_metadata(b"k\0"), None);
+        assert_eq!(decode_port_metadata(b"k\0\xFF\0"), None, "not UTF-8");
+    }
+
+    #[test]
+    fn an_index_goes_in_frames_of_48_entries() {
+        let sender = DeviceUid::from_array([0x3C; 16]);
+        let entries: Vec<_> = (0..50u8)
+            .map(|i| MetadataIndexEntry {
+                port: MeshPort {
+                    unit: DeviceUid::from_array([i; 16]),
+                    input: i % 2 == 1,
+                },
+                crc: 0x0102_0304 * u32::from(i),
+            })
+            .collect();
+        let pages = build_metadata_index_pages(sender, 0xA1B2_C3D4, &entries);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].len(), 32 + 4 + 48 * 24);
+        assert_eq!(pages[1].len(), 32 + 4 + 2 * 24);
+        let mut all = Vec::new();
+        for page in &pages {
+            all.extend_from_slice(&page[36..]);
+        }
+        let crc = super::super::osd::crc32(&all).to_le_bytes();
+        for (page, first) in pages.iter().zip([0u16, 48]) {
+            assert_eq!(&page[..4], &[1, config_kind::METADATA_INDEX, 0, 0]);
+            assert_eq!(&page[4..6], &first.to_le_bytes());
+            assert_eq!(&page[6..8], &50u16.to_le_bytes());
+            assert_eq!(&page[8..12], &crc);
+            assert_eq!(&page[16..32], sender.as_bytes());
+            assert_eq!(&page[32..36], &0xA1B2_C3D4u32.to_le_bytes());
+        }
+        let e = &pages[1][36..60];
+        assert_eq!(&e[..16], &[48; 16]);
+        assert_eq!(&e[16..20], &[0, 0, 0, 0]);
+        assert_eq!(&pages[1][60 + 16..60 + 20], &[1, 0, 0, 0]);
+        assert_eq!(&e[20..], &(0x0102_0304u32 * 48).to_le_bytes());
+        let (generation, back) = decode_metadata_index(&pages[1][32..]).unwrap();
+        assert_eq!(generation, 0xA1B2_C3D4);
+        assert_eq!(back, entries[48..]);
+        let none = build_metadata_index_pages(sender, 7, &[]);
+        assert_eq!(none.len(), 1);
+        assert_eq!(none[0].len(), 36);
+        assert_eq!(&none[0][4..12], &[0; 8], "no entries and crc 0");
     }
 }

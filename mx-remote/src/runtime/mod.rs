@@ -9,6 +9,7 @@ mod controller;
 mod info;
 mod logo_server;
 mod mesh;
+mod metadata;
 mod osd;
 mod schedule;
 
@@ -1096,6 +1097,7 @@ impl Shared {
             self.answer_controller_requests(controller_requests);
         }
         self.send_controller_asks();
+        self.send_metadata_outbox();
     }
 
     /// Takes one frame captured below the IP stack, recording the source
@@ -1399,6 +1401,7 @@ impl Shared {
             }
             state.forget_silent(now, ev);
             state.check_controller_pulls(now, ev);
+            state.check_metadata_index(now, metadata::next_index_interval());
             let fault_changed = self.judge_paths(state, now);
             (state.devices.is_empty(), owed, fault_changed)
         });
@@ -1414,6 +1417,7 @@ impl Shared {
             let _ = self.send(&Addressee::Broadcast, op::SYS_DISCOVER, device.as_bytes());
         }
         self.send_controller_asks();
+        self.send_metadata_outbox();
     }
 }
 

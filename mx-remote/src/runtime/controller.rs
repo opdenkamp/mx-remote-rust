@@ -246,7 +246,7 @@ impl Shared {
     }
 
     /// A device addressed alone, by the endpoint it is heard by.
-    fn direct(&self, device: DeviceUid) -> Option<Addressee> {
+    pub(super) fn direct(&self, device: DeviceUid) -> Option<Addressee> {
         let now = Instant::now();
         self.read(|state| {
             state

@@ -31,9 +31,10 @@ pub use commands::{
 };
 pub use controller::{ControllerHello, ControllerPart, CONTROLLER_PARTS_MAX};
 pub use mesh::{
-    MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits,
-    MeshReplaceable, MeshSetting, MESH_BAYS_MAX, MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX,
-    MESH_REPLACE_UNITS_MAX,
+    MeshBay, MeshBays, MeshConfig, MeshConfigDigest, MeshPort, MeshReplaceUnit, MeshReplaceUnits,
+    MeshReplaceable, MeshSetting, PortMetadata, PortMetadataField, PortMetadataStore,
+    MESH_BAYS_MAX, MESH_CONFIG_MAX, MESH_REPLACE_NAME_MAX, MESH_REPLACE_UNITS_MAX,
+    PORT_METADATA_FIELDS_MAX, PORT_METADATA_KEY_MAX, PORT_METADATA_MAX, PORT_METADATA_VALUE_MAX,
 };
 pub use multiviewer::{MultiviewerStatus, MULTIVIEWER_INPUTS};
 pub use network::{

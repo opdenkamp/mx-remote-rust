@@ -7,16 +7,16 @@
 use std::time::Instant;
 
 use crate::event::Event;
-use crate::state::{MeshConfigTransfer, State};
+use crate::state::{MeshConfigTransfer, MetadataFrame, State};
 use crate::types::{
-    MeshBays, MeshConfig, MeshConfigDigest, MeshReplaceUnit, MeshReplaceUnits, MESH_BAYS_MAX,
-    MESH_CONFIG_MAX, MESH_REPLACE_UNITS_MAX,
+    MeshBays, MeshConfig, MeshConfigDigest, MeshPort, MeshReplaceUnit, MeshReplaceUnits,
+    MESH_BAYS_MAX, MESH_CONFIG_MAX, MESH_REPLACE_UNITS_MAX,
 };
 use crate::wire::{
     config_kind, cstr, decode_controller_hello, decode_mesh_bays, decode_mesh_settings,
     replace_kind, state_kind, DeviceFeature, DeviceUid, MeshReplaceResult, StateHeader,
     CONTROLLER_STATE_HEADER_SIZE, MESH_BAYS_ENTRY_SIZE, MESH_CONFIG_FLAG_COPY,
-    MESH_CONFIG_FLAG_LOST, MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION,
+    MESH_CONFIG_FLAG_INPUT, MESH_CONFIG_FLAG_LOST, MESH_CONFIG_HEADER_SIZE, MESH_CONFIG_VERSION,
     MESH_REPLACE_FLAG_CONTROLLER, MESH_REPLACE_HEADER_SIZE, MESH_REPLACE_KEPT,
     MESH_REPLACE_NAME_LEN, MESH_REPLACE_TARGET_SIZE, MESH_REPLACE_UNIT_SIZE, MESH_REPLACE_VERSION,
 };
@@ -125,6 +125,9 @@ fn record(b: &[u8]) -> MeshReplaceUnit {
 /// drops what that sender had sent. A set is reported only when it names
 /// this client and comes from the controller this client follows, the one
 /// sender a unit takes it from.
+///
+/// Port metadata, its index and requests for it go to the metadata a mesh
+/// keeps, which judges each by its sender.
 pub(super) fn mesh_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let p = rx.frame.payload();
     if p.len() < MESH_CONFIG_HEADER_SIZE || p[0] != MESH_CONFIG_VERSION {
@@ -154,7 +157,35 @@ pub(super) fn mesh_config(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
             device: sender,
             subject,
         }),
+        config_kind::METADATA => {
+            let port = MeshPort {
+                unit: subject,
+                input: p[2] & MESH_CONFIG_FLAG_INPUT != 0,
+            };
+            state.on_port_metadata(sender, port, metadata_frame(p), rx.timestamp, ev);
+        }
+        config_kind::METADATA_INDEX => {
+            state.on_metadata_index(sender, metadata_frame(p), rx.timestamp, ev);
+        }
+        config_kind::METADATA_REQUEST => {
+            let port = MeshPort {
+                unit: subject,
+                input: p[2] & MESH_CONFIG_FLAG_INPUT != 0,
+            };
+            state.on_metadata_request(sender, port);
+        }
         _ => {}
+    }
+}
+
+/// The offset at 4, length at 6 and crc32 at 8 of a metadata or index
+/// frame, and the body past its header.
+fn metadata_frame(p: &[u8]) -> MetadataFrame<'_> {
+    MetadataFrame {
+        first: u16_at(p, 4),
+        total: u16_at(p, 6),
+        crc: u32_at(p, 8),
+        body: p.get(MESH_CONFIG_HEADER_SIZE..).unwrap_or_default(),
     }
 }
 

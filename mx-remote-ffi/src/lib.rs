@@ -73,6 +73,7 @@ mod control;
 mod events;
 mod info;
 mod mesh;
+mod metadata;
 mod remote;
 mod subsystems;
 
@@ -84,5 +85,6 @@ pub use control::*;
 pub use events::*;
 pub use info::*;
 pub use mesh::*;
+pub use metadata::*;
 pub use remote::*;
 pub use subsystems::*;
