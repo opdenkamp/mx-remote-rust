@@ -141,9 +141,9 @@ const DISCOVER_COVERS: Duration = Duration::from_secs(60);
 /// meant for one device alone, such as a ping, goes by the endpoint that
 /// device is heard by. Every other frame goes to the group, and to the
 /// broadcast address as well while some peer has not been heard by multicast
-/// for two minutes or reports that its multicast fails. A peer heard only by
-/// broadcast in that time has this client announce that its own multicast
-/// fails. A datagram arriving by both endpoints within 100ms is acted on
+/// for two minutes or reports a multicast fault. A peer heard only by
+/// broadcast in that time has this client announce a multicast fault, which
+/// lies on the path from that peer, not necessarily here. A datagram arriving by both endpoints within 100ms is acted on
 /// once.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -1148,7 +1148,7 @@ impl Shared {
     }
 
     /// Re-judges, as of `now`, whether frames must reach some peer by
-    /// broadcast too, and whether this client's own multicast fails, and
+    /// broadcast too, and whether this client has a multicast fault, and
     /// returns whether the second changed: a unit announces a change to its
     /// features at once.
     fn judge_paths(&self, state: &State, now: Instant) -> bool {

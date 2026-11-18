@@ -179,8 +179,9 @@ bitmask! {
         /// Firmware without this bit sends a device configuration built over
         /// uninitialised memory, so fields it did not mean to write carry junk.
         CONFIG_INITIALISED = 1 << 25;
-        /// Receives one or more peers only by broadcast, because its multicast
-        /// receive path is faulty.
+        /// Receives one or more peers only by broadcast: the multicast path
+        /// from that peer is faulty, which is not necessarily this device. A
+        /// peer whose multicast reaches no one makes every device set it.
         STATUS_MCAST_FAULT = 1 << 26;
         /// Powers its video processor down in power save. A device without it
         /// refuses to enter power save.

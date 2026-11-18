@@ -184,8 +184,8 @@ impl State {
     }
 
     /// Whether some peer has to be reached by broadcast as well: it has not
-    /// been heard by multicast within the path window, or it reports that its
-    /// own multicast fails. Every registered peer counts, one gone silent
+    /// been heard by multicast within the path window, or it reports a
+    /// multicast fault. Every registered peer counts, one gone silent
     /// included, as a unit judges by every peer it knows.
     pub(crate) fn needs_broadcast(&self, now: Instant) -> bool {
         self.peers().any(|d| {
@@ -193,7 +193,7 @@ impl State {
         })
     }
 
-    /// Whether this client's own multicast fails: a peer, not about to
+    /// Whether this client has a multicast fault: a peer, not about to
     /// reboot and past its [`MCAST_FAULT_GRACE`], is heard by broadcast but
     /// not by multicast.
     pub(crate) fn multicast_fault(&self, now: Instant) -> bool {
