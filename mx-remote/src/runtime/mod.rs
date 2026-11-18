@@ -143,8 +143,8 @@ const DISCOVER_COVERS: Duration = Duration::from_secs(60);
 /// broadcast address as well while some peer has not been heard by multicast
 /// for two minutes or reports a multicast fault. A peer heard only by
 /// broadcast in that time has this client announce a multicast fault, which
-/// lies on the path from that peer, not necessarily here. A datagram arriving by both endpoints within 100ms is acted on
-/// once.
+/// lies on the path from that peer, not necessarily here. A datagram arriving
+/// by both endpoints within 100ms is acted on once.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Config {
