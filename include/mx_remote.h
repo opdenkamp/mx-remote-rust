@@ -746,6 +746,12 @@
 #define MXR_MESH_OP_REPORT_MEMBERSHIP 255
 
 /**
+ * With `MXR_MESH_OP_PROMOTE_CONTROLLER`: the promotion corrects a member
+ * that reports another controller, rather than taking over a mesh.
+ */
+#define MXR_MESH_OP_FLAG_PROMOTE_CORRECTIVE (1 << 0)
+
+/**
  * The multiviewer reports no window layout.
  */
 #define MXR_MV_VIEW_MODE_UNKNOWN 0
@@ -2864,8 +2870,16 @@ typedef struct {
  * A mesh operation: what it asks, the device it concerns, and its parameter.
  *
  * `kind` is one of the `MXR_MESH_OP_` values. `param` is a uid for every
- * operation but `MXR_MESH_OP_REPORT_CONTROLLER`, where its first two 32-bit
- * little-endian words carry the priority and the installer id.
+ * operation but two, where it carries 32-bit little-endian words:
+ * `MXR_MESH_OP_REPORT_CONTROLLER` the priority and the installer id, and
+ * `MXR_MESH_OP_REPORT_MEMBERSHIP` the flags (bit 0: lost settings) and the
+ * sender's membership token.
+ *
+ * `token` and `flags` go with `MXR_MESH_OP_REGISTER` and
+ * `MXR_MESH_OP_PROMOTE_CONTROLLER`: the membership token the unit holds from
+ * then on, and `MXR_MESH_OP_FLAG_` values. With either nonzero the frame is
+ * 48 bytes, which units from protocol 0x35 read; with both zero it is the 40
+ * every unit takes.
  */
 typedef struct {
   /**
@@ -2880,6 +2894,14 @@ typedef struct {
    * Its parameter.
    */
   mxr_uid_t param;
+  /**
+   * The membership token it gives, zero for none.
+   */
+  uint32_t token;
+  /**
+   * Its `MXR_MESH_OP_FLAG_` flags.
+   */
+  uint32_t flags;
 } mxr_mesh_operation_t;
 
 /**
@@ -3509,6 +3531,12 @@ typedef struct {
    * membership possibly with them; its controller adds it back.
    */
   bool mesh_membership_lost;
+  /**
+   * The membership token the device's last membership report carries,
+   * zero for none: the one its controller gave it. A device before
+   * protocol 0x35 reports none.
+   */
+  uint32_t mesh_membership_token;
 } mxr_device_info_t;
 
 /**

@@ -125,6 +125,10 @@ pub struct DeviceInfo {
     /// and its membership possibly with them: a controller that has it as a
     /// member adds it back rather than drop it for naming no master.
     pub mesh_membership_lost: bool,
+    /// The membership token the device's last membership report carries,
+    /// zero for none: the one its controller gave it. A device before
+    /// protocol 0x35 reports none.
+    pub mesh_membership_token: u32,
     /// What the device last announced about itself as a mesh controller,
     /// `None` until it has.
     pub mesh_controller_report: Option<MeshControllerReport>,
@@ -169,6 +173,7 @@ impl DeviceInfo {
             temperatures: device.temperatures.clone(),
             mesh_master: device.mesh_master,
             mesh_membership_lost: device.mesh_membership_lost,
+            mesh_membership_token: device.mesh_membership_token,
             mesh_controller_report: device.mesh_controller_report,
             hdbt_outputs: device.hdbt_outputs(),
             setup_done: device.setup_done,

@@ -211,6 +211,7 @@ pub(crate) struct Device {
     mesh_master_reported: bool,
     /// Whether the last membership report flagged lost settings.
     pub(crate) mesh_membership_lost: bool,
+    pub(crate) mesh_membership_token: u32,
     pub(crate) mesh_controller_report: Option<MeshControllerReport>,
     pub(crate) network: BTreeMap<u16, NetworkPortStatus>,
     pub(crate) sys_status: Option<(u16, String)>,
@@ -293,6 +294,7 @@ impl Device {
             mesh_master: DeviceUid::ZERO,
             mesh_master_reported: false,
             mesh_membership_lost: false,
+            mesh_membership_token: 0,
             mesh_controller_report: None,
             network: BTreeMap::new(),
             sys_status: None,
@@ -1070,18 +1072,27 @@ impl Device {
         self.mesh_master_reported.then_some(self.mesh_master)
     }
 
-    /// Takes a membership report: the master it names, and whether it flags
-    /// lost settings. A change to either is reported.
-    pub(crate) fn set_mesh_master(&mut self, master: DeviceUid, lost: bool, ev: &mut Vec<Event>) {
+    /// Takes a membership report: the master it names, whether it flags
+    /// lost settings, and the membership token it carries. A change to any
+    /// is reported.
+    pub(crate) fn set_mesh_master(
+        &mut self,
+        master: DeviceUid,
+        lost: bool,
+        token: u32,
+        ev: &mut Vec<Event>,
+    ) {
         if self.mesh_master_reported
             && self.mesh_master == master
             && self.mesh_membership_lost == lost
+            && self.mesh_membership_token == token
         {
             return;
         }
         self.mesh_master_reported = true;
         self.mesh_master = master;
         self.mesh_membership_lost = lost;
+        self.mesh_membership_token = token;
         ev.push(Event::MeshMasterChanged {
             device: self.uid,
             master,

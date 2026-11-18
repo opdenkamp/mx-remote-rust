@@ -5,7 +5,7 @@
 
 use std::net::Ipv4Addr;
 
-use crate::wire::{DeviceUid, MeshOperationKind, UtpLinkSpeed, UID_LEN};
+use crate::wire::{DeviceUid, MeshOperationFlag, MeshOperationKind, UtpLinkSpeed, UID_LEN};
 
 /// The decoded link-error bitmask for a network port.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -115,9 +115,17 @@ pub struct NetworkPortStatus {
 /// parameter.
 ///
 /// The parameter is a uid for every operation but
-/// [`MeshOperationKind::REPORT_CONTROLLER`], where it carries two 32-bit words
-/// instead; [`MeshOperation::priority`] and [`MeshOperation::installer`] read
-/// them.
+/// [`MeshOperationKind::REPORT_CONTROLLER`] and
+/// [`MeshOperationKind::REPORT_MEMBERSHIP`], where it carries 32-bit words
+/// instead, which [`MeshOperation::priority`], [`MeshOperation::installer`],
+/// [`MeshOperation::membership_lost`] and [`MeshOperation::membership_token`]
+/// read.
+///
+/// A unit from protocol 0x35 holds a membership token, given it by its
+/// controller on a [`MeshOperationKind::REGISTER`] or
+/// [`MeshOperationKind::PROMOTE_CONTROLLER`] and reported back in its
+/// membership reports, so a controller can tell its own member from one
+/// another controller took.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MeshOperation {
     /// What the operation asks.
@@ -126,6 +134,11 @@ pub struct MeshOperation {
     pub target: DeviceUid,
     /// Its parameter.
     pub param: DeviceUid,
+    /// The membership token a register or promotion gives the unit, zero for
+    /// none.
+    pub token: u32,
+    /// The flags of a promotion.
+    pub flags: MeshOperationFlag,
 }
 
 impl MeshOperation {
@@ -134,12 +147,23 @@ impl MeshOperation {
             kind,
             target,
             param,
+            token: 0,
+            flags: MeshOperationFlag::from_bits(0),
         }
     }
 
     /// `unit` joins the mesh of `controller`.
     pub const fn register(unit: DeviceUid, controller: DeviceUid) -> Self {
         Self::new(MeshOperationKind::REGISTER, unit, controller)
+    }
+
+    /// `unit` joins the mesh of `controller`, holding `token` as its
+    /// membership token. A unit already in that mesh takes it as a repeat
+    /// and holds the token.
+    pub const fn register_with_token(unit: DeviceUid, controller: DeviceUid, token: u32) -> Self {
+        let mut op = Self::register(unit, controller);
+        op.token = token;
+        op
     }
 
     /// `unit` leaves the mesh of `controller`.
@@ -186,6 +210,20 @@ impl MeshOperation {
         Self::new(MeshOperationKind::PROMOTE_CONTROLLER, controller, previous)
     }
 
+    /// [`Self::promote_controller`] giving the units that follow `controller`
+    /// `token` as their membership token, with `flags`.
+    pub const fn promote_controller_with_token(
+        controller: DeviceUid,
+        previous: DeviceUid,
+        token: u32,
+        flags: MeshOperationFlag,
+    ) -> Self {
+        let mut op = Self::promote_controller(controller, previous);
+        op.token = token;
+        op.flags = flags;
+        op
+    }
+
     /// The sender reports `controller` as its mesh controller, the zero uid
     /// for none.
     pub const fn report_membership(controller: DeviceUid) -> Self {
@@ -194,6 +232,26 @@ impl MeshOperation {
             controller,
             DeviceUid::ZERO,
         )
+    }
+
+    /// [`Self::report_membership`] carrying the sender's membership token,
+    /// zero for none, in the parameter's second 32-bit word.
+    pub fn report_membership_with_token(controller: DeviceUid, token: u32) -> Self {
+        let mut param = [0; UID_LEN];
+        param[4..8].copy_from_slice(&token.to_le_bytes());
+        Self::new(
+            MeshOperationKind::REPORT_MEMBERSHIP,
+            controller,
+            DeviceUid::from_array(param),
+        )
+    }
+
+    /// The membership token a membership report carries: the parameter's
+    /// second 32-bit word, zero for none. Senders before protocol 0x35 leave
+    /// it zero.
+    pub fn membership_token(&self) -> u32 {
+        let b = self.param.as_bytes();
+        u32::from_le_bytes([b[4], b[5], b[6], b[7]])
     }
 
     /// Whether a membership report flags that its sender lost its settings,

@@ -29,10 +29,10 @@ use crate::types::{
 use crate::wire::{
     build_amp_zone_settings, build_v2ip_manual_source_switch, build_video_wall, op, protocol_for,
     Addressee, BayFeatures, BayStatus, BayUid, Conn, DeviceFeature, DeviceUid, EdidProfile,
-    Endpoints, MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode,
-    MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize,
-    MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, RcKey, SendError, StreamAddr,
-    UnitFlag, V2ipColourSpace, V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode,
+    Endpoints, MeshOperationFlag, MultiviewerAspectRatio, MultiviewerEdidTemplate,
+    MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode, MultiviewerPipPosition,
+    MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, Opcode, RcAction, RcKey, SendError,
+    StreamAddr, UnitFlag, V2ipColourSpace, V2ipDeviceSetting, V2ipDownmixLevel, V2ipDownmixMode,
     V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpMode, V2ipStreams, V2ipTestPattern, V2ipToneMode,
     V2ipVlanFlag, HEADER_LEN, PROTOCOL_VERSION, V2IP_AUDIO_DEFAULT_CHANNELS,
     V2IP_AUDIO_DEFAULT_SAMPLE_RATE, V2IP_DSCP_SET, V2IP_IR_PROFILE_MAX, V2IP_IR_PROFILE_NOT_SET,
@@ -4862,6 +4862,74 @@ fn a_mesh_operation_goes_out_as_sent() {
     let p = &frame[HEADER_LEN..];
     assert_eq!(&p[..4], &[0xFF, 0, 0, 0]);
     assert_eq!(&p[4..20], controller.as_bytes());
+}
+
+/// A register or promotion with a token or flags is 48 bytes, the token at 40
+/// and the flags at 44; with neither it stays at 40, which every unit takes.
+/// A membership report carries its token in the parameter's second word and
+/// stays at 40.
+#[test]
+fn a_membership_token_is_sent_where_units_read_it() {
+    let f = Fixture::new();
+    f.connect();
+    let unit = uid_n(51);
+    let controller = uid_n(52);
+    let sent = |operation| {
+        f.tap.clear();
+        f.remote
+            .send_mesh_operation(operation)
+            .expect("a mesh operation needs no known device");
+        let frame = f.tap.frames().pop().expect("nothing reached the gate");
+        frame[HEADER_LEN..].to_vec()
+    };
+
+    let p = sent(MeshOperation::register_with_token(
+        unit,
+        controller,
+        0x1234_5678,
+    ));
+    assert_eq!(p.len(), 48);
+    assert_eq!(&p[..4], &[0, 0, 0, 0]);
+    assert_eq!(&p[4..20], unit.as_bytes());
+    assert_eq!(&p[20..36], controller.as_bytes());
+    assert_eq!(&p[36..40], &[0; 4]);
+    assert_eq!(&p[40..44], &0x1234_5678u32.to_le_bytes());
+    assert_eq!(&p[44..48], &[0; 4]);
+
+    let p = sent(MeshOperation::promote_controller_with_token(
+        controller,
+        unit,
+        0x0BAD_F00D,
+        MeshOperationFlag::PROMOTE_CORRECTIVE,
+    ));
+    assert_eq!(p.len(), 48);
+    assert_eq!(p[0], 5);
+    assert_eq!(&p[40..44], &0x0BAD_F00Du32.to_le_bytes());
+    assert_eq!(&p[44..48], &1u32.to_le_bytes());
+
+    let p = sent(MeshOperation::promote_controller_with_token(
+        controller,
+        unit,
+        0,
+        MeshOperationFlag::PROMOTE_CORRECTIVE,
+    ));
+    assert_eq!(p.len(), 48, "flags alone go out");
+    assert_eq!(&p[40..44], &[0; 4]);
+    assert_eq!(&p[44..48], &1u32.to_le_bytes());
+
+    let p = sent(MeshOperation::register_with_token(unit, controller, 0));
+    assert_eq!(p.len(), 40, "no token and no flags stays at 40");
+
+    let p = sent(MeshOperation::report_membership_with_token(
+        controller,
+        0x0102_0304,
+    ));
+    assert_eq!(p.len(), 40);
+    assert_eq!(p[0], 0xFF);
+    assert_eq!(&p[4..20], controller.as_bytes());
+    assert_eq!(&p[20..24], &[0; 4], "the token is not the flags word");
+    assert_eq!(&p[24..28], &0x0102_0304u32.to_le_bytes());
+    assert_eq!(&p[28..36], &[0; 8]);
 }
 
 /// A source list entry for unit `n`, every address and port distinct and none

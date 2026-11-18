@@ -607,13 +607,19 @@ fn every_core_bit_reaches_the_header_at_its_own_value() {
     let audio = workspace_source("mx-remote/src/types/audio.rs");
     let header = workspace_source("mx-remote-ffi/src/bits.rs");
 
-    let lists: [(&str, Vec<Bit>, &[&str], usize); 42] = [
+    let lists: [(&str, Vec<Bit>, &[&str], usize); 43] = [
         ("MXR_FEATURE_", core_bits(&enums, "DeviceFeature"), &[], 30),
         (
             "MXR_MESH_OP_",
             core_bits(&enums, "MeshOperationKind"),
-            &[],
+            &["MXR_MESH_OP_FLAG_"],
             9,
+        ),
+        (
+            "MXR_MESH_OP_FLAG_",
+            core_bits(&enums, "MeshOperationFlag"),
+            &[],
+            1,
         ),
         (
             "MXR_BAY_",

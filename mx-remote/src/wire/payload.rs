@@ -837,15 +837,24 @@ pub(crate) fn build_v2ip_vlan(target: DeviceUid, vlan: &V2ipVlan) -> Vec<u8> {
 /// Size of a `MESH_OPERATION` payload.
 pub(crate) const MESH_OPERATION_SIZE: usize = 40;
 
-/// Builds a `MESH_OPERATION` payload: 40 bytes, the operation at 0, three
-/// bytes of padding, the target uid at 4, the parameter at 20, then the
-/// struct's trailing padding, zero.
+/// Size of a `MESH_OPERATION` payload carrying a membership token or flags.
+pub(crate) const MESH_OPERATION_TOKEN_SIZE: usize = 48;
+
+/// Builds a `MESH_OPERATION` payload: the operation at 0, three bytes of
+/// padding, the target uid at 4, the parameter at 20, then the struct's
+/// trailing padding, zero, to 40 bytes. An operation with a token or flags
+/// appends the token at 40 and the flags at 44; one with neither stays at
+/// the 40 bytes every unit takes.
 pub(crate) fn build_mesh_operation(operation: &MeshOperation) -> Vec<u8> {
-    let mut p = Vec::with_capacity(MESH_OPERATION_SIZE);
+    let mut p = Vec::with_capacity(MESH_OPERATION_TOKEN_SIZE);
     p.extend_from_slice(&[operation.kind.to_wire(), 0, 0, 0]);
     p.extend_from_slice(operation.target.as_bytes());
     p.extend_from_slice(operation.param.as_bytes());
     p.resize(MESH_OPERATION_SIZE, 0);
+    if operation.token != 0 || !operation.flags.is_empty() {
+        p.extend_from_slice(&operation.token.to_le_bytes());
+        p.extend_from_slice(&operation.flags.bits().to_le_bytes());
+    }
     p
 }
 

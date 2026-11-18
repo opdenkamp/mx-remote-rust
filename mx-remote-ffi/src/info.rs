@@ -286,6 +286,10 @@ pub struct mxr_device_info_t {
     /// The device's last membership report says it lost its settings, its
     /// membership possibly with them; its controller adds it back.
     pub mesh_membership_lost: bool,
+    /// The membership token the device's last membership report carries,
+    /// zero for none: the one its controller gave it. A device before
+    /// protocol 0x35 reports none.
+    pub mesh_membership_token: u32,
 }
 
 /// What a bay is, and what is connected to it.
@@ -598,6 +602,7 @@ impl mxr_device_info_t {
             igmp_querier: [0; MXR_IP_STRING_LEN],
             dedicated_controller: info.dedicated_controller,
             mesh_membership_lost: info.mesh_membership_lost,
+            mesh_membership_token: info.mesh_membership_token,
         };
         if let Some(querier) = info.igmp_querier {
             put_str(&mut out.igmp_querier, &querier.to_string());

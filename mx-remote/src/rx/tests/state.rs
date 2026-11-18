@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use crate::event::Event;
 use crate::types::{MeshControllerReport, MeshOperation};
 use crate::wire::{
-    op, BayFeatures, BayStatus, BayUid, DeviceFeature, DeviceUid, MeshOperationKind,
-    V2IP_PORT_VIDEO,
+    op, BayFeatures, BayStatus, BayUid, DeviceFeature, DeviceUid, MeshOperationFlag,
+    MeshOperationKind, V2IP_PORT_VIDEO,
 };
 
 use crate::testing::{bay_config_rec, link_rec, poisoned, stream_rec, uid_n};
@@ -355,6 +355,8 @@ fn a_mesh_operation_arrives_as_an_event() {
             kind: MeshOperationKind::from_wire(kind),
             target,
             param,
+            token: 0,
+            flags: MeshOperationFlag::from_bits(0),
         };
         assert!(
             h.saw(
@@ -856,6 +858,72 @@ fn a_released_unit_takes_commands_from_anyone() {
         h.saw(|e| matches!(e, Event::AudioEndpointMute { .. })),
         "an audio command"
     );
+}
+
+/// A mesh operation carries a token at 40 and flags at 44 only in a payload
+/// long enough for both; a shorter one reads neither, whatever its bytes past
+/// 40 hold.
+#[test]
+fn a_mesh_operation_carries_a_token_from_48_bytes() {
+    let mut h = Harness::new(7);
+    h.hello(0x35, "ONEIP", "MT0001", DeviceFeature::MESH);
+    let target = uid_n(43);
+    let param = uid_n(44);
+    let received = |h: &Harness| {
+        h.events.iter().find_map(|e| match e {
+            Event::MeshOperationReceived { operation, .. } => Some(*operation),
+            _ => None,
+        })
+    };
+    for len in [40, 44, 47, 48, 52] {
+        h.events.clear();
+        let mut mesh = poisoned(len);
+        mesh[..4].copy_from_slice(&[5, 0, 0, 0]);
+        mesh[4..20].copy_from_slice(target.as_bytes());
+        mesh[20..36].copy_from_slice(param.as_bytes());
+        if len >= 48 {
+            mesh[40..44].copy_from_slice(&0x8765_4321u32.to_le_bytes());
+            mesh[44..48].copy_from_slice(&1u32.to_le_bytes());
+        }
+        h.feed(op::MESH_OPERATION, &mesh);
+        let operation = received(&h).expect("the operation arrived");
+        let (token, flags) = if len >= 48 {
+            (0x8765_4321, MeshOperationFlag::PROMOTE_CORRECTIVE)
+        } else {
+            (0, MeshOperationFlag::from_bits(0))
+        };
+        assert_eq!(operation.token, token, "{len} bytes");
+        assert_eq!(operation.flags, flags, "{len} bytes");
+    }
+}
+
+/// A membership report carries its sender's token in its parameter's second
+/// word, and the token alone changing is news: a controller tells its own
+/// member from one another controller took by it.
+#[test]
+fn a_mesh_report_carries_the_membership_token() {
+    let mut h = Harness::new(8);
+    h.hello(0x35, "ONEIP", "MR0003", DeviceFeature::MESH);
+    let controller = uid_n(45);
+    let report = |token: u32| {
+        let mut mesh = vec![0u8; 40];
+        mesh[0] = 0xFF;
+        mesh[4..20].copy_from_slice(controller.as_bytes());
+        mesh[24..28].copy_from_slice(&token.to_le_bytes());
+        mesh
+    };
+    let fired = |h: &Harness| h.saw(|e| matches!(e, Event::MeshMasterChanged { .. }));
+
+    h.feed(op::MESH_OPERATION, &report(0x1234_5678));
+    assert_eq!(h.device().mesh_membership_token, 0x1234_5678);
+    assert!(!h.device().mesh_membership_lost, "the token read as flags");
+    h.events.clear();
+    h.feed(op::MESH_OPERATION, &report(0x1234_5678));
+    assert!(!fired(&h), "an unchanged report fired again");
+    h.feed(op::MESH_OPERATION, &report(0x0BAD_F00D));
+    assert_eq!(h.device().mesh_membership_token, 0x0BAD_F00D);
+    assert_eq!(h.device().mesh_master, controller);
+    assert!(fired(&h), "the token alone changing went unreported");
 }
 
 /// A membership report flags lost settings in bit 0 of its parameter's first

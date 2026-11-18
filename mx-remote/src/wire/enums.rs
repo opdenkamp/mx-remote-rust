@@ -613,6 +613,16 @@ wire_enum! {
 }
 
 bitmask! {
+    /// The flags of a mesh operation, sent on a
+    /// [`MeshOperationKind::PROMOTE_CONTROLLER`] alone.
+    MeshOperationFlag: u32 {
+        /// The promotion corrects a member that reports another controller,
+        /// rather than taking over a mesh.
+        PROMOTE_CORRECTIVE = 1 << 0;
+    }
+}
+
+bitmask! {
     /// The flags of a unit command.
     UnitCommandFlag: u8 {
         /// With [`UnitCommandKind::FPGA_UPGRADE`]: flash the image even if it

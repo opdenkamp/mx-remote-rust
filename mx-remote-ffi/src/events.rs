@@ -369,8 +369,16 @@ pub struct mxr_audio_change_source_t {
 /// A mesh operation: what it asks, the device it concerns, and its parameter.
 ///
 /// `kind` is one of the `MXR_MESH_OP_` values. `param` is a uid for every
-/// operation but `MXR_MESH_OP_REPORT_CONTROLLER`, where its first two 32-bit
-/// little-endian words carry the priority and the installer id.
+/// operation but two, where it carries 32-bit little-endian words:
+/// `MXR_MESH_OP_REPORT_CONTROLLER` the priority and the installer id, and
+/// `MXR_MESH_OP_REPORT_MEMBERSHIP` the flags (bit 0: lost settings) and the
+/// sender's membership token.
+///
+/// `token` and `flags` go with `MXR_MESH_OP_REGISTER` and
+/// `MXR_MESH_OP_PROMOTE_CONTROLLER`: the membership token the unit holds from
+/// then on, and `MXR_MESH_OP_FLAG_` values. With either nonzero the frame is
+/// 48 bytes, which units from protocol 0x35 read; with both zero it is the 40
+/// every unit takes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct mxr_mesh_operation_t {
@@ -380,6 +388,10 @@ pub struct mxr_mesh_operation_t {
     pub target: mxr_uid_t,
     /// Its parameter.
     pub param: mxr_uid_t,
+    /// The membership token it gives, zero for none.
+    pub token: u32,
+    /// Its `MXR_MESH_OP_FLAG_` flags.
+    pub flags: u32,
 }
 
 impl From<MeshOperation> for mxr_mesh_operation_t {
@@ -388,6 +400,8 @@ impl From<MeshOperation> for mxr_mesh_operation_t {
             kind: op.kind.to_wire(),
             target: op.target.into(),
             param: op.param.into(),
+            token: op.token,
+            flags: op.flags.bits(),
         }
     }
 }

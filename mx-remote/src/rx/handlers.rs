@@ -18,11 +18,11 @@ use crate::types::{
 };
 use crate::wire::{
     cstr, op, parse_bay_config, BayStatus, BayUid, DeviceFeature, DeviceUid, FirmwareType, Frame,
-    MeshOperationKind, MxrSignalType, RcAction, RcKey, V2ipDeviceSetting, V2ipDownmixLevel,
-    V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag, V2ipPtpLock, V2ipPtpMode,
-    V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag, BAY_CONFIG_SIZE, FW_VERSION_LEN,
-    MESH_OPERATION_SIZE, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN, V2IP_LOCALE_MAX,
-    V2IP_SETTING_EXT_DOWNMIX, V2IP_SETTING_EXT_LOCALE,
+    MeshOperationFlag, MeshOperationKind, MxrSignalType, RcAction, RcKey, V2ipDeviceSetting,
+    V2ipDownmixLevel, V2ipDownmixMode, V2ipFpgaFeature, V2ipPowerSaveLevel, V2ipPtpFlag,
+    V2ipPtpLock, V2ipPtpMode, V2ipTestPattern, V2ipTestcardFlag, V2ipToneMode, V2ipVlanFlag,
+    BAY_CONFIG_SIZE, FW_VERSION_LEN, MESH_OPERATION_SIZE, TIME_ZONE_NAME_LEN, TIME_ZONE_RULE_LEN,
+    V2IP_LOCALE_MAX, V2IP_SETTING_EXT_DOWNMIX, V2IP_SETTING_EXT_LOCALE,
 };
 
 use super::Rx;
@@ -1103,16 +1103,28 @@ pub(super) fn mesh_operation(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
     else {
         return;
     };
+    // A unit reads the token and flags only from a payload carrying both.
+    let (token, flags) = match (rx.frame.u32(40), rx.frame.u32(44)) {
+        (Some(token), Some(flags)) => (token, flags),
+        _ => (0, 0),
+    };
     let mut operation = MeshOperation {
         kind: MeshOperationKind::from_wire(kind),
         target,
         param,
+        token,
+        flags: MeshOperationFlag::from_bits(flags),
     };
     let sender = rx.sender();
     match operation.kind {
         MeshOperationKind::REPORT_MEMBERSHIP => {
             if let Some(device) = state.device_mut(sender) {
-                device.set_mesh_master(target, operation.membership_lost(), ev);
+                device.set_mesh_master(
+                    target,
+                    operation.membership_lost(),
+                    operation.membership_token(),
+                    ev,
+                );
             }
         }
         MeshOperationKind::REPORT_CONTROLLER => {

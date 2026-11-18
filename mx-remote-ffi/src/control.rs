@@ -19,11 +19,11 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, UNIX_EPOCH};
 
 use mx_remote::{
-    ControlError, DeviceUid, EdidProfile, MeshOperation, MeshOperationKind, MultiviewerAspectRatio,
-    MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode, MultiviewerOutputMode,
-    MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource, MultiviewerViewMode, RcAction,
-    RcKey, RcSettings, StreamKind, UnitNetConfig, V2ipAudioFormat, V2ipColourSpace,
-    V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveLevel,
+    ControlError, DeviceUid, EdidProfile, MeshOperation, MeshOperationFlag, MeshOperationKind,
+    MultiviewerAspectRatio, MultiviewerEdidTemplate, MultiviewerHdcpMode, MultiviewerItcMode,
+    MultiviewerOutputMode, MultiviewerPipPosition, MultiviewerPipSize, MultiviewerSource,
+    MultiviewerViewMode, RcAction, RcKey, RcSettings, StreamKind, UnitNetConfig, V2ipAudioFormat,
+    V2ipColourSpace, V2ipDeviceSetting, V2ipDeviceSettings, V2ipOutputMode, V2ipPowerSaveLevel,
     V2ipPowerSaveSchedule, V2ipPtpMode, V2ipRoute, V2ipRouteTarget, V2ipStreamSource,
     V2ipStreamSources, V2ipTestPattern, V2ipTilingConfig, V2ipVlan, V2ipVlanFlag, VideoWallWindow,
 };
@@ -1400,12 +1400,19 @@ pub unsafe extern "C" fn mxr_send_mesh_operation(
                 "the mesh operation is null",
             );
         };
-        from_control(r.remote.send_mesh_operation(MeshOperation {
-            kind: MeshOperationKind::from_wire(op.kind),
-            target: op.target.into(),
-            param: op.param.into(),
-        }))
+        from_control(r.remote.send_mesh_operation(mesh_operation_of(op)))
     })
+}
+
+/// The operation a caller's struct describes.
+fn mesh_operation_of(op: &mxr_mesh_operation_t) -> MeshOperation {
+    MeshOperation {
+        kind: MeshOperationKind::from_wire(op.kind),
+        target: op.target.into(),
+        param: op.param.into(),
+        token: op.token,
+        flags: MeshOperationFlag::from_bits(op.flags),
+    }
 }
 
 /// Asks every unit to detect its bays, as a mesh controller's detect does.
@@ -3800,6 +3807,33 @@ mod tests {
     use std::ptr;
 
     use super::*;
+    use crate::bits::{MXR_MESH_OP_FLAG_PROMOTE_CORRECTIVE, MXR_MESH_OP_PROMOTE_CONTROLLER};
+
+    /// A mesh operation crosses the boundary both ways field for field, the
+    /// token and flags each in its own place.
+    #[test]
+    fn a_mesh_operation_keeps_its_token_and_flags() {
+        let mut target = [0; 16];
+        target[0] = 1;
+        let mut param = [0; 16];
+        param[0] = 2;
+        let c = mxr_mesh_operation_t {
+            kind: MXR_MESH_OP_PROMOTE_CONTROLLER,
+            target: mxr_uid_t { bytes: target },
+            param: mxr_uid_t { bytes: param },
+            token: 0x1234_5678,
+            flags: MXR_MESH_OP_FLAG_PROMOTE_CORRECTIVE,
+        };
+        let op = mesh_operation_of(&c);
+        assert_eq!(op.token, 0x1234_5678);
+        assert_eq!(op.flags, MeshOperationFlag::PROMOTE_CORRECTIVE);
+        let back = mxr_mesh_operation_t::from(op);
+        assert_eq!(back.kind, c.kind);
+        assert_eq!(back.target.bytes, target);
+        assert_eq!(back.param.bytes, param);
+        assert_eq!(back.token, 0x1234_5678);
+        assert_eq!(back.flags, MXR_MESH_OP_FLAG_PROMOTE_CORRECTIVE);
+    }
 
     #[test]
     fn a_zero_uid_names_no_device() {

@@ -100,7 +100,7 @@ fn controller() -> (Harness, DeviceUid) {
     h.state
         .device_mut(member)
         .unwrap()
-        .set_mesh_master(uid_n(OWN), false, &mut Vec::new());
+        .set_mesh_master(uid_n(OWN), false, 0, &mut Vec::new());
     (h, member)
 }
 
@@ -364,13 +364,13 @@ fn a_controller_takes_only_a_newer_index_and_only_from_a_member() {
     h.state
         .device_mut(member)
         .unwrap()
-        .set_mesh_master(uid_n(0x77), false, &mut Vec::new());
+        .set_mesh_master(uid_n(0x77), false, 0, &mut Vec::new());
     h.feed_as(member, op::MESH_CONFIG, &newer[0]);
     assert!(outbox(&mut h).is_empty(), "took a non-member's");
     h.state
         .device_mut(member)
         .unwrap()
-        .set_mesh_master(uid_n(OWN), false, &mut Vec::new());
+        .set_mesh_master(uid_n(OWN), false, 0, &mut Vec::new());
     h.feed_as(member, op::MESH_CONFIG, &newer[0]);
     assert_eq!(outbox(&mut h).len(), 1);
     assert_eq!(h.state.metadata.generation, 5);

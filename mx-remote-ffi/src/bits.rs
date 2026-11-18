@@ -494,6 +494,12 @@ pub const MXR_MESH_OP_PTP_TAKE_OVER: u8 = 7;
 /// The sender reports the target as its mesh controller.
 pub const MXR_MESH_OP_REPORT_MEMBERSHIP: u8 = 0xFF;
 
+// The flags of a mesh operation, in `mxr_mesh_operation_t::flags`.
+
+/// With `MXR_MESH_OP_PROMOTE_CONTROLLER`: the promotion corrects a member
+/// that reports another controller, rather than taking over a mesh.
+pub const MXR_MESH_OP_FLAG_PROMOTE_CORRECTIVE: u32 = 1 << 0;
+
 /// The multiviewer reports no window layout.
 pub const MXR_MV_VIEW_MODE_UNKNOWN: u8 = 0;
 
