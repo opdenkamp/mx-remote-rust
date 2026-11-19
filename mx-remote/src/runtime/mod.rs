@@ -177,10 +177,14 @@ pub struct Config {
     /// An interface with no address of its own - a tagged VLAN - can only be
     /// named this way, and only on Linux.
     pub interface: Option<String>,
-    /// Interfaces, by name, this client only announces itself on: each hello,
-    /// and the `CONTROLLER_STATE` hello of a [`Config::dedicated_controller`],
+    /// Interfaces, by name, this client only announces itself on: each hello
     /// goes there to both endpoints a unit has, from a socket that is never
     /// read. Nothing arriving there is taken.
+    ///
+    /// The `CONTROLLER_STATE` hello of a [`Config::dedicated_controller`] does
+    /// not go there: a unit hearing it takes this controller as online and
+    /// refuses every other controller's promotion, though this client can
+    /// never answer it there.
     ///
     /// The hello there leaves out what invites a unit to act on this client:
     /// [`MANAGER`](DeviceFeature::MANAGER),
@@ -1252,7 +1256,6 @@ impl Shared {
             build_controller_hello(&own.hello())
         };
         let _ = self.send(&Addressee::Broadcast, op::CONTROLLER_STATE, &payload);
-        lock(&self.tx).announce(self.uid, op::CONTROLLER_STATE, &payload);
     }
 
     /// The features this client announces as of now.

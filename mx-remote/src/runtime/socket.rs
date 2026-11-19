@@ -86,6 +86,9 @@ const ANNOUNCED_LATER: Scratch = Scratch {
 /// How long a test waits for a datagram it expects to arrive.
 const DELIVERY: Duration = Duration::from_secs(2);
 
+/// How long a frame sent right after another may still take to arrive.
+const SETTLE: Duration = Duration::from_millis(300);
+
 /// What the probe carries. Not a frame: nothing under test should decode it.
 const PING: &[u8] = b"ping";
 
@@ -514,14 +517,14 @@ fn a_datagram_on_another_interface_is_dropped() {
 }
 
 /// An interface this client only announces itself on gets the hello, less
-/// the features that invite a unit to act on it, and the `CONTROLLER_STATE`
-/// hello, both from a socket of its own rather than the endpoint on the
-/// protocol port.
+/// the features that invite a unit to act on it, from a socket of its own
+/// rather than the endpoint on the protocol port. It gets no
+/// `CONTROLLER_STATE` hello, which the endpoint does send.
 ///
 /// The announced interface is the one the endpoint is on too, so the same
 /// listener hears both, told apart by the port they come from.
 #[test]
-fn an_interface_only_announced_on_gets_the_hellos_alone() {
+fn an_interface_only_announced_on_gets_the_hello_alone() {
     let Some(probe) = Probe::open(ANNOUNCED_ONLY) else {
         return skipped("the probe cannot be pinned to a multicast interface");
     };
@@ -560,12 +563,14 @@ fn an_interface_only_announced_on_gets_the_hellos_alone() {
     };
     let mut endpoint_hello = None;
     let mut announced_hello = None;
+    let mut endpoint_controller = false;
     let mut announced_controller = false;
     let mut buf = vec![0u8; 2048];
     let deadline = Instant::now() + DELIVERY;
-    while Instant::now() < deadline
-        && !(endpoint_hello.is_some() && announced_hello.is_some() && announced_controller)
-    {
+    // The announcing socket would send its copy of a frame right after the
+    // endpoint's, so once the endpoint's arrived, a short wait settles it.
+    let mut settled: Option<Instant> = None;
+    while Instant::now() < settled.unwrap_or(deadline) {
         let Ok((n, from)) = probe.listener.recv_from(&mut buf) else {
             break;
         };
@@ -574,8 +579,17 @@ fn an_interface_only_announced_on_gets_the_hellos_alone() {
         match opcode_of(frame) {
             Some(o) if o == op::SYS_HELLO.0 && by_endpoint => endpoint_hello = features_of(frame),
             Some(o) if o == op::SYS_HELLO.0 => announced_hello = features_of(frame),
-            Some(o) if o == op::CONTROLLER_STATE.0 && !by_endpoint => announced_controller = true,
+            Some(o) if o == op::CONTROLLER_STATE.0 && by_endpoint => endpoint_controller = true,
+            Some(o) if o == op::CONTROLLER_STATE.0 => announced_controller = true,
             _ => {}
+        }
+        if settled.is_none()
+            && endpoint_hello.is_some()
+            && announced_hello.is_some()
+            && endpoint_controller
+        {
+            settled = Some(Instant::now() + SETTLE);
+            let _ = probe.listener.set_read_timeout(Some(SETTLE));
         }
     }
     remote.close();
@@ -595,8 +609,13 @@ fn an_interface_only_announced_on_gets_the_hellos_alone() {
         "the announced hello lost what it should keep: {announced}"
     );
     assert!(
-        announced_controller,
-        "no CONTROLLER_STATE hello from the announcing socket"
+        endpoint_controller,
+        "no CONTROLLER_STATE hello from the endpoint"
+    );
+    assert!(
+        !announced_controller,
+        "the announcing socket sent a CONTROLLER_STATE hello, which keeps a unit there from \
+         taking another controller"
     );
 }
 

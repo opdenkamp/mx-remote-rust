@@ -869,9 +869,10 @@ pub unsafe extern "C" fn mxr_remote_update_config(
 /// announcing on them at once when running. `count` zero, with `names` null
 /// or not, announces on none.
 ///
-/// Each hello, and the `CONTROLLER_STATE` hello of a `dedicated_controller`,
-/// goes there to both endpoints a unit has, from a socket that is never read;
-/// nothing arriving there is taken. The hello there leaves out
+/// Each hello goes there to both endpoints a unit has, from a socket that is
+/// never read; nothing arriving there is taken. The `CONTROLLER_STATE` hello
+/// of a `dedicated_controller` does not, since a unit hearing it refuses
+/// every other controller's promotion. The hello there leaves out
 /// `MXR_FEATURE_MANAGER`, `MXR_FEATURE_MESH_MASTER` and
 /// `MXR_FEATURE_OSD_SYNC`, which invite a unit to act on this client. Each
 /// interface is followed at its current address and skipped while it has
