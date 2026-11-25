@@ -419,6 +419,27 @@ fn a_message_is_read_field_by_field() {
     assert_eq!(changes(&h), 1, "an unchanged message was announced");
 }
 
+/// Every report a unit sends is stamped, one repeating the message too: a
+/// write is answered once a report is later than it, changed or not.
+#[test]
+fn every_message_report_is_stamped_with_its_arrival() {
+    let (mut h, _, unit) = mesh();
+    let text = b"Back soon";
+    let first = std::time::Instant::now();
+    let second = first + std::time::Duration::from_secs(3);
+    let reported = |h: &Harness| h.state.device(unit).and_then(|d| d.osd_message_reported);
+    for at in [first, second] {
+        h.feed_full(
+            unit,
+            op::V2IP_OSD_SYNC,
+            crate::wire::PROTOCOL_VERSION,
+            &message_frame(6, unit, text),
+            at,
+        );
+        assert_eq!(reported(&h), Some(at), "a report was not stamped");
+    }
+}
+
 /// A unit answers for its own output only, and with the whole text; a
 /// request or a write is for a unit with an output.
 #[test]
@@ -439,6 +460,9 @@ fn only_a_units_own_whole_message_is_kept() {
         h.feed_as(from, op::V2IP_OSD_SYNC, &frame);
         assert_eq!(message_of(&h, unit), None, "{what} was kept");
         assert_eq!(message_of(&h, source), None, "{what} was kept");
+        let reported = |uid| h.state.device(uid).and_then(|d| d.osd_message_reported);
+        assert_eq!(reported(unit), None, "{what} counted as a report");
+        assert_eq!(reported(source), None, "{what} counted as a report");
     }
 }
 

@@ -177,6 +177,8 @@ pub(crate) struct Device {
     pub(crate) osd_sync: Option<OsdSync>,
     pub(crate) osd_sync_report: Option<OsdSyncReport>,
     pub(crate) osd_message: Option<OsdMessage>,
+    /// When the device last reported its message, the same one included.
+    pub(crate) osd_message_reported: Option<Instant>,
     /// The units the device last listed as replaceable, and when its last
     /// frame of that list arrived.
     pub(crate) mesh_replace_units: Option<(MeshReplaceUnits, Instant)>,
@@ -277,6 +279,7 @@ impl Device {
             osd_sync: None,
             osd_sync_report: None,
             osd_message: None,
+            osd_message_reported: None,
             mesh_replace_units: None,
             mesh_config_digest: None,
             controller_hello: None,

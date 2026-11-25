@@ -91,6 +91,7 @@ pub(super) fn osd_sync(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         osd_kind::MESSAGE_STATE if target == sender => {
             if let Some(message) = message(p) {
                 if let Some(device) = state.device_mut(sender) {
+                    device.osd_message_reported = Some(rx.timestamp);
                     device.set_osd_message(message, ev);
                 }
             }

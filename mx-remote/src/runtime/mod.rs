@@ -841,6 +841,14 @@ impl Remote {
             .read(|state| state.device(uid)?.osd_message.clone())
     }
 
+    /// When a unit last reported its message, `None` until it has. Every
+    /// report counts, one repeating the message included, so a report
+    /// later than a write is the unit's answer to it.
+    pub fn osd_message_reported(&self, uid: DeviceUid) -> Option<Instant> {
+        self.shared
+            .read(|state| state.device(uid)?.osd_message_reported)
+    }
+
     /// The health and IP configuration a unit last reported, `None` until it
     /// has reported them.
     pub fn unit_status(&self, uid: DeviceUid) -> Option<UnitStatus> {
