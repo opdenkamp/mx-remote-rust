@@ -199,6 +199,10 @@ pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
     let video = f.u16(4).and_then(|p| device.routed_source(p));
     let audio = f.u16(7).and_then(|p| device.routed_source(p));
 
+    // Units from protocol 0x36 append a flags byte; earlier ones send 9 bytes.
+    let own = f
+        .u8(ROUTE_FLAGS_AT)
+        .is_some_and(|b| b & ROUTE_FLAG_OWN != 0);
     if let Some(bay) = state.bay_mut(BayUid::new(sender, sink_port)) {
         if unrouted {
             bay.set_video_source(None, ev);
@@ -210,8 +214,19 @@ pub(super) fn routing_change(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>
         } else if let Some(audio) = audio {
             bay.set_audio_source(Some(audio), ev);
         }
+        // Raised for every such route, the same one again included: a unit
+        // routes a linked output it holds already, and the outputs linked
+        // to it follow it all the same.
+        if own && bay.is_output() {
+            ev.push(Event::OwnRouteReported { bay: bay.uid() });
+        }
     }
 }
+
+/// Where a route's flags are, and the flag of a route made on the output's
+/// own unit: by its API, IR, CEC or a unit other than the mesh controller.
+const ROUTE_FLAGS_AT: usize = 9;
+const ROUTE_FLAG_OWN: u8 = 1;
 
 pub(super) fn rc_action(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
     let Some(device) = state.device(rx.sender()) else {

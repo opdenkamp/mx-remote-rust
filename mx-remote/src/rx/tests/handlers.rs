@@ -571,6 +571,60 @@ fn a_captured_route_decodes_to_the_bays_it_names() {
     }
 }
 
+/// A route flagged as made on the output's own unit is reported each time,
+/// the same route again included, and after its sources are applied; an
+/// unflagged one, one from a unit before the flag, and one for an input are
+/// not.
+#[test]
+fn a_route_made_on_the_unit_is_reported_every_time() {
+    let mut h = captured_route_unit(118);
+    let own = |h: &super::Harness| {
+        h.events
+            .iter()
+            .filter(|e| matches!(e, Event::OwnRouteReported { bay } if bay.port == 16))
+            .count()
+    };
+    let route = |video: u8, flags: Option<u8>| {
+        let mut rt = vec![0x10, 0x00, video, 0x00, video, 0x00, 0x00, 0x08, 0x00];
+        rt.extend(flags);
+        rt
+    };
+    h.feed(op::MX_ROUTE, &route(6, Some(1)));
+    assert_eq!(own(&h), 1);
+    assert_eq!(h.bay(16).video_source.map(|b| b.port), Some(6));
+    let at = h
+        .events
+        .iter()
+        .position(|e| matches!(e, Event::OwnRouteReported { .. }))
+        .expect("reported");
+    let applied = h
+        .events
+        .iter()
+        .position(|e| matches!(e, Event::VideoSourceChanged { .. }))
+        .expect("applied");
+    assert!(applied < at, "reported before its sources were applied");
+
+    h.feed(op::MX_ROUTE, &route(6, Some(1)));
+    assert_eq!(own(&h), 2, "the same route again is reported again");
+    for (what, raw) in [
+        ("an unflagged route", route(8, Some(0))),
+        ("other flags", route(6, Some(0xFE))),
+        ("a 9-byte route", route(6, None)),
+    ] {
+        h.feed(op::MX_ROUTE, &raw);
+        assert_eq!(own(&h), 2, "{what} was reported");
+    }
+    let mut input = route(6, Some(1));
+    input[0] = 6;
+    h.feed(op::MX_ROUTE, &input);
+    assert!(
+        !h.events
+            .iter()
+            .any(|e| matches!(e, Event::OwnRouteReported { bay } if bay.port == 6)),
+        "an input was reported"
+    );
+}
+
 #[test]
 fn routing_and_device_handlers() {
     let mut h = bay_state(111);

@@ -327,16 +327,15 @@ mod tests {
 
     /// This client announces the newest version any opcode it handles is
     /// stamped at, which is what a peer's device listing shows it supporting,
-    /// or the membership token's version where that is newer.
+    /// or the newest version that changed what a frame carries where that is
+    /// newer.
     #[test]
     fn the_announced_version_is_the_newest_stamp() {
         let newest = (0..=0xFF)
             .filter_map(|o| stamp_for(Opcode(o)))
             .max()
             .expect("an empty table");
-        assert_eq!(
-            crate::wire::PROTOCOL_VERSION,
-            newest.max(crate::wire::MESH_TOKEN_PROTOCOL)
-        );
+        let content = crate::wire::MESH_TOKEN_PROTOCOL.max(crate::wire::ROUTE_OWN_PROTOCOL);
+        assert_eq!(crate::wire::PROTOCOL_VERSION, newest.max(content));
     }
 }

@@ -414,6 +414,14 @@ events! {
         VideoSourceChanged => on_video_source_changed(source: Option<BayUid>);
         /// The bay's routed audio source changed.
         AudioSourceChanged => on_audio_source_changed(source: Option<BayUid>);
+        /// The output was routed on its own unit, by the unit's API, IR, CEC
+        /// or a unit other than the mesh controller, rather than by the
+        /// controller or a route the unit restored itself. Raised for every
+        /// such route, after the sources it names are applied, even when
+        /// they are the sources the output had: a mesh controller keeping
+        /// linked outputs on one route follows each. Units before protocol
+        /// 0x36 flag no route.
+        OwnRouteReported => on_own_route_reported();
         /// The bay's volume or mute state changed.
         VolumeChanged => on_volume_changed(volume: VolumeMuteStatus);
         /// The attached device's power state changed.

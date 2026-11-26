@@ -16,10 +16,14 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// A peer also sets this client's offline window from it: 15s from 0x20, and
 /// 60s from 0x2A when the peer is itself on 0x2A.
 ///
-/// It is the newest stamp, or [`MESH_TOKEN_PROTOCOL`] where that is newer: a
+/// It is the newest stamp, or [`ROUTE_OWN_PROTOCOL`] where that is newer: a
 /// version that changes what a frame carries rather than which frames exist
 /// stamps no opcode of its own.
-pub const PROTOCOL_VERSION: u16 = 0x35;
+pub const PROTOCOL_VERSION: u16 = 0x36;
+
+/// The protocol version from which a unit flags a route made on the
+/// output's own unit in `MX_ROUTE`, which stays stamped 0x01.
+pub const ROUTE_OWN_PROTOCOL: u16 = 0x36;
 
 /// The protocol version from which a unit holds a membership token: it reads
 /// one on a register or promotion and reports it in its membership reports.
