@@ -1792,6 +1792,16 @@
 #define MXR_OSD_SYNC_STATE_DEFERRED 3
 
 /**
+ * A preview sync's settings are all written and shown, not stored.
+ */
+#define MXR_OSD_SYNC_STATE_PREVIEWING 4
+
+/**
+ * A preview sync's settings were put back, for the reason the report gives.
+ */
+#define MXR_OSD_SYNC_STATE_REVERTED 5
+
+/**
  * A message is set. Without it the other fields are empty.
  */
 #define MXR_OSD_MESSAGE_SET (1 << 0)
@@ -2321,6 +2331,12 @@
  * Bytes in `mxr_osd_sync_report_t.reason`, its NUL included.
  */
 #define MXR_OSD_SYNC_REASON_LEN 65
+
+/**
+ * The longest a unit holds an overlay preview before it reverts it on its
+ * own, in seconds (`mxr_send_osd_preview()`). A timeout of 0 stands for 300.
+ */
+#define MXR_OSD_PREVIEW_TIMEOUT_MAX 3600
 
 /**
  * How many syncs `mxr_request_osd_settings()` reads the settings of, the
@@ -8151,6 +8167,96 @@ mxr_result_t mxr_keep_osd_sync(const mxr_remote_t *remote,
  * null or writable.
  */
 mxr_result_t mxr_resend_osd_sync(const mxr_remote_t *remote, mxr_uid_t device, uint16_t *seq);
+
+/**
+ * Has one unit show the given overlay settings and logo images in a
+ * preview, without storing them, writing the preview sync's number to `seq`
+ * when it is not null. The content is given as to `mxr_send_osd_sync()`.
+ *
+ * The unit takes it as it takes `mxr_send_osd_sync()`: it fetches the
+ * images, from an HTTP server of the preview's own on a free port, and asks
+ * for the settings, which this client answers from this content. The sync
+ * held for the mesh, and what other units fetch, stay as they are. The unit
+ * shows overlay `layer` in place of video from the start, 0 leaving its
+ * output alone, and once it has every setting it reports
+ * `MXR_OSD_SYNC_STATE_PREVIEWING` in `mxr_osd_sync_report()`. It reverts on
+ * its own after `timeout_s` seconds, 0 standing for 300, unless
+ * `mxr_hold_osd_preview()` restarts that. `mxr_commit_osd_preview()` stores
+ * the settings and `mxr_revert_osd_preview()` puts the stored ones back. A
+ * logo is stored as it is uploaded, so a revert does not take it back.
+ *
+ * A unit whose overlay module predates previews drops the sync and answers
+ * nothing: a `MXR_OSD_SYNC_STATE_TAKING` report is the sign the unit
+ * previews. One whose video processor is off reports
+ * `MXR_OSD_SYNC_STATE_FAILED` rather than deferring, as does one that cannot
+ * compose `layer`.
+ *
+ * The unit's preview is answered until it reports it stored, failed or put
+ * back, or until this client commits, reverts or replaces it.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` as for `mxr_send_osd_sync()`, and for a timeout
+ * over `MXR_OSD_PREVIEW_TIMEOUT_MAX`; `MXR_ERR_NOT_FOUND` for a unit not
+ * heard; `MXR_ERR_UNSUPPORTED` for one that takes no overlay sync. Content
+ * that fails to go out leaves no preview.
+ *
+ * # Safety
+ *
+ * As `mxr_send_osd_sync()`.
+ */
+mxr_result_t mxr_send_osd_preview(const mxr_remote_t *remote,
+                                  mxr_uid_t device,
+                                  uint8_t what,
+                                  const mxr_osd_sync_entry_t *entries,
+                                  size_t count,
+                                  const mxr_osd_sync_image_t *images,
+                                  uint8_t layer,
+                                  uint16_t timeout_s,
+                                  uint16_t *seq);
+
+/**
+ * Has a unit previewing sync `seq` show overlay `layer`, 0 leaving its
+ * output alone, and restarts its timeout at `timeout_s` seconds from now, 0
+ * standing for 300. A unit still taking the sync does so once it holds the
+ * preview. Its next report, previewing again, answers it.
+ *
+ * `MXR_ERR_INVALID_ARGUMENT` for a timeout over
+ * `MXR_OSD_PREVIEW_TIMEOUT_MAX`, and as `mxr_send_osd_preview()` for the
+ * unit.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_hold_osd_preview(const mxr_remote_t *remote,
+                                  mxr_uid_t device,
+                                  uint16_t seq,
+                                  uint8_t layer,
+                                  uint16_t timeout_s);
+
+/**
+ * Has a unit store the settings of preview sync `seq`, which it takes only
+ * while it holds the preview; it reports `MXR_OSD_SYNC_STATE_DONE`. The
+ * preview is answered no further. Refused as `mxr_send_osd_preview()` is for
+ * the unit.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_commit_osd_preview(const mxr_remote_t *remote, mxr_uid_t device, uint16_t seq);
+
+/**
+ * Has a unit put its stored settings back in place of preview sync `seq`,
+ * at any time during that sync: one that has not begun the preview yet ends
+ * the sync without writing a setting. It reports
+ * `MXR_OSD_SYNC_STATE_REVERTED`. The preview is answered no further. Refused
+ * as `mxr_send_osd_preview()` is for the unit.
+ *
+ * # Safety
+ *
+ * `remote` is null or a live handle from `mxr_remote_new()`.
+ */
+mxr_result_t mxr_revert_osd_preview(const mxr_remote_t *remote, mxr_uid_t device, uint16_t seq);
 
 /**
  * Asks for an overlay sync of this client's own, copying `what`

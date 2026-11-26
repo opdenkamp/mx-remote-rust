@@ -1090,6 +1090,10 @@ pub const MXR_OSD_SYNC_STATE_DONE: u8 = 1;
 pub const MXR_OSD_SYNC_STATE_FAILED: u8 = 2;
 /// Kept for later, as the unit's video processor is off in power save.
 pub const MXR_OSD_SYNC_STATE_DEFERRED: u8 = 3;
+/// A preview sync's settings are all written and shown, not stored.
+pub const MXR_OSD_SYNC_STATE_PREVIEWING: u8 = 4;
+/// A preview sync's settings were put back, for the reason the report gives.
+pub const MXR_OSD_SYNC_STATE_REVERTED: u8 = 5;
 
 // ---- the message on a unit's output, in `mxr_osd_message_t` ----
 

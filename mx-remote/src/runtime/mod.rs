@@ -1095,7 +1095,17 @@ impl Shared {
                 std::mem::take(&mut state.controller_state_requests),
             )
         };
+        let reports: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::OsdSyncReportChanged { device, report } => Some((*device, report.clone())),
+                _ => None,
+            })
+            .collect();
         self.dispatch(events);
+        if !reports.is_empty() {
+            self.end_osd_previews(&reports);
+        }
         if hello_requested {
             self.announce();
         }

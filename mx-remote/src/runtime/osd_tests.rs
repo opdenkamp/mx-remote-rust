@@ -923,24 +923,294 @@ fn images_are_served_on_the_selected_address_alone() {
     let mut c = content(1);
     c.images = Some(images());
     m.remote.send_osd_sync(c).expect("sent");
-    let port = u16_at(&m.sent().remove(0), 22);
-    let served = |ip: Ipv4Addr| TcpStream::connect((ip, port)).is_ok();
-    assert!(
-        served(Ipv4Addr::LOCALHOST) && served(other),
-        "not on every address"
-    );
+    let held = u16_at(&m.sent().remove(0), 22);
+    // A preview's images come from a server of their own, which moves too.
+    m.tap.clear();
+    let mut c = content(1);
+    c.images = Some(images());
+    m.remote.send_osd_preview(m.a, c, 0, 0).expect("sent");
+    let preview = u16_at(&m.sent().remove(0), 22);
+    for port in [held, preview] {
+        let served = |ip: Ipv4Addr| TcpStream::connect((ip, port)).is_ok();
+        assert!(
+            served(Ipv4Addr::LOCALHOST) && served(other),
+            "not on every address"
+        );
+    }
 
     m.remote.update_config(Some(other)).expect("moved");
-    assert!(served(other), "not served on {other}");
-    assert!(!served(Ipv4Addr::LOCALHOST), "served on loopback");
+    for port in [held, preview] {
+        let served = |ip: Ipv4Addr| TcpStream::connect((ip, port)).is_ok();
+        assert!(served(other), "{port} not served on {other}");
+        assert!(!served(Ipv4Addr::LOCALHOST), "{port} served on loopback");
+    }
 
     m.remote
         .update_config(Some(Ipv4Addr::LOCALHOST))
         .expect("moved");
-    assert!(served(Ipv4Addr::LOCALHOST), "not served on loopback");
-    assert!(!served(other), "served on {other}");
+    for port in [held, preview] {
+        let served = |ip: Ipv4Addr| TcpStream::connect((ip, port)).is_ok();
+        assert!(served(Ipv4Addr::LOCALHOST), "{port} not served on loopback");
+        assert!(!served(other), "{port} served on {other}");
+    }
 }
 
 /// The port [`images_are_served_on_the_selected_address_alone`] reopens its
 /// endpoint on, which no other test sends to.
 const SERVED_ADDRESS_PORT: u16 = 18822;
+
+// ---- a preview on one unit ----
+
+impl Mesh {
+    /// `unit` reporting `state` on sync `seq`.
+    fn report(&self, unit: DeviceUid, seq: u16, state: u8) {
+        let mut p = vec![2, 3];
+        p.extend_from_slice(&seq.to_le_bytes());
+        p.extend_from_slice(unit.as_bytes());
+        p.extend_from_slice(&[state, 0, 1, 0, 0, 0]);
+        p.resize(90, 0);
+        self.feed(unit, op::V2IP_OSD_SYNC, &p);
+    }
+
+    /// The settings sent for `unit`'s request of `missing` of sync `seq`,
+    /// as their index and caption text.
+    fn answered(&self, unit: DeviceUid, seq: u16, missing: &[u16]) -> Vec<(u16, String)> {
+        self.tap.clear();
+        self.request(unit, seq, 0x05, missing, self.uid());
+        while self.remote.shared.osd_pass() > 0 {}
+        self.sent()
+            .iter()
+            .filter(|p| p[1] == 2)
+            .map(|p| {
+                let text = String::from_utf8(p[30 + 48..].to_vec()).expect("utf-8");
+                (u16_at(p, 20), text)
+            })
+            .collect()
+    }
+}
+
+/// Content of `n` captions, each text naming `name` and its index.
+fn named(name: &str, n: usize) -> OsdSyncContent {
+    OsdSyncContent {
+        entries: (0..n).map(|i| caption(&format!("{name} {i}"))).collect(),
+        ..content(0)
+    }
+}
+
+/// A preview goes to its unit alone, at version 3 with PREVIEW set, then
+/// its timeout and layer, and leaves the manager part as it was.
+#[test]
+fn a_preview_goes_to_one_unit_as_a_version_3_sync() {
+    let m = mesh();
+    let seq = m
+        .remote
+        .send_osd_preview(m.a, content(3), 0x20, 600)
+        .expect("sent");
+    let sent = m.sent();
+    assert_eq!(sent.len(), 1);
+    let p = &sent[0];
+    assert_eq!(p.len(), 84);
+    assert_eq!(&p[..2], &[3, 0], "version 3, kind 0 SYNC");
+    assert_eq!(u16_at(p, 2), seq);
+    assert_eq!(target(p), m.a, "one unit, never every unit");
+    assert_eq!((p[20], p[21]), (0x05, 1), "what, and the PREVIEW flag");
+    assert_eq!(u16_at(p, 22), 0, "no images, so no server");
+    assert_eq!(u16_at(p, 28), 3);
+    assert_eq!(u16_at(p, 80), 600);
+    assert_eq!(&p[82..84], &[0x20, 0]);
+    assert_eq!(m.hellos(), vec![], "a preview holds no sync for the mesh");
+}
+
+/// A previewing unit is answered from its preview, while every other
+/// unit, and a sync of the held content, still get the held content.
+#[test]
+fn a_preview_is_answered_beside_the_held_sync() {
+    let m = mesh();
+    let held = m.remote.send_osd_sync(named("mesh", 3)).expect("sent");
+    let preview = m
+        .remote
+        .send_osd_preview(m.a, named("preview", 3), 0, 0)
+        .expect("sent");
+    assert_eq!(
+        m.answered(m.a, preview, &[0, 2]),
+        vec![(0, "preview 0".to_owned()), (2, "preview 2".to_owned())]
+    );
+    assert_eq!(m.answered(m.b, held, &[1]), vec![(1, "mesh 1".to_owned())]);
+    assert_eq!(
+        m.answered(m.b, preview, &[1]),
+        vec![],
+        "another unit's preview is not this one's"
+    );
+}
+
+/// A preview's images come from a server of its own, so the images units
+/// fetch for the held sync stay as they are.
+#[test]
+fn a_preview_serves_its_images_on_a_port_of_its_own() {
+    let m = mesh();
+    let mut mesh_content = content(1);
+    mesh_content.images = Some(images());
+    m.remote.send_osd_sync(mesh_content).expect("sent");
+    let held_port = u16_at(&m.sent()[0], 22);
+    m.tap.clear();
+    let mut c = content(1);
+    let mut preview_images = images();
+    preview_images[0].png = png(300, 150);
+    c.images = Some(preview_images.clone());
+    m.remote.send_osd_preview(m.a, c, 0, 0).expect("sent");
+    let p = m.sent().remove(0);
+    let port = u16_at(&p, 22);
+    assert_ne!(port, 0);
+    assert_ne!(port, held_port);
+    assert_eq!(u32_at(&p, 32 + 4), crc32(&preview_images[0].png));
+    let fetch = |port: u16| {
+        let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+        write!(s, "GET /osd-sync/slot1.png HTTP/1.1\r\n\r\n").expect("send");
+        let mut response = Vec::new();
+        s.read_to_end(&mut response).expect("read");
+        response
+    };
+    assert!(fetch(port).ends_with(&preview_images[0].png));
+    assert!(fetch(held_port).ends_with(&images()[0].png));
+}
+
+/// HOLD carries the layer and timeout; COMMIT and REVERT carry neither.
+#[test]
+fn the_preview_commands_name_the_unit_and_the_sync() {
+    let m = mesh();
+    let seq = m
+        .remote
+        .send_osd_preview(m.a, content(1), 0, 0)
+        .expect("sent");
+    m.tap.clear();
+    m.remote
+        .hold_osd_preview(m.a, seq, 0x40, 3600)
+        .expect("sent");
+    m.remote.commit_osd_preview(m.a, seq).expect("sent");
+    m.remote.revert_osd_preview(m.a, seq).expect("sent");
+    let sent = m.sent();
+    assert_eq!(sent.len(), 3);
+    for p in &sent {
+        assert_eq!(p.len(), 24);
+        assert_eq!(&p[..2], &[3, 7], "version 3, kind 7 PREVIEW");
+        assert_eq!(u16_at(p, 2), seq);
+        assert_eq!(target(p), m.a);
+    }
+    assert_eq!(&sent[0][20..], &[1, 0x40, 0x10, 0x0E]);
+    assert_eq!(&sent[1][20..], &[2, 0, 0, 0]);
+    assert_eq!(&sent[2][20..], &[3, 0, 0, 0]);
+}
+
+/// A committed or reverted preview is answered no further.
+#[test]
+fn committing_or_reverting_ends_the_preview() {
+    let m = mesh();
+    for end in [Remote::commit_osd_preview, Remote::revert_osd_preview] {
+        let seq = m
+            .remote
+            .send_osd_preview(m.a, content(2), 0, 0)
+            .expect("sent");
+        assert_eq!(m.answered(m.a, seq, &[0]).len(), 1);
+        end(&m.remote, m.a, seq).expect("sent");
+        assert_eq!(m.answered(m.a, seq, &[0]), vec![]);
+    }
+}
+
+/// A unit's report that the preview was stored, failed or put back ends
+/// it; one that it previews, or one on another sync, does not.
+#[test]
+fn a_report_that_the_preview_ended_ends_it() {
+    use crate::wire::OsdSyncState as S;
+    let m = mesh();
+    for state in [S::DONE, S::FAILED, S::REVERTED] {
+        let seq = m
+            .remote
+            .send_osd_preview(m.a, content(2), 0, 0)
+            .expect("sent");
+        m.report(m.a, seq, S::TAKING.to_wire());
+        m.report(m.a, seq, S::PREVIEWING.to_wire());
+        m.report(m.a, seq.wrapping_add(100), state.to_wire());
+        m.report(m.b, seq, state.to_wire());
+        assert_eq!(m.answered(m.a, seq, &[1]).len(), 1, "{state:?}");
+        m.report(m.a, seq, state.to_wire());
+        assert_eq!(m.answered(m.a, seq, &[1]), vec![], "{state:?}");
+    }
+}
+
+/// A new preview for a unit replaces its last one.
+#[test]
+fn a_new_preview_replaces_the_unit_s_last() {
+    let m = mesh();
+    let first = m
+        .remote
+        .send_osd_preview(m.a, named("first", 2), 0, 0)
+        .expect("sent");
+    let second = m
+        .remote
+        .send_osd_preview(m.a, named("second", 2), 0, 0)
+        .expect("sent");
+    assert_ne!(first, second);
+    assert_eq!(m.answered(m.a, first, &[0]), vec![]);
+    assert_eq!(
+        m.answered(m.a, second, &[0]),
+        vec![(0, "second 0".to_owned())]
+    );
+}
+
+#[test]
+fn a_preview_that_cannot_be_sent_is_not_kept() {
+    let (remote, tap) = client_with(0xFE, Arc::new(()));
+    let unit = uid_n(0x21);
+    remote.shared.process_datagram(
+        &datagram(
+            unit,
+            op::SYS_HELLO,
+            PROTOCOL_VERSION,
+            &hello_payload(0x2F, "OneIP", "OI0021", "4.8.0", DeviceFeature::OSD_SYNC),
+        ),
+        FROM,
+    );
+    let mut c = content(1);
+    c.images = Some(images());
+    assert!(matches!(
+        remote.send_osd_preview(unit, c, 0, 0),
+        Err(ControlError::Send(crate::wire::SendError::NotConnected))
+    ));
+    assert!(lock(&remote.shared.osd).previews.is_empty());
+    let _ = tap;
+}
+
+#[test]
+fn a_preview_a_unit_would_refuse_is_refused() {
+    let m = mesh();
+    let c = uid_n(0x24);
+    m.feed(
+        c,
+        op::SYS_HELLO,
+        &hello_payload(0x2F, "OneIP", "OI0024", "4.8.0", DeviceFeature::V2IP_SINK),
+    );
+    m.tap.clear();
+    fn invalid<T>(r: Result<T, ControlError>) -> bool {
+        matches!(r, Err(ControlError::InvalidRequest(_)))
+    }
+    assert!(invalid(m.remote.send_osd_preview(m.a, content(1), 0, 3601)));
+    assert!(invalid(m.remote.hold_osd_preview(m.a, 1, 0, 3601)));
+    assert!(invalid(m.remote.send_osd_preview(
+        m.a,
+        OsdSyncContent::default(),
+        0,
+        0
+    )));
+    assert!(matches!(
+        m.remote.send_osd_preview(c, content(1), 0, 0),
+        Err(ControlError::Unsupported(_))
+    ));
+    assert!(matches!(
+        m.remote.commit_osd_preview(uid_n(0x7F), 1),
+        Err(ControlError::UnknownDevice(_))
+    ));
+    assert!(m.sent().is_empty());
+    m.remote
+        .send_osd_preview(m.a, content(1), 0, 3600)
+        .expect("the longest timeout is taken");
+}

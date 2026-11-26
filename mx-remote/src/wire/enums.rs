@@ -1581,6 +1581,11 @@ wire_enum! {
         /// Kept for later, as the unit's video processor is off in power
         /// save.
         DEFERRED = 3;
+        /// A preview sync's settings are all written and shown, not stored.
+        PREVIEWING = 4;
+        /// A preview sync's settings were put back, for the reason the
+        /// report gives.
+        REVERTED = 5;
     }
 }
 

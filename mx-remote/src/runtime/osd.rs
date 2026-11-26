@@ -13,8 +13,13 @@
 //! While this client holds a sync it also announces itself as the mesh's
 //! overlay sync manager. A unit that wakes from power save, or that is told
 //! to pull, then asks this client for a new sync instead of the controller.
+//!
+//! A preview is a sync to one unit that the unit shows without storing,
+//! until it is committed or reverted. Each previewing unit is answered from
+//! its own content, beside the held sync, and fetches its images from a
+//! server of its own, as the path a unit fetches from names no sync.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -22,13 +27,14 @@ use std::net::Ipv4Addr;
 
 use crate::types::{
     OsdSyncContent, OsdSyncEntry, OsdSyncImage, OsdSyncReport, OsdSyncRequest, OsdSyncSlot,
-    OsdSyncValue, OSD_SETTINGS_ASKED, OSD_SYNC_FONT_MAX, OSD_SYNC_IMAGE_HEIGHT_MAX,
-    OSD_SYNC_IMAGE_MAX, OSD_SYNC_IMAGE_WIDTH_MAX, OSD_SYNC_PERCENT_MAX, OSD_SYNC_RECORDS_MAX,
-    OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
+    OsdSyncValue, OSD_PREVIEW_TIMEOUT_MAX, OSD_SETTINGS_ASKED, OSD_SYNC_FONT_MAX,
+    OSD_SYNC_IMAGE_HEIGHT_MAX, OSD_SYNC_IMAGE_MAX, OSD_SYNC_IMAGE_WIDTH_MAX, OSD_SYNC_PERCENT_MAX,
+    OSD_SYNC_RECORDS_MAX, OSD_SYNC_SLOTS, OSD_SYNC_TEXT_MAX,
 };
 use crate::wire::{
-    build_osd_report, build_osd_request, build_osd_setting, build_osd_sync, crc32, op, Addressee,
-    DeviceFeature, DeviceUid, OsdSyncWhat,
+    build_osd_preview, build_osd_preview_sync, build_osd_report, build_osd_request,
+    build_osd_setting, build_osd_sync, crc32, op, osd_preview, Addressee, DeviceFeature, DeviceUid,
+    OsdSyncState, OsdSyncWhat,
 };
 
 use super::control::ControlError;
@@ -52,6 +58,9 @@ const PNG_IHDR_AT: usize = 12;
 /// What this client sends and answers.
 pub(super) struct OsdSender {
     held: Option<Held>,
+    /// Each previewing unit's preview, until the unit reports it ended or
+    /// this client commits, reverts or replaces it.
+    previews: HashMap<DeviceUid, Preview>,
     next_seq: u16,
     queue: VecDeque<Pending>,
     server: Option<LogoServer>,
@@ -66,6 +75,14 @@ struct Held {
     http_port: u16,
     /// The syncs sent of it, oldest first.
     seqs: VecDeque<u16>,
+}
+
+/// The preview one unit is sent.
+struct Preview {
+    seq: u16,
+    entries: Arc<[OsdSyncEntry]>,
+    /// The server of its images, when it has any.
+    server: Option<LogoServer>,
 }
 
 /// A setting a unit asked for, not yet sent.
@@ -86,6 +103,7 @@ impl OsdSender {
             .map_or(0, |d| d.as_millis());
         Self {
             held: None,
+            previews: HashMap::new(),
             next_seq: (ms as u16).max(1),
             queue: VecDeque::new(),
             server: None,
@@ -97,12 +115,29 @@ impl OsdSender {
         self.held.is_some()
     }
 
-    /// Numbers a new sync of the held content, copying `what`, which is
-    /// some of what the content copies. Zero means "no sync", so the count
-    /// skips it.
-    fn sync_frame(&mut self, target: DeviceUid, what: OsdSyncWhat) -> Option<(u16, Vec<u8>)> {
+    /// The next sync's number. Zero means "no sync", so the count skips it.
+    fn take_seq(&mut self) -> u16 {
         let seq = self.next_seq;
         self.next_seq = seq.wrapping_add(1).max(1);
+        seq
+    }
+
+    /// The settings of `unit`'s sync `seq`: its preview's, or the held
+    /// content's while a request may still name that sync.
+    fn entries(&self, unit: DeviceUid, seq: u16) -> Option<&Arc<[OsdSyncEntry]>> {
+        if let Some(preview) = self.previews.get(&unit).filter(|p| p.seq == seq) {
+            return Some(&preview.entries);
+        }
+        self.held
+            .as_ref()
+            .filter(|h| h.seqs.contains(&seq))
+            .map(|h| &h.entries)
+    }
+
+    /// Numbers a new sync of the held content, copying `what`, which is
+    /// some of what the content copies.
+    fn sync_frame(&mut self, target: DeviceUid, what: OsdSyncWhat) -> Option<(u16, Vec<u8>)> {
+        let seq = self.take_seq();
         let held = self.held.as_mut()?;
         if held.seqs.len() == SEQS_KEPT {
             held.seqs.pop_front();
@@ -116,11 +151,11 @@ impl OsdSender {
     /// Replaces what is still to be sent to `unit` with the settings it
     /// lacks of sync `seq`.
     fn queue_missing(&mut self, unit: DeviceUid, request: &OsdSyncRequest) {
-        let Some(held) = &self.held else {
+        let Some(records) = self.entries(unit, request.seq).map(|e| e.len() as u16) else {
             return;
         };
         self.queue.retain(|p| p.unit != unit);
-        for index in 0..held.entries.len() as u16 {
+        for index in 0..records {
             if request.is_missing(index) {
                 self.queue.push_back(Pending {
                     unit,
@@ -146,18 +181,15 @@ impl OsdSender {
                 self.queue.drain(..).partition(|q| q.unit == p.unit);
             self.queue = others;
             self.queue.extend(theirs);
-            let Some(held) = &self.held else {
-                break;
-            };
             // A request for a sync since replaced, or aged out, is answered
             // no further: the unit asks again and gets a new sync.
-            let Some(entry) = held.entries.get(usize::from(p.index)) else {
+            let Some(entries) = self.entries(p.unit, p.seq) else {
                 continue;
             };
-            if !held.seqs.contains(&p.seq) {
+            let Some(entry) = entries.get(usize::from(p.index)) else {
                 continue;
-            }
-            let records = held.entries.len() as u16;
+            };
+            let records = entries.len() as u16;
             pass.push((
                 p.unit,
                 build_osd_setting(p.seq, p.unit, p.index, records, entry),
@@ -182,10 +214,11 @@ impl Shared {
     /// Answers the overlay sync requests a frame raised.
     ///
     /// One asking for a new sync is sent one of its own, copying what it
-    /// asks for of what this client holds. One naming a sync of the held
-    /// content has the settings it lacks queued, in place of what was still
-    /// queued for it. One naming any other sync of this client's is sent a
-    /// new sync the same way, since the unit can take no other.
+    /// asks for of what this client holds. One naming its preview, or a sync
+    /// of the held content, has the settings it lacks queued, in place of
+    /// what was still queued for it. One naming any other sync of this
+    /// client's is sent a new sync the same way, since the unit can take no
+    /// other.
     pub(super) fn answer_osd_requests(&self, requests: Vec<OsdSyncRequest>) {
         for request in requests {
             let unit = request.target;
@@ -194,8 +227,13 @@ impl Shared {
             };
             let sync = {
                 let mut osd = lock(&self.osd);
+                if request.seq != 0 && osd.entries(unit, request.seq).is_some() {
+                    osd.queue_missing(unit, &request);
+                    self.osd_queued.notify_one();
+                    continue;
+                }
                 let Some(held) = &osd.held else {
-                    return;
+                    continue;
                 };
                 let (held_what, current) = (held.what, held.seqs.contains(&request.seq));
                 if request.seq != 0 && current {
@@ -243,6 +281,35 @@ impl Shared {
         }
     }
 
+    /// Drops each preview whose unit reported it ended: stored, failed or
+    /// put back.
+    pub(super) fn end_osd_previews(&self, reports: &[(DeviceUid, OsdSyncReport)]) {
+        let ended = [
+            OsdSyncState::DONE,
+            OsdSyncState::FAILED,
+            OsdSyncState::REVERTED,
+        ];
+        for (unit, report) in reports {
+            if ended.contains(&report.state) {
+                self.drop_osd_preview(*unit, Some(report.seq));
+            }
+        }
+    }
+
+    /// Drops `unit`'s preview, only that of sync `seq` when one is given,
+    /// and stops serving its images.
+    fn drop_osd_preview(&self, unit: DeviceUid, seq: Option<u16>) {
+        let preview = {
+            let mut osd = lock(&self.osd);
+            match osd.previews.get(&unit) {
+                Some(p) if seq.map_or(true, |seq| seq == p.seq) => osd.previews.remove(&unit),
+                _ => None,
+            }
+        };
+        // Its server is joined outside the lock.
+        drop(preview);
+    }
+
     /// Drops the held sync and stops serving its images.
     pub(super) fn drop_osd_sync(&self) -> bool {
         let (held, server) = {
@@ -260,6 +327,7 @@ impl Shared {
     /// When it cannot, the server is stopped and the error returned; the next
     /// sync with images starts a new one.
     pub(super) fn move_logo_server(&self, address: Ipv4Addr) -> std::io::Result<()> {
+        self.move_preview_servers(address);
         let Some(server) = lock(&self.osd).server.take() else {
             return Ok(());
         };
@@ -276,6 +344,29 @@ impl Shared {
             osd.server = Some(server);
         }
         Ok(())
+    }
+
+    /// Has each preview's image server listen on `address`. A preview whose
+    /// server cannot is left without one, so its unit's fetch fails and it
+    /// reports the preview failed.
+    fn move_preview_servers(&self, address: Ipv4Addr) {
+        let servers: Vec<_> = lock(&self.osd)
+            .previews
+            .iter_mut()
+            .filter_map(|(unit, p)| Some((*unit, p.seq, p.server.take()?)))
+            .collect();
+        for (unit, seq, server) in servers {
+            let moved = if server.address() == address {
+                Some(server)
+            } else {
+                server.moved_to(address).ok()
+            };
+            let mut osd = lock(&self.osd);
+            // A preview replaced meanwhile has a server of its own.
+            if let Some(p) = osd.previews.get_mut(&unit).filter(|p| p.seq == seq) {
+                p.server = moved;
+            }
+        }
     }
 }
 
@@ -327,18 +418,7 @@ impl Remote {
     /// Holds `content` and serves its images. Whether a sync was held before.
     fn store_osd_sync(&self, content: OsdSyncContent) -> Result<bool, ControlError> {
         let images = content.images.as_ref();
-        let mut what =
-            OsdSyncWhat::from_bits(content.what.bits() & !OsdSyncWhat::LOGO_SLOTS.bits());
-        if images.is_some() {
-            what |= OsdSyncWhat::LOGO_SLOTS;
-        }
-        let slots = images.map_or_else(Default::default, |images| {
-            core::array::from_fn(|i| OsdSyncSlot {
-                bytes: images[i].png.len() as u32,
-                crc32: crc32(&images[i].png),
-                percent: images[i].percent,
-            })
-        });
+        let (what, slots) = slots_of(&content);
         let address = lock(&self.shared.network).listen_address();
         let mut osd = lock(&self.shared.osd);
         let http_port = match images {
@@ -381,6 +461,21 @@ impl Remote {
     /// [`OSD_SYNC`](DeviceFeature::OSD_SYNC), as one that does not take
     /// overlay syncs.
     pub fn resend_osd_sync(&self, device: DeviceUid) -> Result<u16, ControlError> {
+        let to = self.sync_taker(device)?;
+        let (seq, frame) = {
+            let mut osd = lock(&self.shared.osd);
+            let what = osd.held.as_ref().map(|h| h.what);
+            what.and_then(|what| osd.sync_frame(device, what))
+                .ok_or(ControlError::InvalidRequest("no overlay sync is held"))?
+        };
+        self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
+        Ok(seq)
+    }
+
+    /// A unit addressed alone, refused when not heard, or when it does not
+    /// announce [`OSD_SYNC`](DeviceFeature::OSD_SYNC), as one that does not
+    /// take overlay syncs.
+    fn sync_taker(&self, device: DeviceUid) -> Result<Addressee, ControlError> {
         let to = self
             .shared
             .addressee(device)
@@ -393,14 +488,129 @@ impl Remote {
         if !takes {
             return Err(ControlError::Unsupported("the unit takes no overlay sync"));
         }
-        let (seq, frame) = {
-            let mut osd = lock(&self.shared.osd);
-            let what = osd.held.as_ref().map(|h| h.what);
-            what.and_then(|what| osd.sync_frame(device, what))
-                .ok_or(ControlError::InvalidRequest("no overlay sync is held"))?
+        Ok(to)
+    }
+
+    /// Has one unit show `content` in a preview, without storing it,
+    /// returning the preview sync's number.
+    ///
+    /// The unit takes it as it takes [`Remote::send_osd_sync`]: it fetches
+    /// the images, from a server of the preview's own on a free port, and
+    /// asks for the settings, which this client answers from `content`. The
+    /// sync held for the mesh, and what other units fetch, stay as they
+    /// are. The unit shows overlay `layer` in place of video from the start,
+    /// 0 leaving its output alone, and once it has every setting it reports
+    /// [`PREVIEWING`](OsdSyncState::PREVIEWING) in
+    /// [`Remote::osd_sync_report`]. It reverts on its own after `timeout_s`
+    /// seconds, 0 standing for 300, unless
+    /// [`Remote::hold_osd_preview`] restarts that.
+    /// [`Remote::commit_osd_preview`] stores the settings and
+    /// [`Remote::revert_osd_preview`] puts the stored ones back. A logo is
+    /// stored as it is uploaded, so a revert does not take it back.
+    ///
+    /// A unit whose overlay module predates previews drops the sync and
+    /// answers nothing, so it never stores content no one approved: a
+    /// [`TAKING`](OsdSyncState::TAKING) report is the sign the unit
+    /// previews. One whose video processor is off reports
+    /// [`FAILED`](OsdSyncState::FAILED) rather than deferring, as does one
+    /// that cannot compose `layer`.
+    ///
+    /// The unit's preview is answered until it reports it stored, failed or
+    /// put back, or until this client commits, reverts or replaces it.
+    ///
+    /// Refused as [`Remote::send_osd_sync`] is, for a timeout over
+    /// [`OSD_PREVIEW_TIMEOUT_MAX`], and as [`Remote::resend_osd_sync`] is
+    /// for the unit. Content that fails to go out leaves no preview.
+    pub fn send_osd_preview(
+        &self,
+        device: DeviceUid,
+        content: OsdSyncContent,
+        layer: u8,
+        timeout_s: u16,
+    ) -> Result<u16, ControlError> {
+        validate(&content)?;
+        check_timeout(timeout_s)?;
+        let to = self.sync_taker(device)?;
+        let (what, slots) = slots_of(&content);
+        let server = match &content.images {
+            Some(images) => {
+                let address = lock(&self.shared.network).listen_address();
+                let mut server = None;
+                serve(&mut server, address, None, images)?;
+                server
+            }
+            None => None,
         };
-        self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
+        let http_port = server.as_ref().map_or(0, LogoServer::port);
+        let records = content.entries.len() as u16;
+        let (seq, replaced) = {
+            let mut osd = lock(&self.shared.osd);
+            let seq = osd.take_seq();
+            let preview = Preview {
+                seq,
+                entries: content.entries.into(),
+                server,
+            };
+            (seq, osd.previews.insert(device, preview))
+        };
+        // The replaced preview's server is joined outside the lock.
+        drop(replaced);
+        let frame = build_osd_preview_sync(
+            seq, device, what, http_port, records, &slots, layer, timeout_s,
+        );
+        self.shared
+            .send(&to, op::V2IP_OSD_SYNC, &frame)
+            .inspect_err(|_| self.shared.drop_osd_preview(device, Some(seq)))?;
         Ok(seq)
+    }
+
+    /// Has a unit previewing sync `seq` show overlay `layer`, 0 leaving its
+    /// output alone, and restarts its timeout at `timeout_s` seconds from
+    /// now, 0 standing for 300. A unit still taking the sync does so once
+    /// it holds the preview. Its next report, previewing again, answers it.
+    ///
+    /// Refused for a timeout over [`OSD_PREVIEW_TIMEOUT_MAX`], and as
+    /// [`Remote::resend_osd_sync`] is for the unit.
+    pub fn hold_osd_preview(
+        &self,
+        device: DeviceUid,
+        seq: u16,
+        layer: u8,
+        timeout_s: u16,
+    ) -> Result<(), ControlError> {
+        check_timeout(timeout_s)?;
+        let to = self.sync_taker(device)?;
+        let frame = build_osd_preview(seq, device, osd_preview::HOLD, layer, timeout_s);
+        self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
+        Ok(())
+    }
+
+    /// Has a unit store the settings of preview sync `seq`, which it takes
+    /// only while it holds the preview; it reports
+    /// [`DONE`](OsdSyncState::DONE). The preview is answered no further.
+    ///
+    /// Refused as [`Remote::resend_osd_sync`] is for the unit.
+    pub fn commit_osd_preview(&self, device: DeviceUid, seq: u16) -> Result<(), ControlError> {
+        self.end_osd_preview(device, seq, osd_preview::COMMIT)
+    }
+
+    /// Has a unit put its stored settings back in place of preview sync
+    /// `seq`, at any time during that sync: one that has not begun the
+    /// preview yet ends the sync without writing a setting. It reports
+    /// [`REVERTED`](OsdSyncState::REVERTED). The preview is answered no
+    /// further.
+    ///
+    /// Refused as [`Remote::resend_osd_sync`] is for the unit.
+    pub fn revert_osd_preview(&self, device: DeviceUid, seq: u16) -> Result<(), ControlError> {
+        self.end_osd_preview(device, seq, osd_preview::REVERT)
+    }
+
+    fn end_osd_preview(&self, device: DeviceUid, seq: u16, action: u8) -> Result<(), ControlError> {
+        let to = self.sync_taker(device)?;
+        let frame = build_osd_preview(seq, device, action, 0, 0);
+        self.shared.send(&to, op::V2IP_OSD_SYNC, &frame)?;
+        self.shared.drop_osd_preview(device, Some(seq));
+        Ok(())
     }
 
     /// Asks for an overlay sync of this client's own, copying `what`, as a
@@ -522,6 +732,33 @@ fn serve(
     let port = running.port();
     *server = Some(running);
     Ok(port)
+}
+
+/// What a sync of `content` copies, with
+/// [`OsdSyncWhat::LOGO_SLOTS`] when it has images, and its slots.
+fn slots_of(content: &OsdSyncContent) -> (OsdSyncWhat, [OsdSyncSlot; OSD_SYNC_SLOTS]) {
+    let images = content.images.as_ref();
+    let mut what = OsdSyncWhat::from_bits(content.what.bits() & !OsdSyncWhat::LOGO_SLOTS.bits());
+    if images.is_some() {
+        what |= OsdSyncWhat::LOGO_SLOTS;
+    }
+    let slots = images.map_or_else(Default::default, |images| {
+        core::array::from_fn(|i| OsdSyncSlot {
+            bytes: images[i].png.len() as u32,
+            crc32: crc32(&images[i].png),
+            percent: images[i].percent,
+        })
+    });
+    (what, slots)
+}
+
+fn check_timeout(timeout_s: u16) -> Result<(), ControlError> {
+    if timeout_s > OSD_PREVIEW_TIMEOUT_MAX {
+        return Err(ControlError::InvalidRequest(
+            "an overlay preview of at most 3600 s",
+        ));
+    }
+    Ok(())
 }
 
 fn validate(content: &OsdSyncContent) -> Result<(), ControlError> {

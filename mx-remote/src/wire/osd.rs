@@ -13,8 +13,13 @@ use super::enums::{OsdMessageFlag, OsdMessagePriority, OsdSyncWhat};
 use super::payload::append_fixed_str;
 use super::uid::DeviceUid;
 
-/// The payload version every frame opens with; a unit drops any other.
+/// The payload version every frame opens with but the two of a preview; a
+/// unit drops any other.
 pub(crate) const OSD_SYNC_VERSION: u8 = 2;
+
+/// The payload version of a preview sync and of a preview command. A unit
+/// whose overlay module predates previews drops it, and answers nothing.
+pub(crate) const OSD_SYNC_VERSION_PREVIEW: u8 = 3;
 
 /// Width of the header.
 pub(crate) const OSD_HEADER_SIZE: usize = 20;
@@ -28,6 +33,7 @@ pub(crate) mod osd_kind {
     pub(crate) const MESSAGE_REQUEST: u8 = 4;
     pub(crate) const MESSAGE_SET: u8 = 5;
     pub(crate) const MESSAGE_STATE: u8 = 6;
+    pub(crate) const PREVIEW: u8 = 7;
 }
 
 /// Width of a sync: the header, what, the HTTP port, source address,
@@ -35,6 +41,27 @@ pub(crate) mod osd_kind {
 pub(crate) const OSD_SYNC_SIZE: usize = 80;
 pub(crate) const OSD_SYNC_SLOTS_AT: usize = 32;
 pub(crate) const OSD_SYNC_SLOT_SIZE: usize = 12;
+
+/// Width of a preview sync: a sync, its flags at 21, then the timeout, the
+/// layer shown and a reserved byte.
+pub(crate) const OSD_PREVIEW_SYNC_SIZE: usize = 84;
+pub(crate) const OSD_SYNC_FLAGS_AT: usize = 21;
+/// The flag at 21 that holds a sync's settings in a preview.
+pub(crate) const OSD_SYNC_FLAG_PREVIEW: u8 = 1;
+
+/// Width of a preview command: the header, the action, the layer shown and
+/// the timeout.
+pub(crate) const OSD_PREVIEW_SIZE: usize = 24;
+
+/// The action of a preview command.
+pub(crate) mod osd_preview {
+    /// Shows a layer and restarts the timeout.
+    pub(crate) const HOLD: u8 = 1;
+    /// Stores the previewed settings.
+    pub(crate) const COMMIT: u8 = 2;
+    /// Puts the stored settings back.
+    pub(crate) const REVERT: u8 = 3;
+}
 
 /// Width of a request: the header, what, the settings it lacks from 22, and
 /// the source of the sync it asks about from 38.
@@ -102,6 +129,45 @@ pub(crate) fn build_osd_sync(
         }
     }
     p.resize(OSD_SYNC_SIZE, 0);
+    p
+}
+
+/// Builds a preview sync for `target` alone, as [`build_osd_sync`], which
+/// the unit holds in a preview showing `layer` until a command or
+/// `timeout_s` ends it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_osd_preview_sync(
+    seq: u16,
+    target: DeviceUid,
+    what: OsdSyncWhat,
+    http_port: u16,
+    records: u16,
+    slots: &[OsdSyncSlot; OSD_SYNC_SLOTS],
+    layer: u8,
+    timeout_s: u16,
+) -> Vec<u8> {
+    let mut p = build_osd_sync(seq, target, what, http_port, records, slots);
+    p[0] = OSD_SYNC_VERSION_PREVIEW;
+    p[OSD_SYNC_FLAGS_AT] = OSD_SYNC_FLAG_PREVIEW;
+    p.extend_from_slice(&timeout_s.to_le_bytes());
+    p.push(layer);
+    p.resize(OSD_PREVIEW_SYNC_SIZE, 0);
+    p
+}
+
+/// Builds a preview command of `action` for `target`'s preview of sync
+/// `seq`. `layer` and `timeout_s` are a HOLD's, and zero for any other.
+pub(crate) fn build_osd_preview(
+    seq: u16,
+    target: DeviceUid,
+    action: u8,
+    layer: u8,
+    timeout_s: u16,
+) -> Vec<u8> {
+    let mut p = header(osd_kind::PREVIEW, seq, target, OSD_PREVIEW_SIZE);
+    p[0] = OSD_SYNC_VERSION_PREVIEW;
+    p.extend_from_slice(&[action, layer]);
+    p.extend_from_slice(&timeout_s.to_le_bytes());
     p
 }
 
@@ -434,6 +500,40 @@ mod tests {
         ]
         .concat();
         assert_eq!(hex, want);
+    }
+
+    /// A preview sync is the sync at version 3 with its PREVIEW flag, then the
+    /// timeout at 80, the layer at 82 and a reserved byte at 83.
+    #[test]
+    fn a_preview_sync_is_the_sync_with_its_preview_fields() {
+        let target = uid_n(7);
+        let what = OsdSyncWhat::from_bits(0x0B);
+        let p =
+            build_osd_preview_sync(0xA1B2, target, what, 0x1F90, 0x0123, &slots(), 0x5A, 0x0E10);
+        let sync = build_osd_sync(0xA1B2, target, what, 0x1F90, 0x0123, &slots());
+        assert_eq!(p.len(), 84);
+        assert_eq!(p[0], 3, "a preview sync is version 3");
+        assert_eq!(p[21], 1, "the PREVIEW flag");
+        assert_eq!(&p[1..21], &sync[1..21]);
+        assert_eq!(&p[22..80], &sync[22..80]);
+        assert_eq!(u16_at(&p, 80), 0x0E10);
+        assert_eq!(&p[82..84], &[0x5A, 0]);
+    }
+
+    #[test]
+    fn a_preview_command_puts_each_field_at_its_offset() {
+        let target = uid_n(9);
+        let p = build_osd_preview(0xA1B2, target, osd_preview::HOLD, 0x5A, 0x0E10);
+        assert_eq!(p.len(), 24);
+        assert_eq!(&p[..2], &[3, 7], "version 3, kind 7");
+        assert_eq!(u16_at(&p, 2), 0xA1B2);
+        assert_eq!(&p[4..20], target.as_bytes());
+        assert_eq!(&p[20..22], &[1, 0x5A]);
+        assert_eq!(u16_at(&p, 22), 0x0E10);
+        let commit = build_osd_preview(1, target, osd_preview::COMMIT, 0, 0);
+        let revert = build_osd_preview(1, target, osd_preview::REVERT, 0, 0);
+        assert_eq!(&commit[20..], &[2, 0, 0, 0]);
+        assert_eq!(&revert[20..], &[3, 0, 0, 0]);
     }
 
     #[test]

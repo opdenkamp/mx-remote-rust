@@ -25,7 +25,7 @@ use mx_remote::{
     V2ipFpgaFeature, V2ipPrivacy, V2ipPrivacyStream, V2ipPtpMessages, V2ipPtpState, V2ipRxStats,
     V2ipSinkSdp, V2ipStreamSource, V2ipStreamSources, V2ipTestSync, V2ipTestTone, V2ipTestcard,
     V2ipTilingConfig, V2ipToneMode, V2ipTxStats, V2ipVlan, VctStatus, MULTIVIEWER_INPUTS,
-    OSD_MESSAGE_TEXT_MAX, OSD_SYNC_SLOTS, V2IP_DOWNMIX_LFE_MAX,
+    OSD_MESSAGE_TEXT_MAX, OSD_PREVIEW_TIMEOUT_MAX, OSD_SYNC_SLOTS, V2IP_DOWNMIX_LFE_MAX,
 };
 
 use crate::abi::from_control;
@@ -1970,6 +1970,11 @@ pub const MXR_OSD_SYNC_SLOTS: usize = 4;
 pub const MXR_OSD_SYNC_REASON_LEN: usize = 65;
 
 const _: () = assert!(MXR_OSD_SYNC_SLOTS == OSD_SYNC_SLOTS);
+/// The longest a unit holds an overlay preview before it reverts it on its
+/// own, in seconds (`mxr_send_osd_preview()`). A timeout of 0 stands for 300.
+pub const MXR_OSD_PREVIEW_TIMEOUT_MAX: u16 = 3600;
+
+const _: () = assert!(MXR_OSD_PREVIEW_TIMEOUT_MAX == OSD_PREVIEW_TIMEOUT_MAX);
 /// How many syncs `mxr_request_osd_settings()` reads the settings of, the
 /// ones asked about last.
 pub const MXR_OSD_SETTINGS_ASKED: usize = 8;

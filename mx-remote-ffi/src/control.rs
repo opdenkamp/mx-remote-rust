@@ -3621,6 +3621,141 @@ pub unsafe extern "C" fn mxr_resend_osd_sync(
     })
 }
 
+/// Has one unit show the given overlay settings and logo images in a
+/// preview, without storing them, writing the preview sync's number to `seq`
+/// when it is not null. The content is given as to `mxr_send_osd_sync()`.
+///
+/// The unit takes it as it takes `mxr_send_osd_sync()`: it fetches the
+/// images, from an HTTP server of the preview's own on a free port, and asks
+/// for the settings, which this client answers from this content. The sync
+/// held for the mesh, and what other units fetch, stay as they are. The unit
+/// shows overlay `layer` in place of video from the start, 0 leaving its
+/// output alone, and once it has every setting it reports
+/// `MXR_OSD_SYNC_STATE_PREVIEWING` in `mxr_osd_sync_report()`. It reverts on
+/// its own after `timeout_s` seconds, 0 standing for 300, unless
+/// `mxr_hold_osd_preview()` restarts that. `mxr_commit_osd_preview()` stores
+/// the settings and `mxr_revert_osd_preview()` puts the stored ones back. A
+/// logo is stored as it is uploaded, so a revert does not take it back.
+///
+/// A unit whose overlay module predates previews drops the sync and answers
+/// nothing: a `MXR_OSD_SYNC_STATE_TAKING` report is the sign the unit
+/// previews. One whose video processor is off reports
+/// `MXR_OSD_SYNC_STATE_FAILED` rather than deferring, as does one that cannot
+/// compose `layer`.
+///
+/// The unit's preview is answered until it reports it stored, failed or put
+/// back, or until this client commits, reverts or replaces it.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` as for `mxr_send_osd_sync()`, and for a timeout
+/// over `MXR_OSD_PREVIEW_TIMEOUT_MAX`; `MXR_ERR_NOT_FOUND` for a unit not
+/// heard; `MXR_ERR_UNSUPPORTED` for one that takes no overlay sync. Content
+/// that fails to go out leaves no preview.
+///
+/// # Safety
+///
+/// As `mxr_send_osd_sync()`.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn mxr_send_osd_preview(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    what: u8,
+    entries: *const mxr_osd_sync_entry_t,
+    count: usize,
+    images: *const mxr_osd_sync_image_t,
+    layer: u8,
+    timeout_s: u16,
+    seq: *mut u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        // SAFETY: the caller guarantees the arrays and the strings in them.
+        let content = match unsafe { osd_content(what, entries, count, images) } {
+            Ok(content) => content,
+            Err(code) => return code,
+        };
+        let sent = r
+            .remote
+            .send_osd_preview(device.into(), content, layer, timeout_s);
+        // SAFETY: the caller guarantees a writable u16 or null.
+        unsafe { sent_seq(sent, seq) }
+    })
+}
+
+/// Has a unit previewing sync `seq` show overlay `layer`, 0 leaving its
+/// output alone, and restarts its timeout at `timeout_s` seconds from now, 0
+/// standing for 300. A unit still taking the sync does so once it holds the
+/// preview. Its next report, previewing again, answers it.
+///
+/// `MXR_ERR_INVALID_ARGUMENT` for a timeout over
+/// `MXR_OSD_PREVIEW_TIMEOUT_MAX`, and as `mxr_send_osd_preview()` for the
+/// unit.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_hold_osd_preview(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    seq: u16,
+    layer: u8,
+    timeout_s: u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(
+            r.remote
+                .hold_osd_preview(device.into(), seq, layer, timeout_s),
+        )
+    })
+}
+
+/// Has a unit store the settings of preview sync `seq`, which it takes only
+/// while it holds the preview; it reports `MXR_OSD_SYNC_STATE_DONE`. The
+/// preview is answered no further. Refused as `mxr_send_osd_preview()` is for
+/// the unit.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_commit_osd_preview(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    seq: u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.commit_osd_preview(device.into(), seq))
+    })
+}
+
+/// Has a unit put its stored settings back in place of preview sync `seq`,
+/// at any time during that sync: one that has not begun the preview yet ends
+/// the sync without writing a setting. It reports
+/// `MXR_OSD_SYNC_STATE_REVERTED`. The preview is answered no further. Refused
+/// as `mxr_send_osd_preview()` is for the unit.
+///
+/// # Safety
+///
+/// `remote` is null or a live handle from `mxr_remote_new()`.
+#[no_mangle]
+pub unsafe extern "C" fn mxr_revert_osd_preview(
+    remote: *const mxr_remote_t,
+    device: mxr_uid_t,
+    seq: u16,
+) -> mxr_result_t {
+    // SAFETY: the caller guarantees a live handle or null.
+    let handle = unsafe { remote.as_ref() };
+    with(handle, |r| {
+        from_control(r.remote.revert_osd_preview(device.into(), seq))
+    })
+}
+
 /// Asks for an overlay sync of this client's own, copying `what`
 /// (`MXR_OSD_SYNC_WHAT_*`), as a unit does: the controller answers with a sync
 /// naming this client, read with `mxr_osd_sync()` on its sender. For 10 s

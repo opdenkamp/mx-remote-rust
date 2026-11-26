@@ -2107,6 +2107,61 @@ fn the_overlay_sync_calls_check_their_arguments_first() {
     // SAFETY: a live handle and a writable number.
     let rc = unsafe { mxr_resend_osd_sync(remote, uid_n(9), &mut seq) };
     assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // A preview is checked as a sync is, then for its timeout, then for the
+    // unit; one unit never heard is not found.
+    // SAFETY: a live handle, no entries and no images; a preview copying
+    // nothing is what is under test.
+    let rc = unsafe {
+        mxr_send_osd_preview(
+            remote,
+            uid_n(9),
+            0,
+            ptr::null(),
+            0,
+            ptr::null(),
+            0,
+            0,
+            &mut seq,
+        )
+    };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle and one entry with no strings.
+    let preview = |timeout_s: u16, seq: &mut u16| unsafe {
+        mxr_send_osd_preview(
+            remote,
+            uid_n(9),
+            MXR_OSD_SYNC_WHAT_BACKGROUNDS,
+            &background,
+            1,
+            ptr::null(),
+            0x20,
+            timeout_s,
+            seq,
+        )
+    };
+    let rc = preview(MXR_OSD_PREVIEW_TIMEOUT_MAX + 1, &mut seq);
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    assert!(
+        last_error().contains("3600"),
+        "the failure did not say why: {}",
+        last_error()
+    );
+    let rc = preview(MXR_OSD_PREVIEW_TIMEOUT_MAX, &mut seq);
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    assert_eq!(seq, 0x5A5A, "a preview not sent writes no number");
+    // SAFETY: a live handle.
+    let rc =
+        unsafe { mxr_hold_osd_preview(remote, uid_n(9), 1, 0, MXR_OSD_PREVIEW_TIMEOUT_MAX + 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_INVALID_ARGUMENT);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_hold_osd_preview(remote, uid_n(9), 1, 0, 0) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_commit_osd_preview(remote, uid_n(9), 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
+    // SAFETY: a live handle.
+    let rc = unsafe { mxr_revert_osd_preview(remote, uid_n(9), 1) };
+    assert_eq!(rc, mxr_result_t::MXR_ERR_NOT_FOUND);
     // SAFETY: a live handle.
     let rc = unsafe { mxr_clear_osd_sync(remote) };
     assert_eq!(rc, mxr_result_t::MXR_OK);

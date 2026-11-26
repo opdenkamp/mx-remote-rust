@@ -176,7 +176,10 @@ pub struct OsdSyncSetting {
 /// How a unit is getting on with a sync.
 ///
 /// A unit reports taking, then done or failed. One in power save reports
-/// deferred, and reports again once it takes the sync on waking.
+/// deferred, and reports again once it takes the sync on waking. A preview
+/// sync ([`Remote::send_osd_preview`](crate::Remote::send_osd_preview))
+/// goes from taking to previewing, then to done once committed, or to
+/// reverted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OsdSyncReport {
     /// The sync it reports on, numbered by the source that sent it.
@@ -216,6 +219,12 @@ pub const OSD_SYNC_IMAGE_HEIGHT_MAX: u32 = 1080;
 
 /// The largest size a logo is shown at, in percent.
 pub const OSD_SYNC_PERCENT_MAX: u8 = 100;
+
+/// The longest a unit holds an overlay preview before it reverts it on its
+/// own, in seconds
+/// ([`Remote::send_osd_preview`](crate::Remote::send_osd_preview)). A
+/// timeout of 0 stands for 300.
+pub const OSD_PREVIEW_TIMEOUT_MAX: u16 = 3600;
 
 /// One setting of a sync this client sends.
 #[derive(Clone, Debug, PartialEq, Eq)]
