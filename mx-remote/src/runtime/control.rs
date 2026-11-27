@@ -858,10 +858,13 @@ impl Remote {
     /// [`Remote::send_action`] names an outcome instead, and the device
     /// decides which keys reach it.
     ///
-    /// A key for an output goes to the source routed to it, which works on
-    /// every firmware: a OneIP unit whose firmware does not pass a key on to
-    /// the unit sending its output's stream drops one sent to its output.
-    /// With nothing routed it is refused with [`ControlError::NotReported`].
+    /// A key for an output whose source is on another unit goes to that
+    /// source, which works on every firmware: a OneIP unit whose firmware
+    /// does not pass a key on to the unit sending its output's stream drops
+    /// one sent to its output. A key for an output showing an input of its
+    /// own unit goes to the output, which keys its display with the input's
+    /// driver. With nothing routed it is refused with
+    /// [`ControlError::NotReported`].
     ///
     /// A unit sends nothing back for a key, so whether it arrived can only be
     /// seen on whatever it was for.
@@ -872,7 +875,12 @@ impl Remote {
                 let source = b
                     .video_source
                     .ok_or(ControlError::NotReported("the source routed to the output"))?;
-                acted_on(state, source)?
+                let (_, routed) = bay_of(state, source)?;
+                if source.device == device.uid && !routed.is_v2ip_remote() {
+                    (device, b)
+                } else {
+                    acted_on(state, source)?
+                }
             } else {
                 (device, b)
             };

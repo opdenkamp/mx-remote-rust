@@ -5571,8 +5571,9 @@ fn sent_to(f: &Fixture, what: &str, call: Result<(), ControlError>) -> (DeviceUi
     (uid, u16::from_le_bytes([p[16], p[17]]))
 }
 
-/// A key for an output goes to the source routed to it, as a OneIP unit may
-/// drop one sent to its output: through a mesh bay, to the unit sending it.
+/// A key for an output whose source is on another unit goes to that source,
+/// as a OneIP unit may drop one sent to its output: through a mesh bay, to
+/// the unit sending it.
 #[test]
 fn a_key_for_an_output_goes_to_its_routed_source() {
     let (f, _, listed_output, tx_bay, rx_bay) = mesh_listing();
@@ -5610,6 +5611,48 @@ fn a_key_for_an_output_goes_to_its_routed_source() {
             "{output}"
         );
     }
+}
+
+/// A unit keys an output's display itself when the output shows an input of
+/// its own: it takes the input's driver and runs it on the output. A key for
+/// an output goes elsewhere only when its source is on another unit.
+#[test]
+fn a_key_for_an_output_showing_a_local_input_stays_on_the_output() {
+    let f = Fixture::new();
+    let (unit, other, peer) = (uid_n(196), uid_n(197), uid_n(198));
+    f.everything(unit, 0x2F, "KO0001");
+    f.everything(other, 0x2F, "KO0002");
+    f.everything(peer, 0x2F, "KO0003");
+    let output = BayUid::new(unit, 2);
+
+    f.tap.clear();
+    f.round_trip(
+        "select_video_source",
+        peer,
+        f.remote.select_video_source(output, 1),
+    );
+    assert_eq!(
+        f.remote.bay(output).expect("no bay").video_source,
+        Some(BayUid::new(unit, 1))
+    );
+    assert_eq!(
+        sent_to(&f, "key", f.remote.send_key(output, RcKey::PLAY)),
+        (unit, 2)
+    );
+
+    f.round_trip(
+        "route_v2ip_unit",
+        peer,
+        f.remote.route_v2ip_unit(unit, other, None, false),
+    );
+    assert_eq!(
+        f.remote.bay(output).expect("no bay").video_source,
+        Some(BayUid::new(other, 1))
+    );
+    assert_eq!(
+        sent_to(&f, "key", f.remote.send_key(output, RcKey::PLAY)),
+        (other, 1)
+    );
 }
 
 /// A command about a mesh bay goes to the unit it stands for, about that

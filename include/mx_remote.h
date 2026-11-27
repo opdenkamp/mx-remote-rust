@@ -6709,9 +6709,11 @@ mxr_result_t mxr_send_action(const mxr_remote_t *remote, mxr_bay_uid_t bay, uint
  * values, or a raw code above `MXR_KEY_CUSTOM_CEC` or `MXR_KEY_CUSTOM_SKY`.
  * A value this library has no name for is sent as it was given.
  *
- * A key for an output goes to the source routed to it, which works on every
- * firmware: a OneIP unit whose firmware does not pass a key on to the unit
- * sending its output's stream drops one sent to its output. With nothing
+ * A key for an output whose source is on another unit goes to that source,
+ * which works on every firmware: a OneIP unit whose firmware does not pass a
+ * key on to the unit sending its output's stream drops one sent to its
+ * output. A key for an output showing an input of its own unit goes to the
+ * output, which keys its display with the input's driver. With nothing
  * routed it is refused with `MXR_ERR_NOT_REPORTED`. A unit sends nothing back for a
  * key, so whether it arrived can only be seen on whatever it was for.
  *
