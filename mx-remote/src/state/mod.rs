@@ -47,6 +47,9 @@ pub(crate) const MCAST_FAULT_GRACE: Duration = Duration::from_secs(60);
 pub(crate) struct State {
     /// This client's own identifier, so its own frames can be ignored.
     pub(crate) uid: DeviceUid,
+    /// The identifier this client announces itself under on announce
+    /// interfaces, whose frames are its own as well.
+    pub(crate) announce_uid: Option<DeviceUid>,
     /// The mesh controller this client follows, zero for none: what a unit
     /// judges a write to itself against.
     pub(crate) mesh_controller: DeviceUid,
@@ -136,6 +139,7 @@ impl State {
     pub(crate) fn new(uid: DeviceUid) -> Self {
         Self {
             uid,
+            announce_uid: None,
             mesh_controller: DeviceUid::ZERO,
             devices: HashMap::new(),
             links: BayLinks::default(),

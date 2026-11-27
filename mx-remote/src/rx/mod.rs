@@ -119,7 +119,7 @@ pub(crate) fn hello_source(frame: &[u8], ports: &[u16]) -> Option<(DeviceUid, Ma
 ///
 /// `timestamp` is when the datagram arrived, which is what the sending device
 /// is recorded as last heard from. A frame that does not parse, or that this
-/// client sent itself, produces nothing.
+/// client sent itself under either of its identifiers, produces nothing.
 ///
 /// `path` is the endpoint it arrived by, when two are bound. A device that
 /// sent it is then recorded as heard by that path, which is what decides
@@ -137,7 +137,7 @@ pub(crate) fn process_frame_on(
         return Vec::new();
     };
     let sender = frame.remote_id();
-    if sender == state.uid {
+    if sender == state.uid || Some(sender) == state.announce_uid {
         return Vec::new();
     }
     // Counted before the opcode is looked at, and only for frames some other

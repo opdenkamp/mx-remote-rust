@@ -1647,3 +1647,45 @@ fn an_announced_only_hello_leaves_out_what_invites_action() {
         assert_eq!(announced_only(kept | left_out), kept, "{left_out} is kept");
     }
 }
+
+/// A frame under the identifier this client announces itself under on
+/// announce interfaces is its own, and is not taken as another device's.
+#[test]
+fn a_frame_under_the_announce_uid_is_this_clients_own() {
+    let alias = uid_n(251);
+    let remote = Remote::new(
+        Config {
+            uid: Some(uid_n(250)),
+            announce_uid: Some(alias),
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    let other = uid_n(252);
+    remote
+        .shared
+        .process_datagram(&hello_datagram(alias, "self", "EP0251"), FROM);
+    remote
+        .shared
+        .process_datagram(&hello_datagram(other, "unit", "EP0252"), FROM);
+    assert!(remote.device(alias).is_none(), "taken as another device");
+    assert!(remote.device(other).is_some(), "nothing is taken at all");
+}
+
+/// A zero announce identifier is refused: it names no device.
+#[test]
+fn a_zero_announce_uid_is_refused() {
+    let built = Remote::new(
+        Config {
+            uid: Some(uid_n(253)),
+            announce_uid: Some(DeviceUid::ZERO),
+            ..Config::default()
+        },
+        Arc::new(()),
+    );
+    assert_eq!(
+        built.err().map(|e| e.kind()),
+        Some(std::io::ErrorKind::InvalidInput)
+    );
+}

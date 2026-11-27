@@ -222,6 +222,8 @@ pub struct Config {
     /// [`STATUS_REBOOT`](DeviceFeature::STATUS_REBOOT) and
     /// [`BOOTING`](DeviceFeature::BOOTING).
     ///
+    /// They carry [`Config::announce_uid`] when it is set.
+    ///
     /// Each follows its interface's current address and is skipped while it
     /// has none. Naming the selected interface sends each hello there twice.
     /// [`Remote::set_announce_interfaces`] changes them while running.
@@ -243,6 +245,18 @@ pub struct Config {
     /// Where the identifier is kept. Unset means `.mxr-uid` in the user's home
     /// directory.
     pub uid_path: Option<PathBuf>,
+    /// The identifier this client announces itself under on
+    /// [`Config::announce_interfaces`], in place of its own. Unset announces
+    /// its own there too. Keeping it is the caller's; zero is refused.
+    ///
+    /// A unit that heard this client on the mesh and was moved to an
+    /// announce interface keeps its record of this client, the dedicated
+    /// controller's included, for as long as it hears that identifier. Under
+    /// another one there, the record expires and the unit takes a promotion
+    /// from another controller.
+    ///
+    /// A frame received under it is taken as this client's own.
+    pub announce_uid: Option<DeviceUid>,
     /// The TCP port units fetch an overlay sync's logo images from. Unset
     /// picks a free one when the first sync with images is sent.
     ///
@@ -308,6 +322,7 @@ impl Default for Config {
             version: None,
             uid: None,
             uid_path: None,
+            announce_uid: None,
             logo_port: None,
             mesh_device: false,
             capture_hello_mac: false,
@@ -321,6 +336,8 @@ impl Default for Config {
 /// Everything the threads share.
 struct Shared {
     uid: DeviceUid,
+    /// [`Config::announce_uid`], or `uid` when unset.
+    announce_uid: DeviceUid,
     name: String,
     serial: String,
     version: String,
@@ -455,18 +472,28 @@ pub struct Remote {
 impl Remote {
     /// Builds a client, loading or generating its identifier.
     ///
-    /// Nothing is sent and no socket is opened until [`Remote::start`].
+    /// Nothing is sent and no socket is opened until [`Remote::start`]. A
+    /// zero [`Config::announce_uid`] is refused.
     pub fn new(config: Config, handler: Arc<dyn EventHandler>) -> io::Result<Self> {
+        if config.announce_uid.is_some_and(|uid| uid.is_zero()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the announce uid is zero",
+            ));
+        }
         let uid = match config.uid {
             Some(uid) => uid,
             None => load_uid(config.uid_path.clone())?,
         };
+        let mut state = State::new(uid);
+        state.announce_uid = config.announce_uid;
         let name = config.name.unwrap_or_else(|| DEFAULT_NAME.to_owned());
         let serial = config.serial.unwrap_or_else(|| CLIENT_SERIAL.to_owned());
         let version = config.version.unwrap_or_else(|| VERSION.to_owned());
         Ok(Self {
             shared: Arc::new(Shared {
                 uid,
+                announce_uid: config.announce_uid.unwrap_or(uid),
                 name,
                 serial,
                 version,
@@ -479,7 +506,7 @@ impl Remote {
                 mesh_bays_mapped: AtomicBool::new(false),
                 setup_completed: AtomicBool::new(false),
                 handler,
-                state: Mutex::new(State::new(uid)),
+                state: Mutex::new(state),
                 tx: Mutex::new(Tx::default()),
                 schedule: Mutex::new(Schedule::new()),
                 network: Mutex::new(Network {
@@ -1294,7 +1321,7 @@ impl Shared {
             &self.version,
             announced_only(self.features()).bits(),
         );
-        lock(&self.tx).announce(self.uid, op::SYS_HELLO, &only_announced);
+        lock(&self.tx).announce(self.announce_uid, op::SYS_HELLO, &only_announced);
         match sent {
             Ok(sent) if sent.bytes > 0 => lock(&self.schedule).announced(now),
             _ => {}

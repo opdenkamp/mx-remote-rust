@@ -88,6 +88,11 @@ const RELAYED: Scratch = Scratch {
     port: 18825,
 };
 
+const ANNOUNCED_UID: Scratch = Scratch {
+    group: Ipv4Addr::new(239, 255, 77, 89),
+    port: 18826,
+};
+
 /// How long a test waits for a datagram it expects to arrive.
 const DELIVERY: Duration = Duration::from_secs(2);
 
@@ -568,6 +573,7 @@ fn an_interface_only_announced_on_gets_the_hello_alone() {
     };
     let mut endpoint_hello = None;
     let mut announced_hello = None;
+    let mut announced_by = None;
     let mut endpoint_controller = false;
     let mut announced_controller = false;
     let mut buf = vec![0u8; 2048];
@@ -583,7 +589,10 @@ fn an_interface_only_announced_on_gets_the_hello_alone() {
         let by_endpoint = from.port() == ANNOUNCED_ONLY.port;
         match opcode_of(frame) {
             Some(o) if o == op::SYS_HELLO.0 && by_endpoint => endpoint_hello = features_of(frame),
-            Some(o) if o == op::SYS_HELLO.0 => announced_hello = features_of(frame),
+            Some(o) if o == op::SYS_HELLO.0 => {
+                announced_hello = features_of(frame);
+                announced_by = frame.get(4..20).map(<[u8]>::to_vec);
+            }
             Some(o) if o == op::CONTROLLER_STATE.0 && by_endpoint => endpoint_controller = true,
             Some(o) if o == op::CONTROLLER_STATE.0 => announced_controller = true,
             _ => {}
@@ -612,6 +621,11 @@ fn an_interface_only_announced_on_gets_the_hello_alone() {
     assert!(
         announced.has(DeviceFeature::CONFIG_INITIALISED),
         "the announced hello lost what it should keep: {announced}"
+    );
+    assert_eq!(
+        announced_by.as_deref(),
+        Some(uid_n(211).as_bytes().as_slice()),
+        "without an announce uid, the announced hello goes under this client's own"
     );
     assert!(
         endpoint_controller,
@@ -807,4 +821,68 @@ fn the_mesh_is_handed_on_whole() {
         after.contains(&(peer, Direction::Received, Endpoint::Group)),
         "a frame from another host was not handed on as received"
     );
+}
+
+/// The hello on an announce interface goes under the announce identifier,
+/// and the one on the endpoint under this client's own.
+#[test]
+fn an_announce_interface_hears_the_announce_uid() {
+    let Some(probe) = Probe::open(ANNOUNCED_UID) else {
+        return skipped("the probe cannot be pinned to a multicast interface");
+    };
+    if !probe.host_loops_back() {
+        return skipped("no multicast loopback delivery");
+    }
+    let Some(interface) = crate::wire::default_local_ip()
+        .ok()
+        .and_then(crate::wire::name_holding)
+    else {
+        return skipped("the probe's interface has no name");
+    };
+
+    let (own, alias) = (uid_n(254), uid_n(255));
+    let remote = Remote::new(
+        Config {
+            uid: Some(own),
+            announce_uid: Some(alias),
+            target_ip: Some(ANNOUNCED_UID.group),
+            port: Some(ANNOUNCED_UID.port),
+            announce_interfaces: vec![interface],
+            ..Config::default()
+        },
+        Arc::new(()),
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    remote
+        .start()
+        .expect("the client could not open its socket");
+
+    let sender_of = |frame: &[u8]| {
+        frame
+            .get(4..20)
+            .and_then(|b| <[u8; 16]>::try_from(b).ok())
+            .map(DeviceUid::from_array)
+    };
+    let mut endpoint_hello = None;
+    let mut announced_hello = None;
+    let mut buf = vec![0u8; 2048];
+    let deadline = Instant::now() + DELIVERY;
+    while Instant::now() < deadline && (endpoint_hello.is_none() || announced_hello.is_none()) {
+        let Ok((n, from)) = probe.listener.recv_from(&mut buf) else {
+            break;
+        };
+        let frame = &buf[..n];
+        if opcode_of(frame) != Some(op::SYS_HELLO.0) {
+            continue;
+        }
+        if from.port() == ANNOUNCED_UID.port {
+            endpoint_hello = sender_of(frame);
+        } else {
+            announced_hello = sender_of(frame);
+        }
+    }
+    remote.close();
+
+    assert_eq!(endpoint_hello, Some(own), "the endpoint's hello");
+    assert_eq!(announced_hello, Some(alias), "the announced hello");
 }
