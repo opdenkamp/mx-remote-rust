@@ -31,6 +31,19 @@ if-addrs = "0.15"
 # disk, so it comes from the OS entropy source rather than from the clock.
 getrandom = "0.2"
 
+# The driver proxy's join and protected traffic (the `proxy` feature):
+# HMAC-SHA256 proofs, HKDF-SHA256 session keys and AES-256-GCM. RustCrypto's
+# crates, pure Rust, at versions whose MSRV is below this crate's.
+aes-gcm = { version = "0.10.3", optional = true }
+hkdf = { version = "0.12.4", optional = true }
+hmac = { version = "0.12.1", optional = true }
+sha2 = { version = "0.10.8", optional = true }
+
+[features]
+# The driver proxy's peer mode: joining a OneIP controller over UDP 8813 and
+# reaching the mesh behind it. Finding a proxy controller needs no feature.
+proxy = ["dep:aes-gcm", "dep:hkdf", "dep:hmac", "dep:sha2"]
+
 # Which address a datagram was sent to, which a unit judges its path by: a
 # frame to a multicast group came by multicast, and one to a unicast address
 # did not, whichever port it arrived on. Only recvmsg with IP_PKTINFO says so,

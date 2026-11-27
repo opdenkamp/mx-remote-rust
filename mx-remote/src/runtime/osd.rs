@@ -394,6 +394,7 @@ impl Remote {
     /// [`OSD_SYNC_PERCENT_MAX`] percent. Refused content leaves the held sync
     /// as it was; content that fails to go out leaves none held.
     pub fn send_osd_sync(&self, content: OsdSyncContent) -> Result<u16, ControlError> {
+        self.shared.refuse_through_proxy()?;
         validate(&content)?;
         self.hold_osd_sync(content)
             .inspect_err(|_| self.clear_osd_sync())
@@ -405,6 +406,7 @@ impl Remote {
     /// units already took from another source, to send a unit that joins
     /// with [`Remote::resend_osd_sync`]. Refused as `send_osd_sync` is.
     pub fn keep_osd_sync(&self, content: OsdSyncContent) -> Result<(), ControlError> {
+        self.shared.refuse_through_proxy()?;
         validate(&content)?;
         let was_held = self
             .store_osd_sync(content)
@@ -461,6 +463,7 @@ impl Remote {
     /// [`OSD_SYNC`](DeviceFeature::OSD_SYNC), as one that does not take
     /// overlay syncs.
     pub fn resend_osd_sync(&self, device: DeviceUid) -> Result<u16, ControlError> {
+        self.shared.refuse_through_proxy()?;
         let to = self.sync_taker(device)?;
         let (seq, frame) = {
             let mut osd = lock(&self.shared.osd);
@@ -528,6 +531,7 @@ impl Remote {
         layer: u8,
         timeout_s: u16,
     ) -> Result<u16, ControlError> {
+        self.shared.refuse_through_proxy()?;
         validate(&content)?;
         check_timeout(timeout_s)?;
         let to = self.sync_taker(device)?;
@@ -578,6 +582,7 @@ impl Remote {
         layer: u8,
         timeout_s: u16,
     ) -> Result<(), ControlError> {
+        self.shared.refuse_through_proxy()?;
         check_timeout(timeout_s)?;
         let to = self.sync_taker(device)?;
         let frame = build_osd_preview(seq, device, osd_preview::HOLD, layer, timeout_s);
@@ -591,6 +596,7 @@ impl Remote {
     ///
     /// Refused as [`Remote::resend_osd_sync`] is for the unit.
     pub fn commit_osd_preview(&self, device: DeviceUid, seq: u16) -> Result<(), ControlError> {
+        self.shared.refuse_through_proxy()?;
         self.end_osd_preview(device, seq, osd_preview::COMMIT)
     }
 
@@ -602,6 +608,7 @@ impl Remote {
     ///
     /// Refused as [`Remote::resend_osd_sync`] is for the unit.
     pub fn revert_osd_preview(&self, device: DeviceUid, seq: u16) -> Result<(), ControlError> {
+        self.shared.refuse_through_proxy()?;
         self.end_osd_preview(device, seq, osd_preview::REVERT)
     }
 
@@ -625,6 +632,7 @@ impl Remote {
     /// acts on it. A controller without a decoder runs no overlays and
     /// answers nothing.
     pub fn request_osd_sync(&self, what: OsdSyncWhat) -> Result<(), ControlError> {
+        self.shared.refuse_through_proxy()?;
         let me = self.shared.uid;
         let frame = build_osd_request(0, me, what, &[0; 16], DeviceUid::ZERO);
         self.shared.mutate(|state, _| {
@@ -656,6 +664,7 @@ impl Remote {
         what: OsdSyncWhat,
         missing: &[u16],
     ) -> Result<(), ControlError> {
+        self.shared.refuse_through_proxy()?;
         let mut bits = [0u8; 16];
         for &index in missing {
             if usize::from(index) >= OSD_SYNC_RECORDS_MAX {
@@ -693,6 +702,7 @@ impl Remote {
         source: DeviceUid,
         report: &OsdSyncReport,
     ) -> Result<(), ControlError> {
+        self.shared.refuse_through_proxy()?;
         let to = self
             .shared
             .addressee(source)

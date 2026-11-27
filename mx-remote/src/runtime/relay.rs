@@ -91,8 +91,13 @@ impl Remote {
     /// as one from its sender would, so the sender becomes known here as it
     /// does on every unit.
     ///
-    /// Returns the bytes the first write took.
+    /// Returns the bytes the first write took. A client in peer mode
+    /// (`Config::proxy`, with the `proxy` feature) has no mesh endpoints to
+    /// write to, and returns [`SendError::NotConnected`].
     pub fn send_raw(&self, frame: &[u8], to: RawEndpoints) -> Result<usize, SendError> {
+        if self.shared.through_proxy {
+            return Err(SendError::NotConnected);
+        }
         let header = FrameHeader::parse_accepted(frame).ok_or(SendError::InvalidFrame)?;
         if header.sender == self.shared.uid {
             return Err(SendError::InvalidFrame);

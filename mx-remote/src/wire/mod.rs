@@ -67,6 +67,8 @@ pub(crate) use netif::{address_of, broadcast_address, host_addresses};
 pub(crate) use opcode::{audio_sub, mv_sub, op, Opcode};
 pub(crate) use osd::*;
 pub(crate) use payload::*;
+#[cfg(feature = "proxy")]
+pub(crate) use tx::Wrap;
 pub(crate) use tx::{Addressee, Endpoints, ProtocolTarget, Sent, Tx};
 pub(crate) use uid::UID_LEN;
 

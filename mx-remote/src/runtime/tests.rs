@@ -1727,3 +1727,102 @@ fn the_probe_pass_drops_a_silent_proxy() {
         .probe_once(Instant::now() + Duration::from_secs(31));
     assert!(!remote.device(peer).expect("registered").proxy_controller);
 }
+
+/// A client in peer mode.
+#[cfg(feature = "proxy")]
+fn peer_config() -> Config {
+    Config {
+        uid: Some(uid_n(240)),
+        proxy: Some(crate::ProxyConfig::new(
+            Ipv4Addr::new(192, 168, 1, 20),
+            uid_n(241),
+            [7; 32],
+        )),
+        ..Config::default()
+    }
+}
+
+/// Peer mode reaches a mesh as a driver alone: beside a mesh role, an
+/// overlay sync role, a test endpoint or other interfaces, or under the
+/// controller's own uid, it is refused.
+#[cfg(feature = "proxy")]
+#[test]
+fn peer_mode_is_a_driver_alone() {
+    assert!(Remote::new(peer_config(), Arc::new(())).is_ok());
+    let refused: [fn(&mut Config); 6] = [
+        |c| c.target_ip = Some(Ipv4Addr::new(239, 1, 1, 1)),
+        |c| c.announce_interfaces = vec!["eth1".to_owned()],
+        |c| c.mesh_device = true,
+        |c| c.dedicated_controller = true,
+        |c| c.osd_sync = true,
+        |c| c.uid = Some(uid_n(241)),
+    ];
+    for (i, change) in refused.iter().enumerate() {
+        let mut config = peer_config();
+        change(&mut config);
+        assert_eq!(
+            Remote::new(config, Arc::new(())).err().map(|e| e.kind()),
+            Some(std::io::ErrorKind::InvalidInput),
+            "case {i}"
+        );
+    }
+}
+
+/// In peer mode every overlay sync and preview call is refused, as the
+/// controller drops them, and a raw frame has no endpoints to go to.
+#[cfg(feature = "proxy")]
+#[test]
+fn peer_mode_refuses_what_the_proxy_drops() {
+    use crate::raw::RawEndpoints;
+    use crate::types::OsdSyncContent;
+    use crate::wire::OsdSyncWhat;
+
+    let remote = Remote::new(peer_config(), Arc::new(())).expect("a peer");
+    let unit = uid_n(242);
+    let refused = |r: Result<(), ControlError>| matches!(r, Err(ControlError::Unsupported(_)));
+    let content = OsdSyncContent::default;
+    assert!(refused(remote.send_osd_sync(content()).map(drop)));
+    assert!(refused(remote.keep_osd_sync(content())));
+    assert!(refused(remote.resend_osd_sync(unit).map(drop)));
+    assert!(refused(
+        remote.send_osd_preview(unit, content(), 0, 0).map(drop)
+    ));
+    assert!(refused(remote.hold_osd_preview(unit, 1, 0, 0)));
+    assert!(refused(remote.commit_osd_preview(unit, 1)));
+    assert!(refused(remote.revert_osd_preview(unit, 1)));
+    assert!(refused(remote.request_osd_sync(OsdSyncWhat::LOGO_SLOTS)));
+    assert!(refused(remote.request_osd_settings(
+        unit,
+        1,
+        OsdSyncWhat::LOGO_SLOTS,
+        &[0]
+    )));
+    let report = crate::types::OsdSyncReport {
+        seq: 1,
+        state: crate::wire::OsdSyncState::DONE,
+        written: 0,
+        refused: 0,
+        reason: String::new(),
+    };
+    assert!(refused(remote.send_osd_report(unit, &report)));
+    assert!(matches!(
+        remote.send_raw(&hello_datagram(unit, "unit", "EP0242"), RawEndpoints::Both),
+        Err(SendError::NotConnected)
+    ));
+}
+
+/// In peer mode nothing the mesh ports hear reaches the registry: they only
+/// listen for the controller moving.
+#[cfg(feature = "proxy")]
+#[test]
+fn peer_mode_takes_nothing_from_the_mesh_ports() {
+    let remote = Remote::new(peer_config(), Arc::new(())).expect("a peer");
+    let unit = uid_n(243);
+    remote.shared.receive_on(
+        &hello_datagram(unit, "unit", "EP0243"),
+        FROM,
+        Path::Multicast,
+        Some(Path::Multicast),
+    );
+    assert!(remote.device(unit).is_none());
+}

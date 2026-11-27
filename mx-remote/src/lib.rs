@@ -88,6 +88,8 @@ mod wire;
 
 pub use event::{Event, EventHandler};
 pub use runtime::{BayInfo, Config, ControlError, DeviceInfo, DeviceTreeEntry, Remote};
+#[cfg(feature = "proxy")]
+pub use runtime::{ProxyConfig, ProxyJoinStatus, ProxyResult};
 pub use rx::{lookup_svd, Svd};
 pub use types::*;
 pub use wire::*;

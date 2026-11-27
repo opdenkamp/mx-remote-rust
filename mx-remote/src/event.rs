@@ -122,6 +122,13 @@ macro_rules! events {
                 endpoint: crate::raw::Endpoint,
             ) {
             }
+
+            /// Where this client's join to a controller's driver proxy stands
+            /// ([`Config::proxy`](crate::Config::proxy)): called on every
+            /// answer to a join, when a join goes unanswered, and when a
+            /// session ends.
+            #[cfg(feature = "proxy")]
+            fn on_proxy_join_status(&self, status: crate::ProxyJoinStatus) {}
         }
 
         impl Event {

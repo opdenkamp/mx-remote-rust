@@ -207,6 +207,13 @@ pub(crate) struct Sent {
     pub(crate) paths: Vec<Path>,
 }
 
+/// Where every frame goes instead of the mesh endpoints, in a client that
+/// reaches the mesh through something else, sealed as that needs.
+pub(crate) trait Wrap: Send + Sync {
+    /// Sends one whole frame, returning the bytes written.
+    fn send(&self, frame: &[u8]) -> Result<usize, SendError>;
+}
+
 /// A tap on the transmit path.
 #[cfg(test)]
 pub(crate) type TxTap = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
@@ -222,6 +229,9 @@ pub(crate) type TxTap = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
 #[derive(Default)]
 pub(crate) struct Tx {
     conn: Option<std::sync::Arc<Conn>>,
+    /// Where every frame goes instead, when set: the endpoints then only
+    /// listen.
+    wrap: Option<std::sync::Arc<dyn Wrap>>,
     /// The interfaces this client only announces itself on, and where there.
     announcers: Vec<Announcer>,
     reach: Vec<Reach>,
@@ -236,6 +246,12 @@ pub(crate) struct Tx {
 }
 
 impl Tx {
+    /// Sends every frame by `wrap` instead of the endpoints, or by the
+    /// endpoints again.
+    pub(crate) fn set_wrap(&mut self, wrap: Option<std::sync::Arc<dyn Wrap>>) {
+        self.wrap = wrap;
+    }
+
     /// Replaces the socket.
     pub(crate) fn set_conn(&mut self, conn: Option<Conn>) {
         self.conn = conn.map(std::sync::Arc::new);
@@ -354,6 +370,14 @@ impl Tx {
     }
 
     fn write(&self, frame: Vec<u8>, endpoints: Endpoints) -> Result<Sent, SendError> {
+        if let Some(wrap) = &self.wrap {
+            let bytes = wrap.send(&frame)?;
+            return Ok(Sent {
+                bytes,
+                frame,
+                paths: Vec::new(),
+            });
+        }
         let conn = self.conn.as_ref().ok_or(SendError::NotConnected)?;
         let bytes = conn.send(&frame, endpoints)?;
         Ok(Sent {

@@ -11,6 +11,8 @@ mod logo_server;
 mod mesh;
 mod metadata;
 mod osd;
+#[cfg(feature = "proxy")]
+mod proxy;
 mod relay;
 mod schedule;
 
@@ -47,6 +49,8 @@ use crate::wire::{
 pub use control::ControlError;
 pub use info::{BayInfo, DeviceInfo, DeviceTreeEntry};
 use osd::OsdSender;
+#[cfg(feature = "proxy")]
+pub use proxy::{ProxyConfig, ProxyJoinStatus, ProxyResult};
 use schedule::Schedule;
 
 /// The name this client advertises when the caller sets none.
@@ -306,6 +310,29 @@ pub struct Config {
     /// [`crate::EventHandler::on_osd_sync_setting_received`]. Fetching the
     /// logos is the caller's, from [`OsdSync::logo_url`](crate::OsdSync::logo_url).
     pub osd_sync: bool,
+    /// Reach a mesh through a OneIP controller's driver proxy instead of its
+    /// endpoints: peer mode.
+    ///
+    /// This client joins the controller on [`ProxyConfig::port`] with the
+    /// driver key, and from then on every frame either way goes sealed
+    /// between the two, the controller relaying the mesh to this client and
+    /// this client's frames to the mesh. The join's progress arrives at
+    /// [`EventHandler::on_proxy_join_status`]. Every device then reads the
+    /// controller's address as its own
+    /// ([`DeviceInfo::address`](crate::DeviceInfo::address)), and the
+    /// controller itself, on its mesh, is [`Remote::proxy_mesh_uid`].
+    ///
+    /// The mesh ports only listen, for a hello from the controller at
+    /// another address. Nothing heard there reaches the registry.
+    ///
+    /// [`Remote::new`] refuses it beside [`Config::target_ip`],
+    /// [`Config::announce_interfaces`], [`Config::mesh_device`],
+    /// [`Config::dedicated_controller`] or [`Config::osd_sync`], and under
+    /// the controller's own uid. Overlay syncs and previews are refused:
+    /// the controller is the mesh's overlay source and drops them. Overlay
+    /// messages pass.
+    #[cfg(feature = "proxy")]
+    pub proxy: Option<ProxyConfig>,
 }
 
 impl Default for Config {
@@ -329,6 +356,8 @@ impl Default for Config {
             dedicated_controller: false,
             osd_sync: false,
             announce_interfaces: Vec::new(),
+            #[cfg(feature = "proxy")]
+            proxy: None,
         }
     }
 }
@@ -376,6 +405,13 @@ struct Shared {
     /// This host's addresses, which no frame handed on as received comes
     /// from.
     own_addresses: Mutex<relay::OwnAddresses>,
+    /// Whether this client reaches its mesh through a driver proxy.
+    through_proxy: bool,
+    #[cfg(feature = "proxy")]
+    proxy_config: Option<ProxyConfig>,
+    /// The proxy side while running in peer mode.
+    #[cfg(feature = "proxy")]
+    peer: Mutex<Option<Arc<proxy::Peer>>>,
 }
 
 /// The network parameters the socket was opened with, so it can be reopened.
@@ -485,6 +521,27 @@ impl Remote {
             Some(uid) => uid,
             None => load_uid(config.uid_path.clone())?,
         };
+        #[cfg(feature = "proxy")]
+        let through_proxy = match &config.proxy {
+            Some(proxy) => {
+                let alone = config.target_ip.is_none()
+                    && config.announce_interfaces.is_empty()
+                    && !config.mesh_device
+                    && !config.dedicated_controller
+                    && !config.osd_sync
+                    && proxy.uplink_uid != uid;
+                if !alone {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "peer mode reaches a mesh as a driver alone",
+                    ));
+                }
+                true
+            }
+            None => false,
+        };
+        #[cfg(not(feature = "proxy"))]
+        let through_proxy = false;
         let mut state = State::new(uid);
         state.announce_uid = config.announce_uid;
         let name = config.name.unwrap_or_else(|| DEFAULT_NAME.to_owned());
@@ -524,6 +581,11 @@ impl Remote {
                 hello_on_broadcast: Mutex::new(None),
                 multicast_fault: AtomicBool::new(false),
                 own_addresses: Mutex::default(),
+                through_proxy,
+                #[cfg(feature = "proxy")]
+                proxy_config: config.proxy,
+                #[cfg(feature = "proxy")]
+                peer: Mutex::new(None),
             }),
             workers: Mutex::new(Vec::new()),
         })
@@ -545,10 +607,21 @@ impl Remote {
             let network = lock(&self.shared.network);
             (network.open()?, network.announcers())
         };
+        #[cfg(feature = "proxy")]
+        let peer = match &self.shared.proxy_config {
+            Some(config) => Some(Arc::new(proxy::Peer::open(config, self.shared.uid)?)),
+            None => None,
+        };
         {
             let mut tx = lock(&self.shared.tx);
             tx.set_conn(Some(conn));
             tx.set_announcers(announcers, reach);
+            #[cfg(feature = "proxy")]
+            tx.set_wrap(peer.clone().map(|p| p as Arc<dyn crate::wire::Wrap>));
+        }
+        #[cfg(feature = "proxy")]
+        {
+            *lock(&self.shared.peer) = peer;
         }
         lock(&self.shared.state).endpoints_opened = Some(Instant::now());
         // The first hello on new sockets goes to both endpoints.
@@ -565,6 +638,10 @@ impl Remote {
     ///
     /// Calling it more than once, or before [`Remote::start`], does nothing.
     pub fn close(&self) {
+        #[cfg(feature = "proxy")]
+        if let Some(peer) = lock(&self.shared.peer).take() {
+            peer.leave();
+        }
         self.shared.closing.store(true, Ordering::SeqCst);
         for worker in std::mem::take(&mut *lock(&self.workers)) {
             let _ = worker.join();
@@ -577,6 +654,7 @@ impl Remote {
         let mut tx = lock(&self.shared.tx);
         tx.set_conn(None);
         tx.set_announcers(Vec::new(), Vec::new());
+        tx.set_wrap(None);
     }
 
     fn spawn_workers(&self, capture: Option<Capture>) -> io::Result<()> {
@@ -600,6 +678,8 @@ impl Remote {
             ),
             ("mxr-probe", Shared::probe_loop as fn(&Shared)),
             ("mxr-osd", Shared::osd_loop as fn(&Shared)),
+            #[cfg(feature = "proxy")]
+            ("mxr-proxy", Shared::peer_loop as fn(&Shared)),
         ] {
             let shared = Arc::clone(&self.shared);
             workers.push(
@@ -1094,6 +1174,22 @@ impl Remote {
     pub fn discover(&self) -> Result<(), SendError> {
         self.shared.discover()
     }
+
+    /// The uid of the controller this client joined through its driver
+    /// proxy, as the controller is known on its mesh: one of the dedicated
+    /// controllers among [`Remote::devices`]. `None` before the controller
+    /// has said, and outside peer mode ([`Config::proxy`]).
+    #[cfg(feature = "proxy")]
+    pub fn proxy_mesh_uid(&self) -> Option<DeviceUid> {
+        self.shared.peer().and_then(|p| p.mesh_uid())
+    }
+
+    /// Whether this client is joined to a controller's driver proxy
+    /// ([`Config::proxy`]).
+    #[cfg(feature = "proxy")]
+    pub fn proxy_joined(&self) -> bool {
+        self.shared.peer().is_some_and(|p| p.joined())
+    }
 }
 
 impl Drop for Remote {
@@ -1103,6 +1199,30 @@ impl Drop for Remote {
 }
 
 impl Shared {
+    /// The proxy side, while running in peer mode.
+    #[cfg(feature = "proxy")]
+    fn peer(&self) -> Option<Arc<proxy::Peer>> {
+        lock(&self.peer).clone()
+    }
+
+    /// Reads the proxy port while running in peer mode.
+    #[cfg(feature = "proxy")]
+    fn peer_loop(&self) {
+        if let Some(peer) = self.peer() {
+            self.proxy_loop(&peer);
+        }
+    }
+
+    /// Refuses what a controller's driver proxy drops, in peer mode.
+    fn refuse_through_proxy(&self) -> Result<(), ControlError> {
+        if self.through_proxy {
+            return Err(ControlError::Unsupported(
+                "a controller's driver proxy relays no overlay sync",
+            ));
+        }
+        Ok(())
+    }
+
     /// Reads the registry.
     fn read<R>(&self, f: impl FnOnce(&State) -> R) -> R {
         f(&lock(&self.state))
@@ -1189,6 +1309,13 @@ impl Shared {
     /// The copy arriving by the other endpoint is handed on too, and dropped
     /// only by the decode.
     fn receive_on(&self, data: &[u8], from: Ipv4Addr, socket: Path, path: Option<Path>) {
+        if self.through_proxy {
+            #[cfg(feature = "proxy")]
+            if let Some(peer) = self.peer() {
+                self.proxy_overheard(&peer, data, from);
+            }
+            return;
+        }
         self.tap_received(data, from, socket);
         self.process_datagram_on(data, from, path);
     }
@@ -1516,6 +1643,10 @@ impl Shared {
         }
         self.send_controller_asks();
         self.send_metadata_outbox();
+        #[cfg(feature = "proxy")]
+        if let Some(peer) = self.peer() {
+            self.proxy_tick(&peer, now);
+        }
     }
 }
 
