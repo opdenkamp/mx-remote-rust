@@ -338,7 +338,7 @@ const GUARDED_SENDS: &[Guarded] = &[
         r.send_action(BayUid::new(d, 2), RcAction::POWER_ON)
     }),
     ("send_key", |r, d| {
-        r.send_key(BayUid::new(d, 2), RcKey::PLAY)
+        r.send_key(BayUid::new(d, 1), RcKey::PLAY)
     }),
     ("request_signal_status", |r, d| {
         r.request_signal_status(Some(d))
@@ -1595,11 +1595,11 @@ fn an_edid_request_and_a_key_decode_back_to_what_was_asked() {
     f.round_trip(
         "send_key",
         peer,
-        f.remote.send_key(BayUid::new(target, 2), RcKey::PLAY),
+        f.remote.send_key(BayUid::new(target, 1), RcKey::PLAY),
     );
     let key = seen.keys.lock().expect("test handler").pop().expect("none");
     assert_eq!(key.target, target);
-    assert_eq!(key.local_bay, 2);
+    assert_eq!(key.local_bay, 1);
     assert_eq!(key.key, RcKey::PLAY);
 }
 
@@ -5569,6 +5569,47 @@ fn sent_to(f: &Fixture, what: &str, call: Result<(), ControlError>) -> (DeviceUi
     let p = &frame[HEADER_LEN..];
     let uid = DeviceUid::from_bytes(&p[..16]).expect("a uid");
     (uid, u16::from_le_bytes([p[16], p[17]]))
+}
+
+/// A key for an output goes to the source routed to it, as a OneIP unit may
+/// drop one sent to its output: through a mesh bay, to the unit sending it.
+#[test]
+fn a_key_for_an_output_goes_to_its_routed_source() {
+    let (f, _, listed_output, tx_bay, rx_bay) = mesh_listing();
+    let rx = rx_bay.device;
+    let r = &f.remote;
+
+    // Nothing routed: there is nowhere to send it.
+    assert!(matches!(
+        r.send_key(rx_bay, RcKey::PLAY),
+        Err(ControlError::NotReported(_))
+    ));
+    assert!(
+        f.tap.frames().is_empty(),
+        "a key went out for an unrouted output"
+    );
+
+    // The RX lists the TX's input as its mesh bay 3, and shows it.
+    let mut page = vec![0u8; 8];
+    page[0..2].copy_from_slice(&((1u16 << 1) | 1).to_le_bytes());
+    page[2..4].copy_from_slice(&3u16.to_le_bytes());
+    page.extend_from_slice(tx_bay.device.as_bytes());
+    f.feed(rx, op::V2IP_BAY_MAPPINGS, &page);
+    let mut route = vec![0u8; 9];
+    route[0..2].copy_from_slice(&127u16.to_le_bytes());
+    route[2..4].copy_from_slice(&3u16.to_le_bytes());
+    route[4..6].copy_from_slice(&3u16.to_le_bytes());
+    route[7..9].copy_from_slice(&3u16.to_le_bytes());
+    f.feed(rx, op::MX_ROUTE, &route);
+    f.tap.clear();
+
+    for output in [rx_bay, listed_output] {
+        assert_eq!(
+            sent_to(&f, "key", r.send_key(output, RcKey::PLAY)),
+            (tx_bay.device, tx_bay.port),
+            "{output}"
+        );
+    }
 }
 
 /// A command about a mesh bay goes to the unit it stands for, about that

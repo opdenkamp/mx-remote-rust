@@ -857,9 +857,25 @@ impl Remote {
     /// configured for; the caller does not choose. An action from
     /// [`Remote::send_action`] names an outcome instead, and the device
     /// decides which keys reach it.
+    ///
+    /// A key for an output goes to the source routed to it, which works on
+    /// every firmware: a OneIP unit whose firmware does not pass a key on to
+    /// the unit sending its output's stream drops one sent to its output.
+    /// With nothing routed it is refused with [`ControlError::NotReported`].
+    ///
+    /// A unit sends nothing back for a key, so whether it arrived can only be
+    /// seen on whatever it was for.
     pub fn send_key(&self, bay: BayUid, key: RcKey) -> Result<(), ControlError> {
         self.shared.command(move |state| {
             let (device, b) = acted_on(state, bay)?;
+            let (device, b) = if b.is_output() {
+                let source = b
+                    .video_source
+                    .ok_or(ControlError::NotReported("the source routed to the output"))?;
+                acted_on(state, source)?
+            } else {
+                (device, b)
+            };
             Ok(Command::new(
                 Addressee::direct(device, device.heard_path(Instant::now())),
                 op::RC_TX_KEY,
