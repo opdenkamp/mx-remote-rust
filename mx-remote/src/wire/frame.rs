@@ -11,7 +11,7 @@ use super::uid::{DeviceUid, UID_LEN};
 /// Width of the frame header.
 pub(crate) const HEADER_LEN: usize = 24;
 
-const MAGIC: [u8; 2] = [0x50, 0x38]; // 'P', '8'
+pub(crate) const MAGIC: [u8; 2] = [0x50, 0x38]; // 'P', '8'
 
 /// Width of the fixed-size device name field on the wire (`MXR_DEVICE_NAME_LEN`).
 ///

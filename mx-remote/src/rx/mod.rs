@@ -83,7 +83,7 @@ pub(crate) fn process_frame(
 /// A unit drops a datagram whose length is not the header's exactly, and a
 /// frame stamped with a layout newer than the one it knows, or with the
 /// version a broken revision once stamped.
-fn accepted(data: &[u8]) -> Option<Frame<'_>> {
+pub(crate) fn accepted(data: &[u8]) -> Option<Frame<'_>> {
     let frame = Frame::parse(data).ok()?;
     let whole = data.len() == HEADER_LEN + usize::from(frame.payload_len());
     let readable = frame.protocol() <= PROTOCOL_VERSION && frame.protocol() != BROKEN_PROTOCOL;
@@ -97,7 +97,7 @@ const OPCODE_LIMIT: u16 = 0x59;
 
 /// The shortest hello a unit takes. A shorter one is ignored whole, and a
 /// longer one read by its first this many bytes.
-const HELLO_LEN: usize = 54;
+pub(crate) const HELLO_LEN: usize = 54;
 
 /// Whether a frame is a hello a unit takes.
 pub(super) fn is_hello(frame: &Frame<'_>) -> bool {
