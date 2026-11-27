@@ -89,20 +89,45 @@ fn hello_due_on_broadcast(last: Option<Instant>, now: Instant) -> bool {
 
 /// The features of the hello on an interface this client only announces
 /// itself on ([`Config::announce_interfaces`]): this client's own, less each
-/// that invites a unit there to act on it.
+/// that a unit there acts on, and each that tells the mesh's state or
+/// health.
 ///
+/// Acted on by a unit hearing it from a device outside its mesh:
 /// - [`MANAGER`](DeviceFeature::MANAGER): a unit takes a promotion to
 ///   controller from a manager, as from its own controller.
 /// - [`MESH_MASTER`](DeviceFeature::MESH_MASTER): a unit joining a mesh joins
 ///   the sender of a hello with it.
 /// - [`OSD_SYNC`](DeviceFeature::OSD_SYNC): a source sends its overlay syncs
 ///   to every device with it, in whatever mesh.
+/// - [`STATUS_MCAST_FAULT`](DeviceFeature::STATUS_MCAST_FAULT): every unit
+///   hearing it sends each frame to both endpoints.
+///
+/// The mesh's state, which nothing there is entitled to:
+/// [`SETUP_COMPLETED`](DeviceFeature::SETUP_COMPLETED),
+/// [`MESH`](DeviceFeature::MESH), the pending notification, warning and
+/// error, [`STATUS_CRASHED`](DeviceFeature::STATUS_CRASHED),
+/// [`STATUS_UPGRADING`](DeviceFeature::STATUS_UPGRADING) and
+/// [`BOOT_BIT`](DeviceFeature::BOOT_BIT).
 ///
 /// [`MESH_MEMBER`](DeviceFeature::MESH_MEMBER) stays: without it a unit takes
 /// this client for a unit free to join its mesh.
+/// [`STATUS_REBOOT`](DeviceFeature::STATUS_REBOOT) and
+/// [`BOOTING`](DeviceFeature::BOOTING) stay, so a client there holds off
+/// while this one restarts.
 fn announced_only(features: DeviceFeature) -> DeviceFeature {
-    let invites = DeviceFeature::MANAGER | DeviceFeature::MESH_MASTER | DeviceFeature::OSD_SYNC;
-    DeviceFeature::from_bits(features.bits() & !invites.bits())
+    let acted_on = DeviceFeature::MANAGER
+        | DeviceFeature::MESH_MASTER
+        | DeviceFeature::OSD_SYNC
+        | DeviceFeature::STATUS_MCAST_FAULT;
+    let mesh_state = DeviceFeature::SETUP_COMPLETED
+        | DeviceFeature::MESH
+        | DeviceFeature::STATUS_NOTIFY
+        | DeviceFeature::STATUS_WARNING
+        | DeviceFeature::STATUS_ERROR
+        | DeviceFeature::STATUS_CRASHED
+        | DeviceFeature::STATUS_UPGRADING
+        | DeviceFeature::BOOT_BIT;
+    DeviceFeature::from_bits(features.bits() & !(acted_on | mesh_state).bits())
 }
 
 /// Shortest gap between two discovers to every device.
@@ -186,10 +211,15 @@ pub struct Config {
     /// refuses every other controller's promotion, though this client can
     /// never answer it there.
     ///
-    /// The hello there leaves out what invites a unit to act on this client:
-    /// [`MANAGER`](DeviceFeature::MANAGER),
-    /// [`MESH_MASTER`](DeviceFeature::MESH_MASTER) and
-    /// [`OSD_SYNC`](DeviceFeature::OSD_SYNC).
+    /// The hello there leaves out every feature a unit acts on
+    /// ([`MANAGER`](DeviceFeature::MANAGER),
+    /// [`MESH_MASTER`](DeviceFeature::MESH_MASTER),
+    /// [`OSD_SYNC`](DeviceFeature::OSD_SYNC),
+    /// [`STATUS_MCAST_FAULT`](DeviceFeature::STATUS_MCAST_FAULT)) and every
+    /// one telling the mesh's state or health, keeping
+    /// [`MESH_MEMBER`](DeviceFeature::MESH_MEMBER),
+    /// [`STATUS_REBOOT`](DeviceFeature::STATUS_REBOOT) and
+    /// [`BOOTING`](DeviceFeature::BOOTING).
     ///
     /// Each follows its interface's current address and is skipped while it
     /// has none. Naming the selected interface sends each hello there twice.

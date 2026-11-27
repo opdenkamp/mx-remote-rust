@@ -1620,20 +1620,30 @@ fn the_hello_is_due_on_broadcast_30_seconds_after_the_last() {
 }
 
 /// The hello on an interface only announced on leaves out exactly the
-/// features that invite a unit there to act on this client, and keeps the
-/// rest, mesh membership included.
+/// features a unit there acts on and those telling the mesh's state, and
+/// keeps the rest: mesh membership and an imminent restart included.
 #[test]
 fn an_announced_only_hello_leaves_out_what_invites_action() {
     let kept = DeviceFeature::CONFIG_INITIALISED
-        | DeviceFeature::MESH
         | DeviceFeature::MESH_MEMBER
-        | DeviceFeature::SETUP_COMPLETED
-        | DeviceFeature::STATUS_MCAST_FAULT;
-    for invites in [
+        | DeviceFeature::STATUS_REBOOT
+        | DeviceFeature::BOOTING
+        | DeviceFeature::STATUS_POWER_SAVE
+        | DeviceFeature::V2IP_SINK;
+    for left_out in [
         DeviceFeature::MANAGER,
         DeviceFeature::MESH_MASTER,
         DeviceFeature::OSD_SYNC,
+        DeviceFeature::STATUS_MCAST_FAULT,
+        DeviceFeature::SETUP_COMPLETED,
+        DeviceFeature::MESH,
+        DeviceFeature::STATUS_NOTIFY,
+        DeviceFeature::STATUS_WARNING,
+        DeviceFeature::STATUS_ERROR,
+        DeviceFeature::STATUS_CRASHED,
+        DeviceFeature::STATUS_UPGRADING,
+        DeviceFeature::BOOT_BIT,
     ] {
-        assert_eq!(announced_only(kept | invites), kept, "{invites} is kept");
+        assert_eq!(announced_only(kept | left_out), kept, "{left_out} is kept");
     }
 }
