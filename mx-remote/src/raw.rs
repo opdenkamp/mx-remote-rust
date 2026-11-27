@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Op den Kamp IT Solutions
 
 //! Whole frames as bytes, for a caller relaying them between the mesh and
-//! somewhere else.
+//! somewhere else: [`EventHandler::on_mesh_frame`](crate::EventHandler::on_mesh_frame)
+//! hands over each frame on the mesh, and
+//! [`Remote::send_raw`](crate::Remote::send_raw) puts one on it.
 //!
 //! A frame is a 24-byte header followed by its payload:
 //!
@@ -18,6 +20,35 @@
 
 use crate::rx::{accepted, HELLO_LEN};
 use crate::wire::{DeviceFeature, DeviceUid, Frame, HEADER_LEN, MAGIC};
+
+/// Whether a frame came in from the mesh or went out to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Direction {
+    /// Received from another device.
+    Received,
+    /// Sent by this client.
+    Sent,
+}
+
+/// A mesh endpoint: the socket a frame came in on or went out by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Endpoint {
+    /// The discovery group, or a client's one endpoint on a group of its own
+    /// ([`Config::target_ip`](crate::Config::target_ip)).
+    Group,
+    /// The subnet broadcast endpoint, or a client's one endpoint on a
+    /// broadcast or unicast address.
+    Broadcast,
+}
+
+/// Where [`Remote::send_raw`](crate::Remote::send_raw) puts a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RawEndpoints {
+    /// Both endpoints, as a unit sends a frame for every unit.
+    Both,
+    /// The discovery group alone.
+    Group,
+}
 
 /// The opcode of a hello (`SYS_HELLO`).
 pub const OP_HELLO: u16 = 0x00;

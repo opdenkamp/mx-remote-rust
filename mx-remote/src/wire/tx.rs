@@ -43,6 +43,9 @@ pub enum SendError {
     /// The client is not connected, because it was never started or has been
     /// closed.
     NotConnected,
+    /// A frame handed over whole is not one a unit takes, or claims to come
+    /// from this client ([`Remote::send_raw`](crate::Remote::send_raw)).
+    InvalidFrame,
     /// The socket write failed.
     Io(io::Error),
 }
@@ -63,6 +66,7 @@ impl fmt::Display for SendError {
                 write!(f, "opcode {opcode:#04x} has no protocol table entry")
             }
             Self::NotConnected => write!(f, "not connected"),
+            Self::InvalidFrame => write!(f, "not a frame a unit takes"),
             Self::Io(e) => write!(f, "{e}"),
         }
     }
@@ -192,13 +196,25 @@ fn for_every_unit(opcode: Opcode, payload: &[u8]) -> bool {
     }
 }
 
+/// A frame written to the wire, and the endpoints it went by.
+#[derive(Debug)]
+pub(crate) struct Sent {
+    /// The bytes the first write took.
+    pub(crate) bytes: usize,
+    /// The frame.
+    pub(crate) frame: Vec<u8>,
+    /// The endpoints it went by, in the order written.
+    pub(crate) paths: Vec<Path>,
+}
+
 /// A tap on the transmit path.
 #[cfg(test)]
 pub(crate) type TxTap = std::sync::Arc<dyn Fn(&[u8]) + Send + Sync>;
 
 /// The transmit side of a client: the socket, and this client's own identifier.
 ///
-/// [`Tx::send`] is the only path from an opcode to the wire. It is the gate
+/// [`Tx::send`] is the only path from an opcode to the wire, and
+/// [`Tx::send_raw`] the only one for a frame built elsewhere. It is the gate
 /// that refuses a frame the target cannot decode, and it can be the gate
 /// because the two things it sits between - the frame constructor and the
 /// socket write - are both private to this module and unreachable from
@@ -287,7 +303,7 @@ impl Tx {
         opcode: Opcode,
         payload: &[u8],
         broadcast_needed: bool,
-    ) -> Result<usize, SendError> {
+    ) -> Result<Sent, SendError> {
         let need = stamp_for(opcode).ok_or(SendError::UnknownOpcode { opcode: opcode.0 })?;
         if let Addressee::Device {
             serial, protocol, ..
@@ -314,8 +330,37 @@ impl Tx {
             }
             self.sent_on.push(endpoints);
         }
+        self.write(frame, endpoints)
+    }
+
+    /// Writes a frame built elsewhere, by `endpoints`.
+    ///
+    /// It addresses no device this client knows of, so there is no protocol
+    /// floor to check: its stamp is its builder's, as a frame from any other
+    /// sender on the mesh is. The caller has checked that a unit takes it.
+    pub(crate) fn send_raw(
+        &mut self,
+        frame: &[u8],
+        endpoints: Endpoints,
+    ) -> Result<Sent, SendError> {
+        #[cfg(test)]
+        {
+            if let Some(tap) = &self.tap {
+                tap(frame);
+            }
+            self.sent_on.push(endpoints);
+        }
+        self.write(frame.to_vec(), endpoints)
+    }
+
+    fn write(&self, frame: Vec<u8>, endpoints: Endpoints) -> Result<Sent, SendError> {
         let conn = self.conn.as_ref().ok_or(SendError::NotConnected)?;
-        Ok(conn.send(&frame, endpoints)?)
+        let bytes = conn.send(&frame, endpoints)?;
+        Ok(Sent {
+            bytes,
+            paths: conn.paths_for(endpoints),
+            frame,
+        })
     }
 }
 

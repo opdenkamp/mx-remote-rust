@@ -83,6 +83,11 @@ const ANNOUNCED_LATER: Scratch = Scratch {
     port: 18824,
 };
 
+const RELAYED: Scratch = Scratch {
+    group: Ipv4Addr::new(239, 255, 77, 90),
+    port: 18825,
+};
+
 /// How long a test waits for a datagram it expects to arrive.
 const DELIVERY: Duration = Duration::from_secs(2);
 
@@ -663,4 +668,143 @@ fn an_interface_named_while_running_is_announced_on() {
     remote.close();
 
     assert!(announced, "no hello from the announcing socket");
+}
+
+/// Records every frame handed on whole.
+#[derive(Default)]
+struct Relayed(std::sync::Mutex<Vec<(Vec<u8>, crate::raw::Direction, crate::raw::Endpoint)>>);
+
+impl Relayed {
+    fn taken(&self) -> Vec<(Vec<u8>, crate::raw::Direction, crate::raw::Endpoint)> {
+        self.0.lock().expect("only locked to push or read").clone()
+    }
+}
+
+impl EventHandler for Relayed {
+    fn on_mesh_frame(
+        &self,
+        frame: &[u8],
+        direction: crate::raw::Direction,
+        endpoint: crate::raw::Endpoint,
+    ) {
+        self.0.lock().expect("only locked to push or read").push((
+            frame.to_vec(),
+            direction,
+            endpoint,
+        ));
+    }
+}
+
+/// The mesh is handed on whole through real sockets: a frame this client
+/// wrote as sent, once written, the hello and any other; a frame from
+/// another host as received; and
+/// neither a raw frame this client relayed, which reaches the wire unchanged,
+/// nor anything from this host, the copy of the hello on an announce
+/// interface included.
+///
+/// Every sender here is on this host, so a frame from another host is
+/// stood in for by taking this host's addresses as none.
+#[test]
+fn the_mesh_is_handed_on_whole() {
+    use crate::raw::{Direction, Endpoint, RawEndpoints};
+
+    let Some(probe) = Probe::open(RELAYED) else {
+        return skipped("the probe cannot be pinned to a multicast interface");
+    };
+    if !probe.host_loops_back() {
+        return skipped("no multicast loopback delivery");
+    }
+    let Some(interface) = crate::wire::default_local_ip()
+        .ok()
+        .and_then(crate::wire::name_holding)
+    else {
+        return skipped("the probe's interface has no name");
+    };
+
+    let relayed = Arc::new(Relayed::default());
+    let remote = Remote::new(
+        Config {
+            uid: Some(uid_n(240)),
+            target_ip: Some(RELAYED.group),
+            port: Some(RELAYED.port),
+            announce_interfaces: vec![interface],
+            ..Config::default()
+        },
+        Arc::clone(&relayed) as Arc<dyn EventHandler>,
+    )
+    .expect("a client given its own uid reads nothing from disk");
+    remote
+        .start()
+        .expect("the client could not open its socket");
+
+    let mut buf = vec![0u8; 2048];
+    let mut heard = |wanted: &dyn Fn(&[u8], u16) -> bool| {
+        let deadline = Instant::now() + DELIVERY;
+        while Instant::now() < deadline {
+            let Ok((n, from)) = probe.listener.recv_from(&mut buf) else {
+                return None;
+            };
+            if wanted(&buf[..n], from.port()) {
+                return Some(buf[..n].to_vec());
+            }
+        }
+        None
+    };
+
+    let hello =
+        heard(&|frame, port| port == RELAYED.port && opcode_of(frame) == Some(op::SYS_HELLO.0))
+            .expect("the client's hello never reached the wire");
+    let announced =
+        heard(&|frame, port| port != RELAYED.port && opcode_of(frame) == Some(op::SYS_HELLO.0))
+            .expect("no hello from the announcing socket");
+    let discover =
+        heard(&|frame, port| port == RELAYED.port && opcode_of(frame) == Some(op::SYS_DISCOVER.0))
+            .expect("the client's discover never reached the wire");
+
+    let driver = hello_datagram(uid_n(241), "driver", "EP0241");
+    remote
+        .send_raw(&driver, RawEndpoints::Group)
+        .expect("the raw frame was not written");
+    let wire = heard(&|frame, _| frame == driver.as_slice());
+    std::thread::sleep(SETTLE);
+    let before = relayed.taken();
+
+    lock(&remote.shared.own_addresses).set(Vec::new(), Instant::now() + Duration::from_secs(3600));
+    let peer = hello_datagram(uid_n(242), "unit", "EP0242");
+    assert!(probe.send(&peer), "the probe reached its listener before");
+    let deadline = Instant::now() + DELIVERY;
+    while Instant::now() < deadline && !relayed.taken().iter().any(|(frame, _, _)| *frame == peer) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let after = relayed.taken();
+    remote.close();
+
+    assert!(
+        before.contains(&(hello.clone(), Direction::Sent, Endpoint::Group)),
+        "the hello written was not handed on as sent"
+    );
+    assert!(
+        before.contains(&(discover, Direction::Sent, Endpoint::Group)),
+        "the discover written was not handed on as sent"
+    );
+    assert_eq!(
+        wire.as_deref(),
+        Some(driver.as_slice()),
+        "the raw frame changed on the wire"
+    );
+    let from_host: Vec<_> = before
+        .iter()
+        .filter(|(frame, direction, _)| *direction == Direction::Received || *frame == driver)
+        .map(|(frame, direction, _)| (opcode_of(frame), *direction))
+        .collect();
+    assert_eq!(
+        from_host,
+        vec![],
+        "handed on from this host, the relayed frame or the announced hello {:x?}",
+        announced.get(20..22)
+    );
+    assert!(
+        after.contains(&(peer, Direction::Received, Endpoint::Group)),
+        "a frame from another host was not handed on as received"
+    );
 }

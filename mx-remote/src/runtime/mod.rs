@@ -11,6 +11,7 @@ mod logo_server;
 mod mesh;
 mod metadata;
 mod osd;
+mod relay;
 mod schedule;
 
 #[cfg(test)]
@@ -355,6 +356,9 @@ struct Shared {
     hello_on_broadcast: Mutex<Option<Instant>>,
     /// Whether a live peer is heard by broadcast but not by multicast.
     multicast_fault: AtomicBool,
+    /// This host's addresses, which no frame handed on as received comes
+    /// from.
+    own_addresses: Mutex<relay::OwnAddresses>,
 }
 
 /// The network parameters the socket was opened with, so it can be reopened.
@@ -492,6 +496,7 @@ impl Remote {
                 broadcast_needed: AtomicBool::new(false),
                 hello_on_broadcast: Mutex::new(None),
                 multicast_fault: AtomicBool::new(false),
+                own_addresses: Mutex::default(),
             }),
             workers: Mutex::new(Vec::new()),
         })
@@ -1152,6 +1157,15 @@ impl Shared {
         self.send_metadata_outbox();
     }
 
+    /// Takes a datagram the endpoint on `socket` received: hands it on whole
+    /// ([`Self::tap_received`]), then decodes it as one that came by `path`.
+    /// The copy arriving by the other endpoint is handed on too, and dropped
+    /// only by the decode.
+    fn receive_on(&self, data: &[u8], from: Ipv4Addr, socket: Path, path: Option<Path>) {
+        self.tap_received(data, from, socket);
+        self.process_datagram_on(data, from, path);
+    }
+
     /// Takes one frame captured below the IP stack, recording the source
     /// address of a hello it carries to one of `ports`.
     fn note_link_frame_on(&self, frame: &[u8], ports: &[u16]) {
@@ -1196,7 +1210,9 @@ impl Shared {
     /// Sends a frame, refusing one the addressee cannot decode.
     fn send(&self, to: &Addressee, opcode: Opcode, payload: &[u8]) -> Result<usize, SendError> {
         let both = self.broadcast_needed.load(Ordering::SeqCst);
-        lock(&self.tx).send(to, self.uid, opcode, payload, both)
+        let sent = lock(&self.tx).send(to, self.uid, opcode, payload, both)?;
+        self.tap_sent(&sent);
+        Ok(sent.bytes)
     }
 
     /// Re-judges, as of `now`, whether frames must reach some peer by
@@ -1265,6 +1281,9 @@ impl Shared {
             &payload,
             on_broadcast,
         );
+        if let Ok(sent) = &sent {
+            self.tap_sent(sent);
+        }
         if on_broadcast {
             *lock(&self.hello_on_broadcast) = Some(now);
         }
@@ -1277,7 +1296,7 @@ impl Shared {
         );
         lock(&self.tx).announce(self.uid, op::SYS_HELLO, &only_announced);
         match sent {
-            Ok(n) if n > 0 => lock(&self.schedule).announced(now),
+            Ok(sent) if sent.bytes > 0 => lock(&self.schedule).announced(now),
             _ => {}
         }
         self.announce_controller(now, false);
@@ -1382,7 +1401,7 @@ impl Shared {
             let dual = conn.is_dual();
             match conn.recv(&mut buf) {
                 Ok(Some((data, from, path))) => {
-                    self.process_datagram_on(data, from, dual.then_some(path));
+                    self.receive_on(data, from, conn.paths().0, dual.then_some(path));
                 }
                 Ok(None) => {}
                 Err(_) => break,
@@ -1398,12 +1417,12 @@ impl Shared {
             let Some(conn) = lock(&self.tx).conn() else {
                 break;
             };
-            if conn.paths().1.is_none() {
+            let Some(second) = conn.paths().1 else {
                 std::thread::sleep(SHUTDOWN_POLL);
                 continue;
-            }
+            };
             match conn.recv_secondary(&mut buf) {
-                Ok(Some((data, from, path))) => self.process_datagram_on(data, from, Some(path)),
+                Ok(Some((data, from, path))) => self.receive_on(data, from, second, Some(path)),
                 Ok(None) => {}
                 Err(_) => break,
             }

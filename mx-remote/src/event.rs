@@ -93,6 +93,35 @@ macro_rules! events {
 
             /// Fired after every bay-level event above.
             fn on_bay_update(&self, bay: BayUid) {}
+
+            /// A frame on the mesh, whole, for a caller relaying the mesh
+            /// elsewhere ([`crate::raw`]).
+            ///
+            /// - [`Received`](crate::raw::Direction::Received): every
+            ///   datagram a mesh endpoint receives that a unit would take
+            ///   ([`FrameHeader::parse_accepted`](crate::raw::FrameHeader::parse_accepted)),
+            ///   before the copy arriving by the other endpoint is dropped,
+            ///   with the endpoint it came in on. One sent from an address of
+            ///   this host is left out: it is this client's own coming back,
+            ///   or another client's on this host.
+            /// - [`Sent`](crate::raw::Direction::Sent): every frame this
+            ///   client builds and writes to a mesh endpoint, once for each
+            ///   endpoint it goes by. A frame handed to
+            ///   [`Remote::send_raw`](crate::Remote::send_raw) is left out,
+            ///   its caller having it already.
+            ///
+            /// Nothing an announce interface carries
+            /// ([`Config::announce_interfaces`](crate::Config::announce_interfaces))
+            /// comes here. It runs on the thread that received or sent the
+            /// frame, a receive thread or the caller's own, so it should copy
+            /// the frame and return.
+            fn on_mesh_frame(
+                &self,
+                frame: &[u8],
+                direction: crate::raw::Direction,
+                endpoint: crate::raw::Endpoint,
+            ) {
+            }
         }
 
         impl Event {

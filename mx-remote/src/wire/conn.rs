@@ -316,9 +316,11 @@ impl Conn {
     /// group is the first endpoint, and broadcast the second.
     ///
     /// The only write to the protocol endpoints in this library. Every frame
-    /// reaches it through [`Tx::send`](super::tx::Tx::send), which is what
-    /// makes the protocol-floor check unskippable; a second write anywhere
-    /// would bypass that gate rather than merely duplicate this function.
+    /// this client builds reaches it through [`Tx::send`](super::tx::Tx::send),
+    /// which is what makes the protocol-floor check unskippable; a second
+    /// write anywhere would bypass that gate rather than merely duplicate this
+    /// function. A frame built elsewhere comes through
+    /// [`Tx::send_raw`](super::tx::Tx::send_raw).
     /// [`Announcer::send`] writes to sockets of its own, addressed to no
     /// device and so behind no floor.
     ///
@@ -335,6 +337,19 @@ impl Conn {
                 second.socket.send_to(data, second.target)?;
                 Ok(sent)
             }
+        }
+    }
+
+    /// The endpoints a frame sent by `endpoints` goes by, in the order
+    /// [`Conn::send`] writes them.
+    pub(super) fn paths_for(&self, endpoints: Endpoints) -> Vec<Path> {
+        let Some(second) = &self.secondary else {
+            return vec![self.primary.path];
+        };
+        match endpoints {
+            Endpoints::Multicast => vec![self.primary.path],
+            Endpoints::Broadcast => vec![second.path],
+            Endpoints::Both => vec![self.primary.path, second.path],
         }
     }
 

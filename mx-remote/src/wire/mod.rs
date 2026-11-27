@@ -13,6 +13,10 @@
 //! The payload builders are the exception, and are not one: they assemble
 //! bytes and have no way to reach a socket, so a caller holding one still has
 //! to hand it to the transmit path to get it sent.
+//!
+//! A frame built outside this client, which a caller relays onto the mesh
+//! whole, takes the one other way to the write. It addresses no device this
+//! client knows of, so it has no floor to check.
 
 mod bayconfig;
 mod conn;
@@ -59,11 +63,11 @@ pub(crate) use frame::{cstr, Frame, DEVICE_NAME_LEN, FW_VERSION_LEN};
 pub(crate) use frame::{HEADER_LEN, MAGIC};
 pub(crate) use link::{udp_in_ethernet, Capture};
 pub(crate) use mesh::*;
-pub(crate) use netif::{address_of, broadcast_address};
+pub(crate) use netif::{address_of, broadcast_address, host_addresses};
 pub(crate) use opcode::{audio_sub, mv_sub, op, Opcode};
 pub(crate) use osd::*;
 pub(crate) use payload::*;
-pub(crate) use tx::{Addressee, ProtocolTarget, Tx};
+pub(crate) use tx::{Addressee, Endpoints, ProtocolTarget, Sent, Tx};
 pub(crate) use uid::UID_LEN;
 
 // Reached only from the test modules elsewhere in the crate, so they are cut
@@ -73,5 +77,3 @@ pub(crate) use uid::UID_LEN;
 pub(crate) use netif::{default_local_ip, name_holding};
 #[cfg(test)]
 pub(crate) use opcode::protocol_for;
-#[cfg(test)]
-pub(crate) use tx::Endpoints;

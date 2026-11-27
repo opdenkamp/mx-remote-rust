@@ -49,6 +49,12 @@ pub fn valid_addresses() -> Vec<Ipv4Addr> {
     interfaces().into_iter().map(|i| i.address).collect()
 }
 
+/// Every IPv4 address the host has, loopback included: every address a
+/// datagram this host sent can come from.
+pub(crate) fn host_addresses() -> Vec<Ipv4Addr> {
+    every_interface().into_iter().map(|i| i.address).collect()
+}
+
 /// The address to use when the caller named none.
 ///
 /// The first address the host enumerates, which on a multi-homed machine is
