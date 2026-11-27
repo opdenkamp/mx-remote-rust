@@ -205,7 +205,7 @@ dependencies = [
 
 [[package]]
 name = "mx-remote"
-version = "14.5.1"
+version = "14.5.2"
 dependencies = [
  "aes-gcm",
  "getrandom",
@@ -219,7 +219,7 @@ dependencies = [
 
 [[package]]
 name = "mx-remote-ffi"
-version = "14.5.1"
+version = "14.5.2"
 dependencies = [
  "mx-remote",
 ]
