@@ -6320,7 +6320,8 @@ bool mxr_uid_is_zero(mxr_uid_t uid);
 mxr_result_t mxr_uid_to_string(mxr_uid_t uid, char *out, size_t cap);
 
 /**
- * Reads the dotted-hex form `mxr_uid_to_string()` writes.
+ * Reads a uid: the dotted-hex form `mxr_uid_to_string()` writes, or 32
+ * hex digits without dots, the 16 bytes in wire order.
  *
  * # Safety
  *

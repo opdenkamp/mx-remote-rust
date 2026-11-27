@@ -73,6 +73,24 @@ fn uid_round_trips_through_its_dotted_hex_form() {
     );
 }
 
+/// A OneIP controller's uplink uid as the controller stores it, and the same
+/// uid as its hello carries it, from a live controller.
+#[test]
+fn uid_reads_the_plain_hex_form_in_wire_order() {
+    let plain: DeviceUid = "e8cd652b23e8635a3b715073efc8e055".parse().unwrap();
+    let dotted: DeviceUid = "2b65cde8.5a63e823.7350713b.55e0c8ef".parse().unwrap();
+    assert_eq!(plain, dotted);
+    assert_eq!(hex_of(plain.as_bytes()), "e8cd652b23e8635a3b715073efc8e055");
+    for bad in [
+        "e8cd652b23e8635a3b715073efc8e05",
+        "e8cd652b23e8635a3b715073efc8e0555",
+        "e8cd652b23e8635a3b715073efc8e05g",
+        "+8cd652b23e8635a3b715073efc8e055",
+    ] {
+        assert!(bad.parse::<DeviceUid>().is_err(), "{bad} parsed");
+    }
+}
+
 #[test]
 fn hello_frame() {
     // The version string and the announced protocol are fixed data rather than

@@ -86,13 +86,26 @@ impl fmt::Display for DeviceUid {
 impl std::str::FromStr for DeviceUid {
     type Err = UidParseError;
 
-    /// Parses the dotted-hex form written by [`fmt::Display`]. Fields past the
-    /// fourth are ignored.
+    /// Parses either form of a uid:
+    ///
+    /// - the dotted-hex form written by [`fmt::Display`], fields past the
+    ///   fourth ignored;
+    /// - 32 hex digits without dots: the 16 bytes in wire order, as a OneIP
+    ///   controller stores its uplink uid.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let err = || UidParseError {
             input: s.to_owned(),
         };
         let mut raw = [0u8; UID_LEN];
+        if !s.contains('.') {
+            if s.len() != 2 * UID_LEN || !s.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err(err());
+            }
+            for (i, byte) in raw.iter_mut().enumerate() {
+                *byte = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).map_err(|_| err())?;
+            }
+            return Ok(Self(raw));
+        }
         let mut parts = s.split('.');
         for word in raw.chunks_exact_mut(4) {
             let part = parts.next().ok_or_else(err)?;

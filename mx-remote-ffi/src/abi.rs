@@ -357,7 +357,8 @@ pub unsafe extern "C" fn mxr_uid_to_string(
     })
 }
 
-/// Reads the dotted-hex form `mxr_uid_to_string()` writes.
+/// Reads a uid: the dotted-hex form `mxr_uid_to_string()` writes, or 32
+/// hex digits without dots, the 16 bytes in wire order.
 ///
 /// # Safety
 ///
