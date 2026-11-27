@@ -14,6 +14,7 @@ mod osd;
 mod paths;
 mod privacy;
 mod proto28;
+mod proxy;
 mod state;
 mod subsystems;
 mod third_party;

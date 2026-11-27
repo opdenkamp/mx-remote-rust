@@ -39,6 +39,10 @@ pub const MULTICAST_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(224, 8, 8, 
 /// UDP port used in multicast mode.
 pub const MULTICAST_PORT: u16 = 8812;
 
+/// UDP port of a OneIP controller's driver proxy, on its customer network
+/// address. A driver joins it there and sends from the same port.
+pub const PROXY_PORT: u16 = 8813;
+
 /// Default destination UDP port of a OneIP video stream.
 pub const V2IP_PORT_VIDEO: u16 = 50020;
 

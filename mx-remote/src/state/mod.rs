@@ -31,6 +31,8 @@ use crate::types::{MacAddress, MeshBays, MeshConfig, OsdSyncRequest};
 use crate::wire::{BayFeatures, BayUid, DeviceFeature, DeviceUid, LinkFeature};
 
 pub(crate) use bay::Bay;
+#[cfg(test)]
+pub(crate) use device::PROXY_ANNOUNCE_WINDOW;
 pub(crate) use device::{Device, HelloInfo, MeshBayChange, SdpPages, CONFIG_GRACE};
 pub(crate) use links::{BayLink, BayLinks};
 pub(crate) use metadata::{Metadata, MetadataFrame, MetadataRefusal};

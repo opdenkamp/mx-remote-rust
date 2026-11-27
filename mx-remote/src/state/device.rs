@@ -66,6 +66,10 @@ const FORGET_WINDOWS: u32 = 3;
 /// [`Device::has_bays`].
 pub(crate) const CONFIG_GRACE: Duration = Duration::from_secs(15);
 
+/// How long a proxy controller stays one without announcing again: three of
+/// its 10 s announcement periods.
+pub(crate) const PROXY_ANNOUNCE_WINDOW: Duration = Duration::from_secs(30);
+
 /// How long a frame by one path counts as proof that a device is heard by it.
 pub(crate) const PATH_WINDOW: Duration = Duration::from_secs(120);
 
@@ -179,6 +183,11 @@ pub(crate) struct Device {
     pub(crate) osd_message: Option<OsdMessage>,
     /// When the device last reported its message, the same one included.
     pub(crate) osd_message_reported: Option<Instant>,
+    /// When the device last announced a driver proxy.
+    pub(crate) proxy_announced_at: Option<Instant>,
+    /// Whether the device counts as a proxy controller: it announced a
+    /// driver proxy within [`PROXY_ANNOUNCE_WINDOW`].
+    pub(crate) proxy_controller: bool,
     /// The units the device last listed as replaceable, and when its last
     /// frame of that list arrived.
     pub(crate) mesh_replace_units: Option<(MeshReplaceUnits, Instant)>,
@@ -280,6 +289,8 @@ impl Device {
             osd_sync_report: None,
             osd_message: None,
             osd_message_reported: None,
+            proxy_announced_at: None,
+            proxy_controller: false,
             mesh_replace_units: None,
             mesh_config_digest: None,
             controller_hello: None,
@@ -610,8 +621,10 @@ impl Device {
     ///
     /// A management client is described by its hello alone: it has no bays or
     /// links to send. That is [`DeviceFeature::MANAGER`], which no unit sets.
+    /// So is a proxy controller, whose hello on the customer network leaves
+    /// that bit out.
     pub(crate) fn configuration_complete(&self, now: Instant) -> bool {
-        if self.hello.features.has(DeviceFeature::MANAGER) {
+        if self.hello.features.has(DeviceFeature::MANAGER) || self.proxy_controller {
             return true;
         }
         self.has_bays()
@@ -883,6 +896,34 @@ impl Device {
     pub(crate) fn touch(&mut self, stamped: Instant, now: Instant, ev: &mut Vec<Event>) {
         self.last_ping = stamped;
         self.check_online(now, ev);
+    }
+
+    /// Takes a driver proxy announcement made at `at`, marking the device a
+    /// proxy controller.
+    pub(crate) fn proxy_announced(&mut self, at: Instant, ev: &mut Vec<Event>) {
+        self.proxy_announced_at = Some(at);
+        if !self.proxy_controller {
+            self.proxy_controller = true;
+            ev.push(Event::ProxyControllerChanged {
+                device: self.uid,
+                announced: true,
+            });
+        }
+    }
+
+    /// Drops the proxy controller mark once the device has not announced its
+    /// proxy for [`PROXY_ANNOUNCE_WINDOW`].
+    pub(crate) fn check_proxy(&mut self, now: Instant, ev: &mut Vec<Event>) {
+        let announced = self
+            .proxy_announced_at
+            .is_some_and(|at| now.saturating_duration_since(at) < PROXY_ANNOUNCE_WINDOW);
+        if self.proxy_controller && !announced {
+            self.proxy_controller = false;
+            ev.push(Event::ProxyControllerChanged {
+                device: self.uid,
+                announced: false,
+            });
+        }
     }
 
     pub(crate) fn check_online(&mut self, now: Instant, ev: &mut Vec<Event>) {

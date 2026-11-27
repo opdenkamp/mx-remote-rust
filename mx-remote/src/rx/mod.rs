@@ -17,6 +17,7 @@ mod multiviewer;
 mod network;
 mod osd;
 mod privacy;
+mod proxy;
 mod sdp;
 mod stats;
 mod svd;
@@ -333,6 +334,7 @@ fn dispatch(state: &mut State, rx: &Rx<'_>, ev: &mut Vec<Event>) {
         op::MESH_REPLACE => mesh::mesh_replace(state, rx, ev),
         op::MESH_CONFIG => mesh::mesh_config(state, rx, ev),
         op::CONTROLLER_STATE => mesh::controller_state(state, rx, ev),
+        op::PROXY => proxy::announce(state, rx, ev),
         Opcode(_) => {}
     }
 }

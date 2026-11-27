@@ -341,6 +341,12 @@ events! {
         /// The unit reported something different about the message on its
         /// output.
         OsdMessageChanged => on_osd_message_changed(message: OsdMessage);
+        /// The device became a proxy controller, a OneIP controller a driver
+        /// can join to reach the mesh behind it (`announced`), or stopped
+        /// being one. It is one while it announces its driver proxy, and
+        /// stops 30 s after its last announcement. Anyone can announce under
+        /// any uid, so being one proves nothing.
+        ProxyControllerChanged => on_proxy_controller_changed(announced: bool);
         /// The unit reported a different status.
         UnitStatusChanged => on_unit_status_changed(status: UnitStatus);
         /// The device reported a different PTP state, or stopped reporting

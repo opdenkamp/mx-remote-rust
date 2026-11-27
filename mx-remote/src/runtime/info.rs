@@ -54,6 +54,12 @@ pub struct DeviceInfo {
     /// sent a `CONTROLLER_STATE` hello, which
     /// [`Remote::controller_hello`](crate::Remote::controller_hello) reads.
     pub dedicated_controller: bool,
+    /// The device is a proxy controller: a OneIP controller announcing a
+    /// driver proxy, which a driver joins on
+    /// [`PROXY_PORT`](crate::PROXY_PORT) to reach the mesh behind it. It is
+    /// complete from its hello. Anyone can announce under any uid, so this
+    /// proves nothing; a join does.
+    pub proxy_controller: bool,
     /// The address the device was last heard from.
     pub address: Option<Ipv4Addr>,
     /// Online, offline, booting or rebooting.
@@ -161,6 +167,7 @@ impl DeviceInfo {
             supported_protocol: device.hello.supported_protocol,
             features: device.hello.features,
             dedicated_controller: device.controller_hello.is_some(),
+            proxy_controller: device.proxy_controller,
             address: device.hello.address,
             status: device.status(now),
             online: device.is_online(now),

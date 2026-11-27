@@ -1689,3 +1689,41 @@ fn a_zero_announce_uid_is_refused() {
         Some(std::io::ErrorKind::InvalidInput)
     );
 }
+
+/// A driver proxy announcement from `peer`.
+fn proxy_announce(remote: &Remote, peer: DeviceUid) {
+    remote
+        .shared
+        .process_datagram(&datagram(peer, op::PROXY, 0x36, &[0, 1]), FROM);
+}
+
+/// A proxy controller is complete from its hello, so it is never asked for
+/// a description it has no bays for.
+#[test]
+fn a_proxy_controller_is_not_asked_for_bays() {
+    let (remote, tap) = client(234);
+    let peer = uid_n(235);
+    hello_with(&remote, peer, DeviceFeature::MESH_MEMBER);
+    proxy_announce(&remote, peer);
+    age(&remote, peer, CONFIG_GRACE + Duration::from_secs(1));
+    tap.clear();
+    let now = Instant::now();
+    keep_alive(&remote, peer, now);
+    remote.shared.probe_once(now);
+    let info = remote.device(peer).expect("registered");
+    assert!(info.proxy_controller && info.configuration_complete);
+    assert_eq!(discovers(&tap), Vec::<Vec<u8>>::new());
+}
+
+/// The probe pass drops the mark of a controller that stopped announcing.
+#[test]
+fn the_probe_pass_drops_a_silent_proxy() {
+    let (remote, _) = client(236);
+    let peer = uid_n(237);
+    hello_with(&remote, peer, DeviceFeature::MESH_MEMBER);
+    proxy_announce(&remote, peer);
+    remote
+        .shared
+        .probe_once(Instant::now() + Duration::from_secs(31));
+    assert!(!remote.device(peer).expect("registered").proxy_controller);
+}

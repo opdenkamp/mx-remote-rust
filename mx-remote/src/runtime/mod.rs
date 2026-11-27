@@ -1476,6 +1476,7 @@ impl Shared {
             let mut owed = Vec::new();
             for device in state.devices.values_mut() {
                 device.check_online(now, ev);
+                device.check_proxy(now, ev);
                 // Re-tested here rather than only where a frame lands: a device
                 // stops waiting for its links on the clock alone, and no frame
                 // arrives to announce that.

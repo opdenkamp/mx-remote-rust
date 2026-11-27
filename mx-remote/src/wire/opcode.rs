@@ -106,6 +106,10 @@ pub(crate) mod op {
     /// The mesh state a failsafe router holds of the primary; only dedicated
     /// controllers send or take it.
     pub(crate) const CONTROLLER_STATE: Opcode = Opcode(0x58);
+    /// A OneIP controller's driver proxy: its announcement on the customer
+    /// network, and the join and protected traffic of a driver on 8813.
+    /// Units drop it unread.
+    pub(crate) const PROXY: Opcode = Opcode(0x59);
 }
 
 /// The protocol version this library stamps on a frame carrying `opcode`, and
@@ -213,6 +217,7 @@ pub(crate) fn stamp_for(opcode: Opcode) -> Option<u16> {
         op::MESH_REPLACE => 0x32,
         op::MESH_CONFIG => 0x33,
         op::CONTROLLER_STATE => 0x34,
+        op::PROXY => 0x36,
         Opcode(_) => return None,
     })
 }
